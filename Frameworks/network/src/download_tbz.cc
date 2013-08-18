@@ -112,13 +112,13 @@ namespace network
 		std::string res = NULL_STR;
 		if(CURL* handle = curl_easy_init())
 		{
-			std::string tbzDestination = path::temp("dl_archive_contents");
+			std::string tbzDestination = path::cache("dl_archive_contents");
 			mkdir(tbzDestination.c_str(), S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH);
 			int tbzInput, tbzOutput;
 			pid_t tbzPid = launch_tbz(tbzDestination, tbzInput, tbzOutput, error);
 
 			std::string tmpPath = path::temp("dl_bytes");
-			int tmpInput = open(tmpPath.c_str(), O_CREAT|O_TRUNC|O_WRONLY, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+			int tmpInput = open(tmpPath.c_str(), O_CREAT|O_TRUNC|O_WRONLY|O_CLOEXEC, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
 
 			// ========
 			// = Curl =
@@ -131,6 +131,7 @@ namespace network
 			curl_easy_setopt(handle, CURLOPT_FAILONERROR,      true);
 			curl_easy_setopt(handle, CURLOPT_ENCODING,         "");
 			curl_easy_setopt(handle, CURLOPT_USERAGENT,        create_agent_info_string().c_str());
+			curl_easy_setopt(handle, CURLOPT_NOSIGNAL,         1);
 
 			char errorbuf[CURL_ERROR_SIZE];
 			curl_easy_setopt(handle, CURLOPT_ERRORBUFFER,      errorbuf);
@@ -148,10 +149,11 @@ namespace network
 				curl_easy_setopt(handle, CURLOPT_HTTPHEADER,    headers);
 			}
 
-			if(auto proxySettings = get_proxy_settings())
+			if(auto proxySettings = get_proxy_settings(url))
 			{
 				curl_easy_setopt(handle, CURLOPT_PROXY,     proxySettings.server.c_str());
 				curl_easy_setopt(handle, CURLOPT_PROXYPORT, proxySettings.port);
+				curl_easy_setopt(handle, CURLOPT_PROXYTYPE, proxySettings.socks ? CURLPROXY_SOCKS4 : CURLPROXY_HTTP);
 				if(proxySettings.password != NULL_STR)
 					curl_easy_setopt(handle, CURLOPT_PROXYUSERPWD, (proxySettings.user + ":" + proxySettings.password).c_str());
 			}
@@ -194,7 +196,7 @@ namespace network
 			else if(serverReply == 304)
 			{
 				struct stat buf;
-				int fd = open(destination.c_str(), O_RDONLY);
+				int fd = open(destination.c_str(), O_RDONLY|O_CLOEXEC);
 				if(fd != -1 && fstat(fd, &buf) != -1)
 				{
 					char bytes[4096];

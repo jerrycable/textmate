@@ -4,6 +4,8 @@
 #include <command/runner.h>
 #include <text/utf8.h>
 #include <regexp/regexp.h>
+#include <settings/settings.h>
+#include <io/path.h>
 #include <oak/server.h>
 #include <oak/debug.h>
 
@@ -11,9 +13,9 @@ static std::vector<bundles::item_ptr> binary_filters (std::string const& event, 
 {
 	std::string contentAsString = "";
 	size_t contentMatchSize = 256;
-	foreach(ch, content->begin(), content->end())
+	for(char ch : *content)
 	{
-		contentAsString += utf8::to_s(*ch);
+		contentAsString += utf8::to_s(ch);
 		if(--contentMatchSize == 0)
 			break;
 	}
@@ -23,7 +25,7 @@ static std::vector<bundles::item_ptr> binary_filters (std::string const& event, 
 	{
 		citerate(pattern, (*item)->values_for_field(bundles::kFieldContentMatch))
 		{
-			if(regexp::match_t const& m = regexp::search(*pattern, contentAsString.data(), contentAsString.data() + contentAsString.size()))
+			if(regexp::match_t const& m = regexp::search(*pattern, contentAsString))
 				ordering.insert(std::make_pair(-m.end(), *item));
 		}
 	}
@@ -34,61 +36,6 @@ static std::vector<bundles::item_ptr> path_filters (std::string const& event, st
 {
 	return bundles::query(bundles::kFieldSemanticClass, event, pathAttributes, bundles::kItemTypeCommand);
 }
-
-// ==================
-// = Threaded Write =
-// ==================
-
-namespace filter
-{
-	struct write_t
-	{
-		struct request_t { int fd; io::bytes_ptr bytes; };
-
-		WATCH_LEAKS(write_t);
-
-		write_t (int fd, io::bytes_ptr const& bytes);
-		virtual ~write_t ();
-
-		static int handle_request (write_t::request_t const& request);
-		void handle_reply (int error);
-
-	private:
-		size_t _client_key;
-	};
-
-	static oak::server_t<write_t>& write_server ()
-	{
-		static oak::server_t<write_t> server;
-		return server;
-	}
-
-	write_t::write_t (int fd, io::bytes_ptr const& bytes)
-	{
-		_client_key = write_server().register_client(this);
-		int newFd = dup(fd);
-		fcntl(newFd, F_SETFD, 1);
-		write_server().send_request(_client_key, (request_t){ newFd, bytes });
-	}
-
-	write_t::~write_t ()
-	{
-		write_server().unregister_client(_client_key);
-	}
-
-	int write_t::handle_request (write_t::request_t const& request)
-	{
-		bool success = write(request.fd, request.bytes->get(), request.bytes->size()) == request.bytes->size();
-		close(request.fd);
-		return success ? 0 : errno;
-	}
-
-	void write_t::handle_reply (int error)
-	{
-		delete this;
-	}
-	
-} /* filter */
 
 // ==========================
 // = Filter Runner Delegate =
@@ -116,9 +63,17 @@ namespace
 	text::range_t event_delegate_t::write_unit_to_fd (int fd, input::type unit, input::type fallbackUnit, input_format::type format, scope::selector_t const& scopeSelector, std::map<std::string, std::string>& variables, bool* inputWasSelection)
 	{
 		if(unit != input::entire_document || format != input_format::text)
+		{
+			close(fd);
 			return fprintf(stderr, "*** write unit to fd: unhandled unit/format: %d/%d\n", unit, format), text::range_t::undefined;
+		}
 
-		new filter::write_t(fd, _input);
+		dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+			if(write(fd, _input->get(), _input->size()) == -1)
+				perror("write");
+			close(fd);
+		});
+
 		return text::range_t::undefined;
 	}
 
@@ -148,9 +103,27 @@ namespace filter
 		return std::vector<bundles::item_ptr>();
 	}
 
+	static std::map<std::string, std::string> path_variables (std::string const& path)
+	{
+		std::map<std::string, std::string> map = oak::basic_environment();
+		if(path != NULL_STR)
+		{
+			map["TM_DISPLAYNAME"] = path::display_name(path);
+			map["TM_FILEPATH"]    = path;
+			map["TM_FILENAME"]    = path::name(path);
+			map["TM_DIRECTORY"]   = path::parent(path);
+		}
+		else
+		{
+			map["TM_DISPLAYNAME"] = "untitled";
+		}
+		return variables_for_path(map, path);
+	}
+
 	void run (bundles::item_ptr filter, std::string const& path, io::bytes_ptr content, callback_ptr context)
 	{
-		command::runner_ptr runner = command::runner(parse_command(filter), ng::buffer_t(), ng::ranges_t(), bundles::environment(file::path_attributes(path), filter->environment(file::variables(path))), command::delegate_ptr(new event_delegate_t(content, context)));
+		std::map<std::string, std::string> variables = path_variables(path);
+		command::runner_ptr runner = command::runner(parse_command(filter), ng::buffer_t(), ng::ranges_t(), bundles::scope_variables(variables << filter->bundle_variables(), file::path_attributes(path)), command::delegate_ptr(new event_delegate_t(content, context)));
 		runner->launch();
 	}
 

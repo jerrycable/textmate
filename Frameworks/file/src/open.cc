@@ -31,7 +31,7 @@ namespace
 {
 	struct open_file_context_t : file::open_context_t
 	{
-		open_file_context_t (std::string const& path, io::bytes_ptr existingContent, osx::authorization_t auth, file::open_callback_ptr callback, std::string const& virtualPath) : _state(kStateIdle), _next_state(kStateStart), _estimate_encoding_state(kEstimateEncodingStateBOM), _callback(callback), _path(path), _virtual_path(virtualPath), _authorization(auth), _content(existingContent), _encoding(kCharsetUTF8), _bom(false), _line_feeds(kLF), _file_type(kFileTypePlainText), _path_attributes(NULL_STR), _error(NULL_STR)
+		open_file_context_t (std::string const& path, io::bytes_ptr existingContent, osx::authorization_t auth, file::open_callback_ptr callback, std::string const& virtualPath) : _state(kStateIdle), _next_state(kStateStart), _estimate_encoding_state(kEstimateEncodingStateBOM), _callback(callback), _path(path), _virtual_path(virtualPath), _authorization(auth), _content(existingContent), _file_type(kFileTypePlainText), _path_attributes(NULL_STR), _error(NULL_STR)
 		{
 		}
 
@@ -44,8 +44,8 @@ namespace
 		void set_authorization (osx::authorization_t auth)                                       { _authorization = auth;                  proceed(); }
 		void set_content (io::bytes_ptr content)                                                 { _content = content;                     proceed(); }
 		void set_content (io::bytes_ptr content, std::map<std::string, std::string> const& attr) { _attributes = attr; _content = content; proceed(); }
-		void set_encoding (std::string const& encoding)                                          { _encoding   = encoding;                 proceed(); }
-		void set_line_feeds (std::string const& lineFeeds)                                       { _line_feeds = lineFeeds;                proceed(); }
+		void set_charset (std::string const& charset)                                            { _encoding.set_charset(charset);         proceed(); }
+		void set_line_feeds (std::string const& newlines)                                        { _encoding.set_newlines(newlines);       proceed(); }
 		void set_file_type (std::string const& fileType)                                         { _file_type  = fileType;                 proceed(); }
 
 		void filter_error (bundle_command_t const& command, int rc, std::string const& out, std::string const& err)
@@ -102,9 +102,7 @@ namespace
 
 		io::bytes_ptr _content;
 		std::map<std::string, std::string> _attributes;
-		std::string _encoding;
-		bool _bom;
-		std::string _line_feeds;
+		encoding::type _encoding;
 		std::string _file_type; // root grammar scope
 		std::string _path_attributes;
 		std::string _error;
@@ -114,7 +112,7 @@ namespace
 		std::vector<oak::uuid_t> _text_import_filters;
 	};
 
-	typedef std::tr1::shared_ptr<open_file_context_t> file_context_ptr;
+	typedef std::shared_ptr<open_file_context_t> file_context_ptr;
 }
 
 // =================
@@ -163,7 +161,7 @@ namespace file
 		result_t result;
 		result.error_code = 0;
 
-		int fd = ::open(request.path.c_str(), O_RDONLY);
+		int fd = ::open(request.path.c_str(), O_RDONLY|O_CLOEXEC);
 		if(fd != -1)
 		{
 			struct stat sbuf;
@@ -216,26 +214,6 @@ namespace file
 // ====================
 // = Encoding Support =
 // ====================
-
-template <typename _InputIter>
-std::string encoding_from_bom (_InputIter const& first, _InputIter const& last)
-{
-	static struct UTFBOMTests { std::string bom; std::string encoding; } const BOMTests[] =
-	{
-		{ std::string("\x00\x00\xFE\xFF", 4), kCharsetUTF32BE },
-		{ std::string("\xFE\xFF",         2), kCharsetUTF16BE },
-		{ std::string("\xFF\xFE\x00\x00", 4), kCharsetUTF32LE },
-		{ std::string("\xFF\xFE",         2), kCharsetUTF16LE },
-		{ std::string("\uFEFF",           3), kCharsetUTF8    }
-	};
-
-	for(size_t i = 0; i < sizeofA(BOMTests); ++i)
-	{
-		if(oak::has_prefix(first, last, BOMTests[i].bom.begin(), BOMTests[i].bom.end()))
-			return BOMTests[i].encoding;
-	}
-	return NULL_STR;
-}
 
 static bool not_ascii (char ch)
 {
@@ -310,7 +288,7 @@ namespace file
 			context->set_authorization(auth);
 	}
 
-	void open_callback_t::select_encoding (std::string const& path, io::bytes_ptr content, open_context_ptr context)
+	void open_callback_t::select_charset (std::string const& path, io::bytes_ptr content, open_context_ptr context)
 	{
 	}
 
@@ -368,7 +346,7 @@ namespace
 					_state      = kStateIdle;
 					_next_state = kStateExecuteBinaryImportFilter;
 
-					new file::read_t(_path, _authorization, std::tr1::static_pointer_cast<open_file_context_t>(shared_from_this()));
+					new file::read_t(_path, _authorization, std::static_pointer_cast<open_file_context_t>(shared_from_this()));
 				}
 				break;
 
@@ -398,7 +376,7 @@ namespace
 					else // FIXME we need to show dialog incase of multiple import hooks
 					{
 						_next_state = kStateExecuteBinaryImportFilter;
-						filter::run(filters.back(), _path, _content, std::tr1::static_pointer_cast<open_file_context_t>(shared_from_this()));
+						filter::run(filters.back(), _path, _content, std::static_pointer_cast<open_file_context_t>(shared_from_this()));
 					}
 				}
 				break;
@@ -407,7 +385,6 @@ namespace
 				{
 					_state      = kStateIdle;
 					_next_state = kStateDecodeContent;
-					_bom        = false;
 
 					char const* first = _content->begin();
 					char const* last  = _content->end();
@@ -415,28 +392,32 @@ namespace
 					{
 						case kEstimateEncodingStateBOM:
 						{
-							_encoding = encoding_from_bom(first, last);
-							_bom      = _encoding != NULL_STR;
+							std::string const charset = encoding::charset_from_bom(first, last);
+							if(charset != kCharsetNoEncoding)
+							{
+								_encoding.set_charset(charset);
+								_encoding.set_byte_order_mark(true);
+							}
 						}
 						break;
 
 						case kEstimateEncodingStateExtendedAttribute:
 						{
-							_encoding = path::get_attr(_path, "com.apple.TextEncoding");
-							_encoding = _encoding != NULL_STR ? _encoding.substr(0, _encoding.find(';')) : kCharsetUnknown;
+							std::string const charset = path::get_attr(_path, "com.apple.TextEncoding");
+							_encoding.set_charset(charset != NULL_STR ? charset.substr(0, charset.find(';')) : kCharsetUnknown);
 						}
 						break;
 
 						case kEstimateEncodingStateASCII:
-							_encoding = std::find_if(first, last, &not_ascii) == last ? kCharsetNoEncoding : kCharsetUnknown;
+							_encoding.set_charset(std::find_if(first, last, &not_ascii) == last ? kCharsetNoEncoding : kCharsetUnknown);
 						break;
 
 						case kEstimateEncodingStateUTF8:
-							_encoding = utf8::is_valid(first, last) ? kCharsetUTF8 : kCharsetUnknown;
+							_encoding.set_charset(utf8::is_valid(first, last) ? kCharsetUTF8 : kCharsetUnknown);
 						break;
 
 						case kEstimateEncodingStatePathSettings:
-							_encoding = settings_for_path(_path, "attr.file.unknown-encoding " + file::path_attributes(_path)).get("encoding", kCharsetUnknown);
+							_encoding.set_charset(settings_for_path(_path, "attr.file.unknown-encoding " + _path_attributes).get(kSettingsEncodingKey, kCharsetUnknown));
 						break;
 
 						case kEstimateEncodingStateAskUser:
@@ -453,7 +434,7 @@ namespace
 					_state      = kStateIdle;
 					_next_state = kStateDecodeContent;
 
-					_callback->select_encoding(_path, _content, shared_from_this());
+					_callback->select_charset(_path, _content, shared_from_this());
 				}
 				break;
 
@@ -462,7 +443,7 @@ namespace
 					_state      = kStateIdle;
 					_next_state = kStateEstimateLineFeeds;
 
-					if(io::bytes_ptr decodedContent = convert(_content, _encoding == kCharsetNoEncoding ? kCharsetASCII : _encoding, kCharsetUTF8, _bom))
+					if(io::bytes_ptr decodedContent = convert(_content, _encoding.charset() == kCharsetNoEncoding ? kCharsetASCII : _encoding.charset(), kCharsetUTF8, _encoding.byte_order_mark()))
 							_content = decodedContent;
 					else	_next_state = kStateEstimateEncoding;
 
@@ -475,8 +456,8 @@ namespace
 					_state      = kStateIdle;
 					_next_state = kStateHarmonizeLineFeeds;
 
-					_line_feeds = find_line_endings(_content->begin(), _content->end());
-					if(_line_feeds != kMIX)
+					_encoding.set_newlines(find_line_endings(_content->begin(), _content->end()));
+					if(_encoding.newlines() != kMIX)
 							proceed();
 					else	_callback->select_line_feeds(_path, _content, shared_from_this());
 				}
@@ -484,9 +465,9 @@ namespace
 
 				case kStateHarmonizeLineFeeds:
 				{
-					if(_line_feeds != kLF)
+					if(_encoding.newlines() != kLF)
 					{
-						char* newEnd = harmonize_line_endings(_content->begin(), _content->end(), _line_feeds);
+						char* newEnd = harmonize_line_endings(_content->begin(), _content->end(), _encoding.newlines());
 						_content->resize(newEnd - _content->begin());
 					}
 					_state = kStateExecuteTextImportFilter;
@@ -516,7 +497,7 @@ namespace
 					else // FIXME we need to show dialog incase of multiple import hooks
 					{
 						_next_state = kStateExecuteTextImportFilter;
-						filter::run(filters.back(), _path, _content, std::tr1::static_pointer_cast<open_file_context_t>(shared_from_this()));
+						filter::run(filters.back(), _path, _content, std::static_pointer_cast<open_file_context_t>(shared_from_this()));
 					}
 				}
 				break;
@@ -543,7 +524,7 @@ namespace
 				case kStateShowContent:
 				{
 					_state = kStateDone;
-					_callback->show_content(_path, _content, _attributes, _file_type, _path_attributes, _encoding, _bom, _line_feeds, _binary_import_filters, _text_import_filters);
+					_callback->show_content(_path, _content, _attributes, _file_type, _encoding, _binary_import_filters, _text_import_filters);
 				}
 				break;
 			}
@@ -558,7 +539,7 @@ namespace file
 	void open (std::string const& path, osx::authorization_t auth, open_callback_ptr cb, io::bytes_ptr existingContent, std::string const& virtualPath)
 	{
 		open_context_ptr context(new open_file_context_t(path, existingContent, auth, cb, virtualPath));
-		std::tr1::static_pointer_cast<open_file_context_t>(context)->proceed();
+		std::static_pointer_cast<open_file_context_t>(context)->proceed();
 	}
 
 } /* file */

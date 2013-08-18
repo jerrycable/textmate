@@ -29,11 +29,25 @@ enum action_t { kActionNop, kActionTab, kActionReturn, kActionCancel, kActionMov
 - (void)dealloc
 {
 	[[NSNotificationCenter defaultCenter] removeObserver:self];
+	self.window = nil;
+}
 
-	[tableView release];
-	self.window  = nil;
-	self.choices = nil;
-	[super dealloc];
+- (void)sizeToFit
+{
+	CGFloat width = 60;
+	NSCell* dataCell = [[tableView.tableColumns lastObject] dataCell];
+	for(size_t i = 0; i < [choices count]; ++i)
+	{
+		[dataCell setStringValue:[choices objectAtIndex:i]];
+		width = std::max(width, [dataCell cellSize].width + 4);
+	}
+
+	if([choices count] > 10)
+		width += 15;
+
+	CGFloat height = std::min<NSUInteger>([choices count], 10) * ([tableView rowHeight]+[tableView intercellSpacing].height);
+	NSRect frame   = { { NSMinX(window.frame), NSMaxY(window.frame) - height }, { std::min<CGFloat>(ceil(width), 400), height } };
+	[window setFrame:frame display:YES];
 }
 
 - (void)setWindow:(NSWindow*)aWindow
@@ -42,8 +56,7 @@ enum action_t { kActionNop, kActionTab, kActionReturn, kActionCancel, kActionMov
 		return;
 
 	[[window parentWindow] removeChildWindow:window];
-	[window release];
-	window = [aWindow retain];
+	window = aWindow;
 }
 
 - (void)viewBoundsDidChange:(NSNotification*)aNotification
@@ -57,6 +70,20 @@ enum action_t { kActionNop, kActionTab, kActionReturn, kActionCancel, kActionMov
 	return choiceIndex == NSNotFound ? nil : [choices objectAtIndex:choiceIndex];
 }
 
+- (void)setChoices:(NSArray*)newChoices
+{
+	if([choices isEqualToArray:newChoices])
+		return;
+
+	id oldSelection = self.selectedChoice;
+	self.choiceIndex = NSNotFound;
+	choices = newChoices;
+	[tableView reloadData];
+	self.choiceIndex = [choices indexOfObject:oldSelection];
+
+	[self sizeToFit];
+}
+
 - (void)setChoiceIndex:(NSUInteger)newIndex
 {
 	if(choiceIndex != newIndex)
@@ -64,16 +91,12 @@ enum action_t { kActionNop, kActionTab, kActionReturn, kActionCancel, kActionMov
 		choiceIndex = newIndex;
 		if(choiceIndex == NSNotFound)
 		{
-			NSInteger selectedRow = [tableView selectedRow];
-			if(selectedRow != -1)
-				[tableView deselectRow:selectedRow];
+			[tableView deselectAll:self];
 		}
 		else
 		{
 			[tableView selectRowIndexes:[NSIndexSet indexSetWithIndex:choiceIndex] byExtendingSelection:NO];
-			NSRect rowRect = [tableView rectOfRow:choiceIndex];
-			rowRect.size.height = NSHeight([tableView visibleRect]);
-			[tableView scrollRectToVisible:NSIntersectionRect(rowRect, [tableView bounds])];
+			[tableView scrollRectToVisible:[tableView rectOfRow:choiceIndex]];
 		}
 	}
 }
@@ -90,18 +113,17 @@ enum action_t { kActionNop, kActionTab, kActionReturn, kActionCancel, kActionMov
 
 - (void)showAtTopLeftPoint:(NSPoint)aPoint forView:(NSView*)aView
 {
-	window = [[NSPanel alloc] initWithContentRect:NSZeroRect styleMask:NSBorderlessWindowMask backing:NSBackingStoreBuffered defer:NO];
+	window = [[NSPanel alloc] initWithContentRect:NSMakeRect(aPoint.x, aPoint.y, 0, 0) styleMask:NSBorderlessWindowMask backing:NSBackingStoreBuffered defer:NO];
 	[window setReleasedWhenClosed:NO];
 	[window setOpaque:NO];
 	window.alphaValue         = 0.97;
 	window.backgroundColor    = [NSColor colorWithCalibratedRed:1.0 green:0.96 blue:0.76 alpha:1.0];
 	window.hasShadow          = YES;
 	window.level              = NSStatusWindowLevel;
-	window.hidesOnDeactivate  = YES;
 	window.ignoresMouseEvents = YES;
 
 	tableView = [[NSTableView alloc] initWithFrame:NSZeroRect];
-	[tableView addTableColumn:[[[NSTableColumn alloc] initWithIdentifier:@"mainColumn"] autorelease]];
+	[tableView addTableColumn:[[NSTableColumn alloc] initWithIdentifier:@"mainColumn"]];
 	tableView.headerView                         = nil;
 	tableView.focusRingType                      = NSFocusRingTypeNone;
 	tableView.autoresizingMask                   = NSViewWidthSizable|NSViewHeightSizable;
@@ -111,18 +133,7 @@ enum action_t { kActionNop, kActionTab, kActionReturn, kActionCancel, kActionMov
 	// tableView.delegate                           = self;
 	[tableView reloadData];
 
-	CGFloat width = 60;
-	NSCell* dataCell = [[tableView.tableColumns lastObject] dataCell];
-	for(size_t i = 0; i < [choices count]; ++i)
-	{
-		[dataCell setStringValue:[choices objectAtIndex:i]];
-		width = std::max(width, [dataCell cellSize].width + 4);
-	}
-	
-	if([choices count] > 10)
-		width += 15;
-
-	NSScrollView* scrollView         = [[[NSScrollView alloc] initWithFrame:NSZeroRect] autorelease];
+	NSScrollView* scrollView         = [[NSScrollView alloc] initWithFrame:NSZeroRect];
 	scrollView.hasVerticalScroller   = YES;
 	scrollView.hasHorizontalScroller = NO;
 	scrollView.autohidesScrollers    = YES;
@@ -135,9 +146,7 @@ enum action_t { kActionNop, kActionTab, kActionReturn, kActionCancel, kActionMov
 	if(choiceIndex != NSNotFound)
 		[tableView selectRowIndexes:[NSIndexSet indexSetWithIndex:choiceIndex] byExtendingSelection:NO];
 
-	CGFloat height = std::min<NSUInteger>([choices count], 10) * ([tableView rowHeight]+[tableView intercellSpacing].height);
-	NSRect frame   = { { aPoint.x, aPoint.y - height }, { std::min<CGFloat>(ceil(width), 400.0), height } };
-	[window setFrame:frame display:NO];
+	[self sizeToFit];
 
 	topLeftPosition = [aView convertPointFromBase:[[aView window] convertScreenToBase:aPoint]];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(viewBoundsDidChange:) name:NSViewBoundsDidChangeNotification object:[[aView enclosingScrollView] contentView]];
@@ -181,13 +190,13 @@ enum action_t { kActionNop, kActionTab, kActionReturn, kActionCancel, kActionMov
 	if(res == OakChoiceMenuKeyMovement)
 		self.choiceIndex = oak::cap<NSInteger>(0, (choiceIndex == NSNotFound ? (offset > 0 ? -1 : [choices count]) : choiceIndex) + offset, [choices count] - 1);;
 
-	return res;           
-}                                            
+	return res;
+}
 
 - (void)doCommandBySelector:(SEL)aSelector
 {
 	if([self respondsToSelector:aSelector])
-		[self performSelector:aSelector withObject:self];
+		[super doCommandBySelector:aSelector];
 }
 
 - (void)insertText:(id)aString                 { }

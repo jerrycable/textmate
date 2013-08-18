@@ -3,7 +3,9 @@
 #include <plist/plist.h>
 #include <io/entries.h>
 #include <text/decode.h>
+#include <text/trim.h>
 #include <OakSystem/application.h>
+#include <oak/compat.h>
 
 static bool run_auth_command (AuthorizationRef& auth, std::string const& cmd, ...)
 {
@@ -22,7 +24,7 @@ static bool run_auth_command (AuthorizationRef& auth, std::string const& cmd, ..
 	args.push_back(NULL);
 
 	bool res = false;
-	if(AuthorizationExecuteWithPrivileges(auth, cmd.c_str(), kAuthorizationFlagDefaults, &args[0], NULL) == errAuthorizationSuccess)
+	if(oak::execute_with_privileges(auth, cmd, kAuthorizationFlagDefaults, &args[0], NULL) == errAuthorizationSuccess)
 	{
 		int status;
 		int pid = wait(&status);
@@ -111,11 +113,10 @@ namespace sw_update
 		{
 			plist::dictionary_t const& plist = plist::load(archiver.path);
 
-			std::string versionString, archive;
-			if(plist::get_key_path(plist, "revision", versionString) && plist::get_key_path(plist, "url", archive))
+			std::string version, archive;
+			if(plist::get_key_path(plist, "version", version) && plist::get_key_path(plist, "url", archive))
 			{
-				long version = strtol(versionString.c_str(), NULL, 10);
-				return version_info_t(version, archive);
+				return version_info_t(text::trim(version), archive);
 			}
 			else if(error)
 			{
@@ -132,31 +133,37 @@ namespace sw_update
 	std::string download_update (std::string const& url, key_chain_t const& keyChain, std::string* error, double* progress, bool const* stopFlag)
 	{
 		std::string dummy;
-		std::string const path = path::join(path::join(path::home(), "Library/Caches/com.macromates.TextMate"), path::name(url));
+		std::string const path = path::join({ path::home(), "Library/Caches/com.macromates.TextMate", path::name(url) });
 		return network::download_tbz(url, keyChain, path, error ? *error : dummy, progress, 0, 1, stopFlag);
 	}
 
 	std::string install_update (std::string const& src)
 	{
-		std::string const dst        = oak::application_t::path();
-		std::string const oldVersion = oak::application_t::revision();
-		std::string const backup     = path::strip_extension(dst) + " " + oldVersion + path::extension(dst);
-		std::string const appExe     = path::join("Contents/MacOS", oak::application_t::name());
-		std::string const srcExe     = path::join(src, appExe);
-		std::string const dstExe     = path::join(dst, appExe);
+		char date[64];
+		time_t now = time(NULL);
+		strftime(date, sizeof(date), "(%F %T)", localtime(&now));
+
+		std::string const dst         = oak::application_t::path();
+		std::string const oldVersion  = oak::application_t::revision();
+		std::string const srcContents = path::join(src, "Contents");
+		std::string const dstContents = path::join(dst, "Contents");
+		std::string const backup      = dstContents + "-" + oldVersion + " " + date;
+		std::string const appExe      = path::join("Contents/MacOS", oak::application_t::name());
+		std::string const srcExe      = path::join(src, appExe);
+		std::string const dstExe      = path::join(dst, appExe);
 
 		AuthorizationRef auth = NULL;
 		if(!path::exists(srcExe))
 			return "New application is broken (TMPDIR sweeper?).";
-		else if(!mv_path(dst, backup, auth))
+		else if(!mv_path(dstContents, backup, auth))
 			return "Error moving current version.";
-		else if(!mv_path(src, dst, auth))
+		else if(!mv_path(srcContents, dstContents, auth))
 			return "Error installing new version.";
 		else if(!path::exists(dstExe))
 			return "Installed application is broken.";
-		else if(!rm_dir(backup, auth))
+		else if(!rm_dir(backup, auth) && path::move_to_trash(backup) == NULL_STR) // Move to trash if unlink fails <issue://991>
 			return "Error removing old version.";
-
+		rm_dir(src, auth);
 		return NULL_STR;
 	}
 };

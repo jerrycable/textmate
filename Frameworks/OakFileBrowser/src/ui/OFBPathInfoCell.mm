@@ -1,55 +1,12 @@
 #import "OFBPathInfoCell.h"
 #import <OakAppKit/NSColor Additions.h>
 #import <OakAppKit/NSImage Additions.h>
-#import <OakAppKit/OakImage.h>
 #import <OakFoundation/OakTimer.h>
 #import <oak/debug.h>
+#import "../io/FSItem.h"
+#import <OakFoundation/NSString Additions.h>
 
-@interface OFBPathInfoCell ()
-@property (nonatomic, retain) OakTimer* spinTimer;
-@end
-
-@implementation OFBPathInfoCell
-@synthesize isOpen, isVisible, labelIndex, isLoading, spinTimer, mouseDownInCloseButton;
-
-- (void)drawLabelIndex:(NSUInteger)labelColorIndex inFrame:(NSRect)cellFrame
-{
-	if(labelColorIndex == 0)
-		return;
-	ASSERT(labelColorIndex < 8)
-
-	// color names: Gray, Green, Purple, Blue, Yellow, Red, Orange
-	static NSString* const startCol[] = { @"#CFCFCF", @"#D4EE9C", @"#DDBDEA", @"#ACD0FE", @"#F8F79C", @"#B2B2B2", @"#F9D194" };
-	static NSString* const stopCol[]  = { @"#A8A8A8", @"#AFDC49", @"#C186D7", @"#5B9CFE", @"#ECDF4A", @"#FC605C", @"#F6AC46" };
-
-	NSRect r = NSIntegralRect(NSInsetRect(cellFrame, 2, 0));
-	if([self isHighlighted])
-		r.size.height = r.size.width = 16;
-
-	NSGradient* gradient = [[[NSGradient alloc] initWithStartingColor:[NSColor colorWithString:startCol[labelColorIndex-1]]
-                                                         endingColor:[NSColor colorWithString:stopCol[labelColorIndex-1]]] autorelease];
-	NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:r xRadius:8.0 yRadius:8.0];
-	[gradient drawInBezierPath:path angle:90];
-}
-
-- (NSImage*)closeIcon
-{
-	return self.isOpen ? [NSImage imageNamed:@"CloseFile" inSameBundleAsClass:[self class]] : nil;
-}
-
-- (NSRect)closeButtonRectInFrame:(NSRect)cellFrame
-{
-	if(!self.isOpen)
-		return NSZeroRect;
-	return NSMakeRect(NSMaxX(cellFrame) - self.closeIcon.size.width, NSMaxY(cellFrame) - (cellFrame.size.height + self.closeIcon.size.height) / 2, self.closeIcon.size.width, self.closeIcon.size.height);
-}
-
-- (void)redrawFrame:(OakTimer*)timer
-{
-	[timer.userInfo setNeedsDisplay:YES];
-	spinnerValue += 0.1;
-	self.spinTimer = nil;
-}
+static CGFloat kCloseButtonRightMargin = 5;
 
 static void DrawSpinner (NSRect cellFrame, BOOL isFlipped, NSColor* color, double value)
 {
@@ -76,10 +33,76 @@ static void DrawSpinner (NSRect cellFrame, BOOL isFlipped, NSColor* color, doubl
 	}
 }
 
+@interface OFBPathInfoCell ()
+{
+	OBJC_WATCH_LEAKS(OFBPathInfoCell);
+	double spinnerValue;
+}
+@property (nonatomic, retain) OakTimer* spinTimer;
+@property (nonatomic, assign) BOOL mouseDownInCloseButton;
+- (BOOL)isMouseInCloseButtonInFrame:(NSRect)cellFrame controlView:(NSView*)controlView;
+@end
+
+@implementation OFBPathInfoCell
+- (id)copyWithZone:(NSZone*)aZone
+{
+	OFBPathInfoCell* res = [super copyWithZone:aZone];
+	DB(new(&res->_instance_counter_helper) watch_leaks_OFBPathInfoCell(_instance_counter_helper));
+	res.spinTimer = nil;
+	return res;
+}
+
+- (void)drawLabelIndex:(NSUInteger)labelColorIndex inFrame:(NSRect)cellFrame
+{
+	if(labelColorIndex == 0)
+		return;
+	ASSERT(labelColorIndex < 8);
+
+	// color names: Gray, Green, Purple, Blue, Yellow, Red, Orange
+	static NSString* const startCol[] = { @"#CFCFCF", @"#D4EE9C", @"#DDBDEA", @"#ACD0FE", @"#F8F79C", @"#FC999A", @"#F9D194" };
+	static NSString* const stopCol[]  = { @"#A8A8A8", @"#AFDC49", @"#C186D7", @"#5B9CFE", @"#ECDF4A", @"#FC605C", @"#F6AC46" };
+
+	NSRect r = NSIntegralRect(NSInsetRect(cellFrame, 2, 0));
+	if([self isHighlighted])
+		r.size.height = r.size.width = 16;
+
+	NSGradient* gradient = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithString:startCol[labelColorIndex-1]] endingColor:[NSColor colorWithString:stopCol[labelColorIndex-1]]];
+	NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:r xRadius:8.0 yRadius:8.0];
+	[gradient drawInBezierPath:path angle:90];
+}
+
+- (NSImage*)closeIcon
+{
+	return self.isOpen ? [NSImage imageNamed:@"CloseFile" inSameBundleAsClass:[OFBPathInfoCell class]] : nil;
+}
+
+- (NSRect)closeButtonRectInFrame:(NSRect)cellFrame
+{
+	if(!self.isOpen)
+		return NSZeroRect;
+	return NSMakeRect(NSMaxX(cellFrame) - kCloseButtonRightMargin - self.closeIcon.size.width, NSMaxY(cellFrame) - (cellFrame.size.height + self.closeIcon.size.height) / 2, self.closeIcon.size.width, self.closeIcon.size.height);
+}
+
+- (void)redrawFrame:(OakTimer*)timer
+{
+	[timer.userInfo setNeedsDisplay:YES];
+	spinnerValue += 0.1;
+	self.spinTimer = nil;
+}
+
 - (BOOL)isMouseInCloseButtonInFrame:(NSRect)cellFrame controlView:(NSView*)controlView
 {
 	NSPoint mousePoint = [controlView convertPoint:[controlView.window mouseLocationOutsideOfEventStream] fromView:nil];
 	return NSMouseInRect(mousePoint, [self closeButtonRectInFrame:cellFrame], controlView.isFlipped);
+}
+
+- (void)drawInteriorWithFrame:(NSRect)cellFrame inView:(NSView*)controlView
+{
+	BOOL wasHighlighted = self.isHighlighted;
+	if(self.disableHighlight)
+		self.highlighted = NO;
+	[super drawInteriorWithFrame:cellFrame inView:controlView];
+	self.highlighted = wasHighlighted;
 }
 
 - (void)drawWithFrame:(NSRect)cellFrame inView:(NSView*)controlView
@@ -90,7 +113,7 @@ static void DrawSpinner (NSRect cellFrame, BOOL isFlipped, NSColor* color, doubl
 		NSRect labelFrame = cellFrame;
 		labelFrame.origin.x -= extra;
 		labelFrame.size.width += extra;
-		[self drawLabelIndex:labelIndex inFrame:labelFrame];
+		[self drawLabelIndex:_labelIndex inFrame:labelFrame];
 	}
 
 	if(self.isLoading)
@@ -106,16 +129,14 @@ static void DrawSpinner (NSRect cellFrame, BOOL isFlipped, NSColor* color, doubl
 	else if(self.isOpen)
 	{
 		NSImage* closeIcon = self.closeIcon;
-		if(mouseDownInCloseButton)
-		{
-			closeIcon = [NSImage imageNamed:@"CloseFilePressed" inSameBundleAsClass:[self class]];
-		}
+		if(_mouseDownInCloseButton)
+			closeIcon = [NSImage imageNamed:@"CloseFilePressed" inSameBundleAsClass:[OFBPathInfoCell class]];
 		else if([self isMouseInCloseButtonInFrame:cellFrame controlView:controlView] && [[controlView window] isKeyWindow])
-		{
-			closeIcon = [NSImage imageNamed:@"CloseFileOver" inSameBundleAsClass:[self class]];
-		}
-		[closeIcon drawInRect:[self closeButtonRectInFrame:cellFrame] fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
-		cellFrame.size.width -= self.closeIcon.size.width;
+			closeIcon = [NSImage imageNamed:@"CloseFileOver" inSameBundleAsClass:[OFBPathInfoCell class]];
+
+		NSRect closeButtonRect = [self closeButtonRectInFrame:cellFrame];
+		[closeIcon drawInRect:closeButtonRect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
+		cellFrame.size.width -= NSMaxX(cellFrame) - NSMinX(closeButtonRect);
 	}
 
 	NSFont* unboldFont = self.font;
@@ -141,6 +162,11 @@ static void DrawSpinner (NSRect cellFrame, BOOL isFlipped, NSColor* color, doubl
 // = Tracking =
 // ============
 
++ (BOOL)prefersTrackingUntilMouseUp
+{
+	return YES;
+}
+
 - (NSUInteger)hitTestForEvent:(NSEvent*)event inRect:(NSRect)cellFrame ofView:(NSView*)controlView
 {
 	NSPoint point = [controlView convertPoint:([event window] ? [event locationInWindow] : [[controlView window] convertScreenToBase:[event locationInWindow]]) fromView:nil];
@@ -149,12 +175,6 @@ static void DrawSpinner (NSRect cellFrame, BOOL isFlipped, NSColor* color, doubl
 		return NSCellHitContentArea | NSCellHitTrackableArea | OFBPathInfoCellHitCloseButton;
 
 	return [super hitTestForEvent:event inRect:cellFrame ofView:controlView];
-}
-
-- (void)dealloc
-{
-	self.spinTimer = nil;
-	[super dealloc];
 }
 
 - (BOOL)trackMouse:(NSEvent*)theEvent inRect:(NSRect)cellFrame ofView:(NSView*)controlView untilMouseUp:(BOOL)untilMouseUp
@@ -166,16 +186,81 @@ static void DrawSpinner (NSRect cellFrame, BOOL isFlipped, NSColor* color, doubl
 	while([theEvent type] != NSLeftMouseUp)
 	{
 		mousePos = [controlView convertPoint:[theEvent locationInWindow] fromView:nil];
-		if(NSMouseInRect(mousePos, [self closeButtonRectInFrame:cellFrame], [controlView isFlipped]) != mouseDownInCloseButton)
+		if(NSMouseInRect(mousePos, [self closeButtonRectInFrame:cellFrame], [controlView isFlipped]) != _mouseDownInCloseButton)
 		{
-			mouseDownInCloseButton = !mouseDownInCloseButton;
+			_mouseDownInCloseButton = !_mouseDownInCloseButton;
 			[controlView setNeedsDisplayInRect:[self closeButtonRectInFrame:cellFrame]];
 		}
 		theEvent = [NSApp nextEventMatchingMask:(NSLeftMouseDraggedMask|NSMouseMovedMask|NSLeftMouseUpMask) untilDate:[NSDate distantFuture] inMode:NSEventTrackingRunLoopMode dequeue:YES];
 	}
 
-	mouseDownInCloseButton = NO;
+	_mouseDownInCloseButton = NO;
 	[controlView setNeedsDisplayInRect:[self closeButtonRectInFrame:cellFrame]];
 	return YES;
+}
+
+// =================
+// = Accessibility =
+// =================
+
+- (NSArray*)accessibilityAttributeNames
+{
+	if(self.representedObject && [self.representedObject isKindOfClass:[FSItem class]])
+	{
+		static NSArray* attributes = nil;
+		if(!attributes)
+		{
+			NSSet* set = [NSSet setWithArray:[super accessibilityAttributeNames]];
+			set = [set setByAddingObjectsFromArray:@[
+				NSAccessibilityDescriptionAttribute,
+				NSAccessibilityHelpAttribute,
+				NSAccessibilityURLAttribute,
+				NSAccessibilityFilenameAttribute,
+			]];
+			attributes = [set allObjects];
+		}
+		return attributes;
+	}
+	return [super accessibilityAttributeNames];
+}
+
+- (id)accessibilityAttributeValue:(NSString*)attribute
+{
+	if(self.representedObject && [self.representedObject isKindOfClass:[FSItem class]])
+	{
+		FSItem* item = (FSItem*)self.representedObject;
+		if([attribute isEqualToString:NSAccessibilityDescriptionAttribute])
+		{
+			NSMutableArray* descriptions = [NSMutableArray arrayWithCapacity:0];
+			NSString* type = [@{
+				@(FSItemURLTypeUnknown): @"unknown type",
+				@(FSItemURLTypeFile):    @"file",
+				@(FSItemURLTypeFolder):  @"folder",
+				@(FSItemURLTypePackage): @"package",
+				@(FSItemURLTypeAlias):   @"alias",
+				@(FSItemURLTypeMissing): @"missing",
+			} objectForKey:@(item.urlType)];
+
+			NSString* scmStatus = [NSString stringWithCxxString:scm::status::to_s(item.icon.scmStatus)];
+			if(item.icon.scmStatus == scm::status::unknown)
+				scmStatus = @"not versioned";
+
+			if(type)
+				[descriptions addObject:type];
+			if(scmStatus)
+				[descriptions addObject:scmStatus];
+			if(self.isOpen)
+				[descriptions addObject:@"open"];
+
+			return [descriptions componentsJoinedByString:@", "];
+		}
+		else if([attribute isEqualToString:NSAccessibilityHelpAttribute])
+			return item.toolTip;
+		else if([attribute isEqualToString:NSAccessibilityURLAttribute])
+			return item.url;
+		else if([attribute isEqualToString:NSAccessibilityFilenameAttribute])
+			return item.name;
+	}
+	return [super accessibilityAttributeValue:attribute];
 }
 @end

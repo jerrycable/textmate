@@ -8,7 +8,7 @@ class document_tests : public CxxTest::TestSuite
 	{
 		callback_t (std::string const& encoding) : _run_loop(CFSTR("OakThreadSignalsRunLoopMode")), _success(false), _encoding(encoding) { }
 
-		void select_encoding (std::string const& path, io::bytes_ptr content, file::open_context_ptr context)                             { std::string encoding = _encoding; _encoding = NULL_STR; if(encoding != NULL_STR) context->set_encoding(encoding); }
+		void select_charset (std::string const& path, io::bytes_ptr content, file::open_context_ptr context)                              { std::string encoding = _encoding; _encoding = NULL_STR; if(encoding != NULL_STR) context->set_charset(encoding); }
 		void show_document (std::string const& path, document::document_ptr document)                                                     { _success = true; _run_loop.stop(); }
 		void show_error (std::string const& path, document::document_ptr document, std::string const& message, oak::uuid_t const& filter) { _run_loop.stop(); }
 		void wait ()                                                                                                                      { _run_loop.start(); }
@@ -22,8 +22,8 @@ class document_tests : public CxxTest::TestSuite
 	{
 		document::open_callback_ptr cb(new callback_t(enc));
 		doc->try_open(cb);
-		std::tr1::static_pointer_cast<callback_t>(cb)->wait();
-		return !std::tr1::static_pointer_cast<callback_t>(cb)->_success;
+		std::static_pointer_cast<callback_t>(cb)->wait();
+		return !std::static_pointer_cast<callback_t>(cb)->_success;
 	}
 
 	void compare_content (std::string const& path, std::string const& content) const
@@ -31,8 +31,8 @@ class document_tests : public CxxTest::TestSuite
 		document::document_ptr doc = document::create(path);
 		doc->open();
 		TS_ASSERT_EQUALS(doc->is_open(), true);
-		TS_ASSERT_EQUALS(doc->buffer().substr(0, doc->buffer().size()), content);
-		doc->buffer().replace(0, content.size(), "world");
+		TS_ASSERT_EQUALS(doc->content(), content);
+		doc->set_content("world");
 		doc->save();
 		doc->close();
 	}
@@ -78,7 +78,7 @@ public:
 		document::document_ptr doc = document::create(jail.path("mac-roman.txt"));
 		jail.set_content("mac-roman.txt", std::string("\xAE\x62\x6C\x65\x67\x72\xBF\x64", 8));
 		open(doc, "MacRoman");
-		TS_ASSERT_EQUALS(doc->buffer().substr(0, doc->buffer().size()), "Æblegrød");
+		TS_ASSERT_EQUALS(doc->content(), "Æblegrød");
 		doc->close();
 	}
 
@@ -88,7 +88,7 @@ public:
 
 		document::document_ptr doc = document::from_content(std::string("\xAE\x62\x6C\x65\x67\x72\xBF\x64", 8));
 		open(doc, "MacRoman");
-		TS_ASSERT_EQUALS(doc->buffer().substr(0, doc->buffer().size()), "Æblegrød");
+		TS_ASSERT_EQUALS(doc->content(), "Æblegrød");
 		doc->close();
 	}
 
@@ -99,7 +99,7 @@ public:
 		document::document_ptr doc = document::create(jail.path("cp-1252.txt"));
 		jail.set_content("cp-1252.txt", std::string("\xC6\x62\x6C\x65\x67\x72\xF8\x64", 8));
 		open(doc, "CP1252");
-		TS_ASSERT_EQUALS(doc->buffer().substr(0, doc->buffer().size()), "Æblegrød");
+		TS_ASSERT_EQUALS(doc->content(), "Æblegrød");
 		doc->close();
 	}
 
@@ -143,7 +143,7 @@ public:
 		setxattr(jail.path("cp-1252.txt").c_str(), "com.apple.TextEncoding", "UTF-8", 5, 0, 0);
 		bool err = open(doc, "CP1252");
 		TS_ASSERT_EQUALS(err, false);
-		TS_ASSERT_EQUALS(doc->buffer().substr(0, doc->buffer().size()), "Æblegrød");
+		TS_ASSERT_EQUALS(doc->content(), "Æblegrød");
 		doc->close();
 	}
 };

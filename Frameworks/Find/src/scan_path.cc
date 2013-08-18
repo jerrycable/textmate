@@ -22,7 +22,7 @@ namespace scan
 		{
 			for(ssize_t i = 0; i < len; i++)
 			{
-				if(last_character == '\n' && first[i] == '\r')
+				if(last_character == '\r' && first[i] == '\n')
 				{
 					bol_offsets.push_back(offset + i+1);
 					last_character = '\0';
@@ -166,7 +166,7 @@ namespace find
 			return;
 		}
 
-		document::scanner_t scanner(search.path, search.glob, search.exclude_glob, search.follow_links, !search.skip_hidden_folders, true /* depth first */);
+		document::scanner_t scanner(search.path, search.globs, search.follow_links, true /* depth first */);
 
 		bool isRunning = true;
 		while(isRunning && !should_stop_flag)

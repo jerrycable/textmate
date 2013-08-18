@@ -112,7 +112,7 @@ namespace parse
 		static char const* special = "\\|([{}]).?*+^$";
 		while(it != last)
 		{
-			if(std::find(beginof(special), endof(special), *it) != endof(special))
+			if(strchr(special, *it))
 			{
 				DB(tmp += '\\');
 				*out++ = '\\';
@@ -180,7 +180,7 @@ namespace parse
 
 	static scope::scope_t create_scope (scope::scope_t const& current_scope, std::string const& format_string, regexp::match_t const& match)
 	{
-		return current_scope.append(pattern_is_format_string(format_string) ? format_string::expand(format_string, match.captures()) : format_string);
+		return current_scope.append(pattern_is_format_string(format_string) ? format_string::expand(format_string, match.captures()) : format_string, true);
 	}
 
 	static void apply_captures (scope::scope_t scope, regexp::match_t const& m, repository_ptr const& captures, std::map<size_t, scope::scope_t>& res, bool firstLine)
@@ -294,6 +294,28 @@ namespace parse
 		return rank;
 	}
 
+	static size_t collect_injections (rule_ptr const& base, char const* first, char const* last, stack_ptr const& stack, size_t i, bool firstLine, std::set<ranked_match_t>& res, std::map<size_t, regexp::match_t>& match_cache, std::set<size_t>& unique, size_t rank, scope::context_t const& scope)
+	{
+		for(stack_ptr node = stack; node; node = node->parent)
+		{
+			if(!node->rule->injections)
+				continue;
+
+			iterate(it, *node->rule->injections)
+			{
+				if(scope::selector_t(it->first).does_match(scope))
+					rank = collect_rule(base, first, last, stack->anchor, i, firstLine, it->second, res, match_cache, unique, rank);
+			}
+		}
+
+		citerate(it, injected_grammars())
+		{
+			if(it->first.does_match(scope))
+				rank = collect_children(base, first, last, stack->anchor, i, firstLine, it->second->children, res, match_cache, unique, rank);
+		}
+		return rank;
+	}
+
 	static void collect_rules (rule_ptr const& base, char const* first, char const* last, size_t i, bool firstLine, stack_ptr const& stack, std::set<ranked_match_t>& res, std::map<size_t, regexp::match_t>& match_cache)
 	{
 		res.clear();
@@ -306,25 +328,10 @@ namespace parse
 		}
 
 		std::set<size_t> unique;
-		size_t rank = collect_children(base, first, last, stack->anchor, i, firstLine, stack->rule->children, res, match_cache, unique);
-
-		for(stack_ptr node = stack; node; node = node->parent)
-		{
-			if(!node->rule->injections)
-				continue;
-
-			iterate(it, *node->rule->injections)
-			{
-				if(it->first == "." || scope::selector_t(it->first).does_match(stack->scope))
-					collect_rule(base, first, last, stack->anchor, i, firstLine, it->second, res, match_cache, unique, rank);
-			}
-		}
-
-		citerate(it, injected_grammars())
-		{
-			if(to_s(it->first) == "." || it->first.does_match(stack->scope))
-				collect_children(base, first, last, stack->anchor, i, firstLine, it->second->children, res, match_cache, unique, rank);
-		}
+		size_t rank = 0;
+		rank = collect_injections(base, first, last, stack, i, firstLine, res, match_cache, unique, rank, scope::context_t(stack->scope, ""));
+		rank = collect_children(base, first, last, stack->anchor, i, firstLine, stack->rule->children, res, match_cache, unique, rank);
+		rank = collect_injections(base, first, last, stack, i, firstLine, res, match_cache, unique, rank, scope::context_t("", stack->scope));
 	}
 
 	static bool has_cycle (size_t rule_id, size_t i, stack_ptr const& stack)
@@ -424,7 +431,7 @@ namespace parse
 
 				if(nothingMatched) // we left a begin/end rule but haven’t parsed any bytes, so we’re destined to repeat this mistake
 				{
-					fprintf(stderr, "*** no bytes parsed by rule ‘%s’, begin = ‘%s’, end = ‘%s’, position %zu for line: %.*s\n", rule->scope_string != NULL_STR ? rule->scope_string.c_str() : "(untitled)", rule->match_string.c_str(), rule->end_string.c_str(), i, last - first, first);
+					fprintf(stderr, "*** no bytes parsed by rule ‘%s’, begin = ‘%s’, end = ‘%s’, position %zu for line: %.*s\n", rule->scope_string != NULL_STR ? rule->scope_string.c_str() : "(untitled)", rule->match_string.c_str(), rule->end_string.c_str(), i, (int)(last - first), first);
 					break;
 				}
 			}
@@ -432,7 +439,7 @@ namespace parse
 			{
 				if(m.match.empty() && has_cycle(rule->rule_id, i, stack))
 				{
-					fprintf(stderr, "*** no bytes matched and recursive include of rule ‘%s’, begin = ‘%s’, end = ‘%s’, position %zu for line: %.*s\n", rule->scope_string != NULL_STR ? rule->scope_string.c_str() : "(untitled)", rule->match_string.c_str(), rule->end_string.c_str(), i, last - first, first);
+					fprintf(stderr, "*** no bytes matched and recursive include of rule ‘%s’, begin = ‘%s’, end = ‘%s’, position %zu for line: %.*s\n", rule->scope_string != NULL_STR ? rule->scope_string.c_str() : "(untitled)", rule->match_string.c_str(), rule->end_string.c_str(), i, (int)(last - first), first);
 					break;
 				}
 
@@ -461,7 +468,7 @@ namespace parse
 			{
 				if(m.match.empty())
 				{
-					fprintf(stderr, "*** no bytes parsed by rule ‘%s’, match = ‘%s’, position %zu for line: %.*s\n", rule->scope_string != NULL_STR ? rule->scope_string.c_str() : "(untitled)", rule->match_string.c_str(), i, last - first, first);
+					fprintf(stderr, "*** no bytes parsed by rule ‘%s’, match = ‘%s’, position %zu for line: %.*s\n", rule->scope_string != NULL_STR ? rule->scope_string.c_str() : "(untitled)", rule->match_string.c_str(), i, (int)(last - first), first);
 					continue; // do not re-apply since this matched zero characters
 				}
 

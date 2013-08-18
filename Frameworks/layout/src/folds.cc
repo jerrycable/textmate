@@ -29,6 +29,8 @@ namespace ng
 		plist::any_t value = plist::parse_ascii(str);
 		if(plist::array_t const* array = boost::get<plist::array_t>(&value))
 		{
+			bool validRanges = true;
+
 			std::vector< std::pair<size_t, size_t> > newFoldings;
 			iterate(pair, *array)
 			{
@@ -36,11 +38,14 @@ namespace ng
 				{
 					int32_t const* from = value->size() == 2 ? boost::get<int32_t>(&(*value)[0]) : NULL;
 					int32_t const* to   = value->size() == 2 ? boost::get<int32_t>(&(*value)[1]) : NULL;
-					if(from && to)
-						newFoldings.push_back(std::make_pair(*from, *to));
+					if(from && *from < _buffer.size() && to && *to <= _buffer.size())
+							newFoldings.push_back(std::make_pair(*from, *to));
+					else	validRanges = false;
 				}
 			}
-			set_folded(newFoldings);
+
+			if(validRanges)
+				set_folded(newFoldings);
 		}
 	}
 
@@ -406,11 +411,14 @@ namespace ng
 			setup_patterns(_buffer, n, startPattern, stopPattern, indentPattern, ignorePattern);
 
 			std::string const line = _buffer.substr(_buffer.begin(n), _buffer.eol(n));
-			size_t res = text::is_blank(line.data(), line.data() + line.size())          ?  1 : 0;
-			res += regexp::search(startPattern,  line.data(), line.data() + line.size()) ?  2 : 0;
-			res += regexp::search(stopPattern,   line.data(), line.data() + line.size()) ?  4 : 0;
-			res += regexp::search(indentPattern, line.data(), line.data() + line.size()) ?  8 : 0;
-			res += regexp::search(ignorePattern, line.data(), line.data() + line.size()) ? 16 : 0;
+			size_t res = text::is_blank(line.data(), line.data() + line.size()) ?  1 : 0;
+			res += regexp::search(startPattern,  line) ?  2 : 0;
+			res += regexp::search(stopPattern,   line) ?  4 : 0;
+			res += regexp::search(indentPattern, line) ?  8 : 0;
+			res += regexp::search(ignorePattern, line) ? 16 : 0;
+
+			if(res & 6) // if start/stop marker we ignore indent patterns
+				res &= ~24;
 
 			auto type  = (res & 1) ? kLineTypeEmpty : kLineTypeRegular;
 			switch(res)

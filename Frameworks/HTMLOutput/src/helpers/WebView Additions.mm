@@ -1,5 +1,6 @@
 #import <OakAppKit/OakPasteboard.h>
 #import <OakFoundation/OakFoundation.h>
+#import <OakFoundation/OakFindProtocol.h>
 #import <OakFoundation/NSString Additions.h>
 #import <document/collection.h>
 #import <ns/ns.h>
@@ -53,8 +54,8 @@
 			BOOL wrapAround = aFindServer.findOptions & find::wrap_around;
 
 			if([self searchFor:aFindServer.findString direction:!backwards caseSensitive:!ignoreCase wrap:wrapAround])
-					[aFindServer didFind:1 occurrencesOf:[self selection] atPosition:text::pos_t::undefined];
-			else	[aFindServer didFind:0 occurrencesOf:aFindServer.findString atPosition:text::pos_t::undefined];
+					[aFindServer didFind:1 occurrencesOf:[self selection] atPosition:text::pos_t::undefined wrapped:NO];
+			else	[aFindServer didFind:0 occurrencesOf:aFindServer.findString atPosition:text::pos_t::undefined wrapped:NO];
 		}
 		break;
 	}
@@ -84,11 +85,11 @@
 
 	std::string str;
 	if([encoding isEqualToString:@"utf-8"])
-		str = to_s((NSString*)[[[NSString alloc] initWithData:[dataSource data] encoding:NSUTF8StringEncoding] autorelease]);
+		str = to_s((NSString*)[[NSString alloc] initWithData:[dataSource data] encoding:NSUTF8StringEncoding]);
 	else if([encoding isEqualToString:@"utf-16"] || [encoding isEqualToString:@"utf16"])
-		str = to_s((NSString*)[[[NSString alloc] initWithData:[dataSource data] encoding:NSUnicodeStringEncoding] autorelease]);
+		str = to_s((NSString*)[[NSString alloc] initWithData:[dataSource data] encoding:NSUnicodeStringEncoding]);
 	else if([encoding isEqualToString:@"macintosh"])
-		str = to_s((NSString*)[[[NSString alloc] initWithData:[dataSource data] encoding:NSMacOSRomanStringEncoding] autorelease]);
+		str = to_s((NSString*)[[NSString alloc] initWithData:[dataSource data] encoding:NSMacOSRomanStringEncoding]);
 	else
 		return (void)NSRunAlertPanel(@"Unknown Encoding", @"The encoding used for this HTML buffer (“%@”) is unsupported.\nPlease file a bug report stating the encoding name and how you got to it.", @"Continue", nil, nil, [dataSource textEncodingName]);
 

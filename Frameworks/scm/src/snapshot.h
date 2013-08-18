@@ -1,11 +1,9 @@
 #ifndef SNAPSHOT_H_UOFPK7X7
 #define SNAPSHOT_H_UOFPK7X7
 
-#include <oak/misc.h>
-
 namespace fs
 {
-	struct PUBLIC snapshot_t
+	struct snapshot_t
 	{
 		snapshot_t ();
 		snapshot_t (std::string const& path);
@@ -14,10 +12,10 @@ namespace fs
 		bool operator!= (snapshot_t const& rhs) const { return _entries && rhs._entries ? *_entries != *rhs._entries : _entries != rhs._entries; }
 
 	private:
-		friend void to_s (snapshot_t const& snapshot);
+		friend std::string to_s (fs::snapshot_t const& snapshot);
 
 		struct node_t;
-		typedef std::tr1::shared_ptr< std::map<ino_t, node_t> > nodes_ptr;
+		typedef std::shared_ptr< std::map<ino_t, node_t> > nodes_ptr;
 
 		struct node_t
 		{
@@ -32,7 +30,7 @@ namespace fs
 			bool operator== (node_t const& rhs) const            { return _name == rhs._name && _type == rhs._type && _modified == rhs._modified && (!_entries && !rhs._entries || _entries && rhs._entries && *_entries == *rhs._entries); }
 			bool operator!= (node_t const& rhs) const            { return !(*this == rhs); }
 
-			void to_s (size_t indent = 0) const;
+			std::string to_s (size_t indent = 0) const;
 
 		private:
 			std::string _name;
@@ -47,7 +45,7 @@ namespace fs
 		nodes_ptr _entries;
 	};
 
-	PUBLIC void to_s (snapshot_t const& snapshot);
+	std::string to_s (snapshot_t const& snapshot);
 	
 } /* fs */
 

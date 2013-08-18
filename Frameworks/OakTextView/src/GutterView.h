@@ -13,8 +13,8 @@ struct GVLineRecord
 };
 
 @protocol GutterViewDelegate
-- (GVLineRecord const&)lineRecordForPosition:(CGFloat)yPos;
-- (GVLineRecord const&)lineFragmentForLine:(NSUInteger)aLine column:(NSUInteger)aColumn;
+- (GVLineRecord)lineRecordForPosition:(CGFloat)yPos;
+- (GVLineRecord)lineFragmentForLine:(NSUInteger)aLine column:(NSUInteger)aColumn;
 @end
 
 @protocol GutterViewColumnDataSource
@@ -30,21 +30,20 @@ struct GVLineRecord
 @end
 
 @interface GutterView : NSView
-{
-	IBOutlet NSView* partnerView;
-	NSFont* lineNumberFont;
-	id <GutterViewDelegate> delegate;
-	std::vector<struct data_source_t> columnDataSources;
-	NSMutableSet* hiddenColumns;
-	std::string highlightedRange;
-	std::vector<CGRect> backgroundRects, borderRects;
-
-	NSPoint mouseDownAtPoint;
-	NSPoint mouseHoveringAtPoint;
-}
-@property (nonatomic, retain) NSView* partnerView;
-@property (nonatomic, retain) NSFont* lineNumberFont;
-@property (nonatomic, assign) id <GutterViewDelegate> delegate;
+@property (nonatomic) IBOutlet NSView* partnerView;
+@property (nonatomic) NSFont* lineNumberFont;
+@property (nonatomic, weak) id <GutterViewDelegate> delegate;
+@property (nonatomic) NSColor* foregroundColor;
+@property (nonatomic) NSColor* backgroundColor;
+@property (nonatomic) NSColor* iconColor;
+@property (nonatomic) NSColor* iconHoverColor;
+@property (nonatomic) NSColor* iconPressedColor;
+@property (nonatomic) NSColor* selectionForegroundColor;
+@property (nonatomic) NSColor* selectionBackgroundColor;
+@property (nonatomic) NSColor* selectionIconColor;
+@property (nonatomic) NSColor* selectionIconHoverColor;
+@property (nonatomic) NSColor* selectionIconPressedColor;
+@property (nonatomic) NSColor* selectionBorderColor;
 - (void)setHighlightedRange:(std::string const&)str;
 - (void)reloadData:(id)sender;
 - (void)insertColumnWithIdentifier:(NSString*)columnIdentifier atPosition:(NSUInteger)index dataSource:(id <GutterViewColumnDataSource>)columnDataSource delegate:(id <GutterViewColumnDelegate>)columnDelegate;

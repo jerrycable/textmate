@@ -13,7 +13,7 @@ OAK_DEBUG_VAR(FileBrowser_Spotlight);
 
 namespace
 {
-	typedef std::tr1::shared_ptr<__MDQuery> MDQueryPtr;
+	typedef std::shared_ptr<__MDQuery> MDQueryPtr;
 
 	struct result_t
 	{
@@ -83,18 +83,14 @@ namespace
 	}
 }
 
-@implementation FSSearchDataSource
+@implementation FSSearchDataSource { OBJC_WATCH_LEAKS(FSSearchDataSource); }
 - (id)initWithURL:(NSURL*)anURL options:(NSUInteger)someOptions
 {
 	if((self = [super init]))
 	{
 		NSMutableArray* results = [NSMutableArray new];
 		citerate(item, execute_saved_search([[anURL path] fileSystemRepresentation]))
-		{
-			CFStringRef path = (CFStringRef)MDItemCopyAttribute(*item, kMDItemPath);
-			[results addObject:[FSItem itemWithURL:[NSURL fileURLWithPath:(NSString*)path isDirectory:NO]]];
-			CFRelease(path);
-		}
+			[results addObject:[FSItem itemWithURL:[NSURL fileURLWithPath:CFBridgingRelease(MDItemCopyAttribute(*item, kMDItemPath)) isDirectory:NO]]];
 
 		self.rootItem = [FSItem itemWithURL:anURL];
 		self.rootItem.icon     = [OakFileIconImage fileIconImageWithPath:[anURL path] size:NSMakeSize(16, 16)];

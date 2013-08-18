@@ -156,7 +156,7 @@ struct expand_visitor : boost::static_visitor<void>
 			size_t dstSize = buffer.size() - buffer_contains;
 			size_t srcSize = last - first;
 
-			size_t rc = iconv_compat(cd, (char**)&first, &srcSize, &dst, &dstSize);
+			size_t rc = iconv(cd, (char**)&first, &srcSize, &dst, &dstSize);
 			if(rc == (size_t)(-1) && errno != E2BIG && (errno != EINVAL || buffer.size() - buffer_contains - dstSize == 0))
 				return src; // error
 
@@ -268,7 +268,7 @@ namespace format_string
 		nodes.reset(new parser::nodes_t(n));
 	}
 	
-	std::string format_string_t::expand (string_map_t const& variables) const
+	std::string format_string_t::expand (std::map<std::string, std::string> const& variables) const
 	{
 		expand_visitor v(variables, NULL);
 		v.traverse(*nodes);
@@ -280,7 +280,7 @@ namespace format_string
 	// = API =
 	// =======
 	
-	std::string replace (std::string const& src, regexp::pattern_t const& ptrn, format_string_t const& format, bool repeat, string_map_t const& variables)
+	std::string replace (std::string const& src, regexp::pattern_t const& ptrn, format_string_t const& format, bool repeat, std::map<std::string, std::string> const& variables)
 	{
 		D(DBF_FormatString, bug("%s\n", src.c_str()););
 		
@@ -291,9 +291,35 @@ namespace format_string
 		
 	}
 
-	std::string expand (std::string const& format, string_map_t const& variables)
+	std::string expand (std::string const& format, std::map<std::string, std::string> const& variables)
 	{
 		return format_string_t(format).expand(variables);
+	}
+
+	std::string escape (std::string const& format)
+	{
+		std::string res = "";
+		for(size_t i = 0; i < format.size(); ++i)
+		{
+			switch(format[i])
+			{
+				case '\t': res.append("\\t"); break;
+				case '\r': res.append("\\r"); break;
+				case '\n': res.append("\\n"); break;
+
+				case '$': case '(': case '\\':
+				{
+					if(format[i] != '\\' || i+1 != format.size() && strchr("\\$(trn", format[i+1]))
+						res.append("\\");
+				}
+				/* continue */
+
+				default:
+					res += format[i];
+				break;
+			}
+		}
+		return res;
 	}
 
 } /* format_string */

@@ -7,17 +7,13 @@
 
 PUBLIC std::string OakStackDump (int linesToSkip)
 {
-#if MAC_OS_X_VERSION_MAX_ALLOWED > MAC_OS_X_VERSION_10_4
 	void* callstack[256];
 	int frames = backtrace(callstack, sizeofA(callstack));
 
-	int n = 0, t;
+	int n = 0;
 	char trace[1024];
-	for(int i = 0; i < frames; ++i)
-	{
-		snprintf(trace + n, sizeof(trace) - n, "%p, %n", callstack[i], &t);
-		n += t;
-	}
+	for(int i = 0; i < frames && n < sizeof(trace); ++i)
+		n += snprintf(trace + n, sizeof(trace) - n, "%p, ", callstack[i]);
 
 	if(n > 2)
 		trace[n - 2] = '\0';
@@ -69,9 +65,6 @@ PUBLIC std::string OakStackDump (int linesToSkip)
 			return res;
 		}
 	}
-#else
-	return "sorry, no stack dumps on 10.4";
-#endif
 	return "error";
 }
 
@@ -110,9 +103,9 @@ void OakPrintBadAssertion (char const* lhs, char const* op, char const* rhs, std
 @implementation OakExceptionHandlerDelegate
 + (void)load
 {
-	NSAutoreleasePool* pool = [NSAutoreleasePool new];
-	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(enableAllExceptions:) name:NSApplicationDidFinishLaunchingNotification object:NSApp];
-	[pool release];
+	@autoreleasepool {
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(enableAllExceptions:) name:NSApplicationDidFinishLaunchingNotification object:NSApp];
+	}
 }
 
 + (void)enableAllExceptions:(NSNotification*)aNotification

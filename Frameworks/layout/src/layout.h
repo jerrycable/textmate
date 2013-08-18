@@ -24,7 +24,7 @@ namespace ng
 			size_t left, top, right, bottom;
 		};
 
-		layout_t (ng::buffer_t& buffer, theme_ptr const& theme, std::string const& fontName = "Menlo", CGFloat fontSize = 12, bool softWrap = false, size_t wrapColumn = 0, std::string const& folded = NULL_STR, margin_t const& margin = margin_t(8));
+		layout_t (ng::buffer_t& buffer, theme_ptr const& theme, bool softWrap = false, bool scrollPastEnd = false, size_t wrapColumn = 0, std::string const& folded = NULL_STR, margin_t const& margin = margin_t(8));
 		~layout_t ();
 
 		// _buffer_callback is managed with new/delete so can’t be copied
@@ -39,13 +39,15 @@ namespace ng
 		void set_font (std::string const& fontName, CGFloat fontSize);
 		void set_margin (margin_t const& margin);
 		void set_wrapping (bool softWrap, size_t wrapColumn);
+		void set_scroll_past_end (bool scrollPastEnd);
 
 		theme_ptr const& theme () const         { return _theme; }
-		std::string const& font_name () const   { return _font_name; }
-		CGFloat font_size () const              { return _font_size; }
+		std::string const& font_name () const   { return _theme->font_name(); }
+		CGFloat font_size () const              { return _theme->font_size(); }
 		size_t tab_size () const                { return _tab_size; }
 		margin_t const& margin () const         { return _margin; }
 		bool wrapping () const                  { return _wrapping; }
+		size_t effective_wrap_column () const;
 
 		// ======================
 		// = Display Attributes =
@@ -58,10 +60,12 @@ namespace ng
 		void set_viewport_size (CGSize size);
 
 		bool draw_wrap_column () const          { return _draw_wrap_column; }
+		bool scroll_past_end () const           { return _scroll_past_end; }
 
 		// ======================
 
-		void draw (CGContextRef context, CGRect rectangle, bool isFlipped, bool showInvisibles, ng::ranges_t const& selection, ng::ranges_t const& highlightRanges = ng::ranges_t(), bool drawBackground = true, CGColorRef textColor = NULL);
+		void update_metrics (CGRect visibleRect);
+		void draw (ng::context_t const& context, CGRect rectangle, bool isFlipped, bool showInvisibles, ng::ranges_t const& selection, ng::ranges_t const& highlightRanges = ng::ranges_t(), bool drawBackground = true);
 		ng::index_t index_at_point (CGPoint point) const;
 		CGRect rect_at_index (ng::index_t const& index) const;
 		CGRect rect_for_range (size_t first, size_t last) const;
@@ -135,7 +139,6 @@ namespace ng
 		CGRect full_width (CGRect const& rect) const;
 		CGRect full_height (CGRect const& rect) const;
 		bool effective_soft_wrap (row_tree_t::iterator rowIter) const;
-		size_t effective_wrap_column () const;
 
 		void set_tab_size (size_t tabSize);
 		void did_insert (size_t first, size_t last);
@@ -144,7 +147,6 @@ namespace ng
 		void setup_font_metrics ();
 		void clear_text_widths ();
 
-		void update_metrics (CGRect visibleRect);
 		bool update_row (row_tree_t::iterator rowIter);
 
 		void refresh_line_at_index (size_t index, bool fullRefresh);
@@ -156,16 +158,15 @@ namespace ng
 		static std::string row_to_s (row_tree_t::value_type const& info);
 
 		mutable row_tree_t _rows;
-		std::tr1::shared_ptr<folds_t> _folds;
+		std::shared_ptr<folds_t> _folds;
 
 		ng::buffer_t&      _buffer;
 		ng::callback_t*    _buffer_callback;
 
 		theme_ptr          _theme;
-		std::string        _font_name;
-		CGFloat            _font_size;
 		size_t             _tab_size;
 		bool               _wrapping;
+		bool               _scroll_past_end;
 		bool               _draw_wrap_column = false;
 		size_t             _wrap_column;
 		margin_t           _margin;
@@ -175,7 +176,7 @@ namespace ng
 		bool               _draw_caret = false;
 		ng::index_t        _drop_marker;
 
-		std::tr1::shared_ptr<ct::metrics_t> _metrics;
+		std::shared_ptr<ct::metrics_t> _metrics;
 
 		size_t _pre_refresh_revision;
 		size_t _pre_refresh_caret;

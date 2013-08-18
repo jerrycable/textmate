@@ -17,6 +17,7 @@ namespace find
 		not_eol            = (1 << 6),
 		wrap_around        = (1 << 7),
 		all_matches        = (1 << 8),
+		extend_selection   = (1 << 9),
 	};
 
 	PUBLIC options_t operator| (options_t lhs, options_t rhs);
@@ -26,7 +27,7 @@ namespace find
 	PUBLIC options_t& operator&= (options_t& lhs, unsigned rhs);
 
 	struct find_implementation_t;
-	typedef std::tr1::shared_ptr<find_implementation_t> find_implementation_ptr;
+	typedef std::shared_ptr<find_implementation_t> find_implementation_ptr;
 
 	struct PUBLIC find_t
 	{

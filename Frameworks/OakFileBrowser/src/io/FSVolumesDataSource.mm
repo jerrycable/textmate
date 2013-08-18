@@ -1,15 +1,11 @@
 #import "FSVolumesDataSource.h"
 #import "FSItem.h"
-#import <OakFoundation/OakFoundation.h>
 #import <OakFoundation/NSString Additions.h>
 #import <io/path.h>
 #import <oak/oak.h>
+#import <oak/debug.h>
 
-#if !defined(MAC_OS_X_VERSION_10_6) || (MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_6)
-static NSString* const NSWorkspaceDidRenameVolumeNotification = @"NSWorkspaceDidRenameVolumeNotification";
-#endif
-
-@implementation FSVolumesDataSource
+@implementation FSVolumesDataSource { OBJC_WATCH_LEAKS(FSVolumesDataSource); }
 - (NSArray*)volumeList
 {
 	NSMutableArray* volumes = [NSMutableArray new];
@@ -26,7 +22,7 @@ static NSString* const NSWorkspaceDidRenameVolumeNotification = @"NSWorkspaceDid
 
 - (void)workspaceDidChangeVolumeList:(NSNotification*)aNotification
 {
-	[[NSNotificationCenter defaultCenter] postNotificationName:FSItemDidReloadNotification object:self userInfo:@{ @"item" : self.rootItem, @"children" : [self volumeList], @"recursive" : YES_obj }];
+	[[NSNotificationCenter defaultCenter] postNotificationName:FSItemDidReloadNotification object:self userInfo:@{ @"item" : self.rootItem, @"children" : [self volumeList], @"recursive" : @YES }];
 }
 
 - (id)initWithURL:(NSURL*)anURL options:(NSUInteger)someOptions
@@ -38,8 +34,8 @@ static NSString* const NSWorkspaceDidRenameVolumeNotification = @"NSWorkspaceDid
 		[[[NSWorkspace sharedWorkspace] notificationCenter] addObserver:self selector:@selector(workspaceDidChangeVolumeList:) name:NSWorkspaceDidRenameVolumeNotification object:[NSWorkspace sharedWorkspace]];
 
 		self.rootItem = [FSItem itemWithURL:anURL];
-		self.rootItem.icon     = [NSImage imageNamed:NSImageNameComputer];
-		self.rootItem.name     = [(NSString*)SCDynamicStoreCopyComputerName(NULL, NULL) autorelease];
+		self.rootItem.icon     = [NSImage imageNamed:NSImageNameComputer]; // FIXME Assigning to property of type OakFileIconImage
+		self.rootItem.name     = [[NSHost currentHost] localizedName];
 		self.rootItem.children = [self volumeList];
 	}
 	return self;
@@ -48,6 +44,5 @@ static NSString* const NSWorkspaceDidRenameVolumeNotification = @"NSWorkspaceDid
 - (void)dealloc
 {
 	[[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self];
-	[super dealloc];
 }
 @end

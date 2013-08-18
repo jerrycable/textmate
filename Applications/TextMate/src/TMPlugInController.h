@@ -1,12 +1,15 @@
-@interface TMPlugInController : NSObject
-{
-	NSMutableArray* loadedPlugIns;
-	NSMutableSet* plugInBundleIdentifiers;
-	BOOL didLoadAllPlugIns;
-}
+@protocol TMPlugInController
+- (CGFloat)version;
+@end
+
+@protocol TMPlugIn
+@optional
+- (id)initWithPlugInController:(id <TMPlugInController>)aController;
+@end
+
+@interface TMPlugInController : NSObject <TMPlugInController>
 + (TMPlugInController*)sharedInstance;
 - (void)loadAllPlugIns:(id)sender;
-- (void)loadPlugIn:(NSString*)aPath;
-// - (void)installPlugIn:(NSString*)aPath;
-- (float)version;
+- (CGFloat)version;
+- (void)installPlugInAtPath:(NSString*)aPath;
 @end

@@ -2,27 +2,6 @@
 
 @class OakFilterListView;
 
-@interface OakFilterWindowController : NSWindowController
-{
-	OBJC_WATCH_LEAKS(OakFilterWindowController);
-	IBOutlet OakFilterListView* filterView;
-	IBOutlet NSView* filterControlsView;
-	SEL action;
-	SEL accessoryAction;
-	id target;
-	BOOL sendActionOnSingleClick;
-	BOOL retainedSelf;
-}
-+ (id)filterWindow;
-@property (nonatomic, retain) id dataSource;
-@property (nonatomic, retain) id target;
-@property (nonatomic, assign) SEL action;
-@property (nonatomic, assign) SEL accessoryAction;
-@property (nonatomic, assign) BOOL sendActionOnSingleClick;
-@property (nonatomic, assign) BOOL allowsMultipleSelection;
-@property (nonatomic, readonly) NSArray* selectedItems;
-@end
-
 extern PUBLIC NSString* const FLDataSourceItemsDidChangeNotification;
 extern PUBLIC NSString* const FLDataSourceItemsShouldDescendNotification;
 extern PUBLIC NSString* const FLDataSourceItemsShouldAscendNotification;
@@ -63,6 +42,9 @@ extern PUBLIC NSString* const FLDataSourceItemsShouldAscendNotification;
 // If implemented the returned string will be displayed in the status bar when the item is selected
 - (NSAttributedString*)infoStringForItem:(id)anItem;
 
+// If implemented the returned array is an array of the items that should be selected in the view
+- (NSArray*)selectedItems;
+
 // Return YES if there may be more items to come
 - (BOOL)moreItemsToCome;
 
@@ -76,4 +58,20 @@ extern PUBLIC NSString* const FLDataSourceItemsShouldAscendNotification;
 - (void)makeItemsBestFitForCurrentSearch:(NSArray*)items;
 
 - (void)descendIntoItem:(id)anItem;
+@end
+
+PUBLIC @interface OakFilterWindowController : NSWindowController
+{
+	OBJC_WATCH_LEAKS(OakFilterWindowController);
+	IBOutlet OakFilterListView* filterView;
+	IBOutlet NSView* filterControlsView;
+}
+- (void)showWindowRelativeToWindow:(NSWindow*)parentWindow;
+@property (nonatomic, retain) id <FilterListDataSource> dataSource;
+@property (nonatomic, retain) id target;
+@property (nonatomic, assign) SEL action;
+@property (nonatomic, assign) SEL accessoryAction;
+@property (nonatomic, assign) BOOL sendActionOnSingleClick;
+@property (nonatomic, assign) BOOL allowsMultipleSelection;
+@property (nonatomic, readonly) NSArray* selectedItems;
 @end

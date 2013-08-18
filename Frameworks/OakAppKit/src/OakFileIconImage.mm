@@ -1,128 +1,66 @@
 #import "OakFileIconImage.h"
 #import "NSImage Additions.h"
 #import <io/path.h>
-#import <oak/CocoaSTL.h>
+#import <scm/scm.h>
 
-@interface OakFileIconImage ()
-- (void)refreshFileStatus;
-@property (nonatomic, retain) NSImage* base;
-@property (nonatomic, retain) NSImage* badge;
-@end
+// ========================
+// = Obtain Various Icons =
+// ========================
 
-// ===============================
-// = Custom Image Representation =
-// ===============================
-
-@interface OakFileIconImageRep : NSImageRep
+static NSImage* CustomIconForPath (NSString* path)
 {
-	OakFileIconImage* image;
-}
-- (id)initWithImage:(OakFileIconImage*)anImage;
-@end
+	static NSMutableDictionary* bindings = [NSMutableDictionary new];
 
-@implementation OakFileIconImageRep
-- (id)initWithImage:(OakFileIconImage*)anImage
-{
-	if((self = [super init]))
-	{
-		image = anImage;
-		self.size = anImage.size;
-	}
-	return self;
-}
-
-- (id)copyWithZone:(NSZone*)zone
-{
-	OakFileIconImageRep* copy = [super copyWithZone:zone];
-	copy->image = image;
-	return copy;
-}
-
-- (void)dealloc
-{
-	[super dealloc];
-}
-
-- (BOOL)draw
-{
-	[image refreshFileStatus];
-
-	NSImage* buffer = nil;
-	if(image.isModified)
-	{
-		buffer = [[[NSImage alloc] initWithSize:[self size]] autorelease];
-		[buffer lockFocus];
-	}
-
-	[image.base drawInRect:(NSRect){ NSZeroPoint, self.size } fromRect:NSZeroRect operation:NSCompositeCopy fraction:1];
-	[image.badge drawInRect:(NSRect){ NSZeroPoint, self.size } fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
-
-	if(image.isModified)
-	{
-		[buffer unlockFocus];
-		[buffer drawAtPoint:NSZeroPoint fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:0.4];
-	}
-
-	return YES;
-}
-@end
-
-static NSImage* IconImageForPath (NSString* path)
-{
-	std::multimap<ssize_t, NSString*> ordering;
-	NSDictionary* bindings = [NSDictionary dictionaryWithContentsOfFile:[[NSBundle bundleForClass:[OakFileIconImage class]] pathForResource:@"bindings" ofType:@"plist"]];
-	iterate(pair, bindings)
-	{
-		for(NSString* ext in pair->second)
+	static dispatch_once_t onceToken = 0;
+	dispatch_once(&onceToken, ^{
+		NSDictionary* map = [NSDictionary dictionaryWithContentsOfFile:[[NSBundle bundleForClass:[OakFileIconImage class]] pathForResource:@"bindings" ofType:@"plist"]];
+		for(NSString* key in map)
 		{
-			if(ssize_t rank = path::rank([path UTF8String], [ext UTF8String]))
-				ordering.insert(std::make_pair(rank, pair->first));
+			for(NSString* ext in map[key])
+				bindings[[ext lowercaseString]] = key;
 		}
+	});
+
+	NSString* pathName = [[path lastPathComponent] lowercaseString];
+	NSString* imageName = bindings[pathName];
+
+	NSRange range = [pathName rangeOfString:@"."];
+	if(range.location != NSNotFound)
+	{
+		imageName = bindings[[pathName substringFromIndex:NSMaxRange(range)]];
+		imageName = imageName ?: bindings[[pathName pathExtension]];
 	}
 
-	if(!ordering.empty())
+	NSImage* res = nil;
+	if(imageName)
 	{
-		struct stat buf;
-		if(lstat([path fileSystemRepresentation], &buf) == 0)
-		{
-			if(S_ISREG(buf.st_mode) || S_ISLNK(buf.st_mode))
+		static NSMutableDictionary* images = [NSMutableDictionary new];
+		@synchronized(images) {
+			if(!(res = images[imageName]))
 			{
-				NSImage* res = [NSImage imageNamed:ordering.begin()->second inSameBundleAsClass:[OakFileIconImage class]];
-
-				IconRef iconRef;
-				if(S_ISLNK(buf.st_mode) && GetIconRef(kOnSystemDisk, kSystemIconsCreator, kAliasBadgeIcon, &iconRef) == noErr)
-				{
-					NSImage* badge = [[[NSImage alloc] initWithIconRef:iconRef] autorelease];
-					ReleaseIconRef(iconRef);
-
-					res = [[res copy] autorelease];
-					[res setSize:NSMakeSize(16, 16)];
-					[res lockFocus];
-					[badge drawInRect:(NSRect){ NSZeroPoint, res.size } fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
-					[res unlockFocus];
-				}
-				return res;
+				if(res = [NSImage imageNamed:imageName inSameBundleAsClass:[OakFileIconImage class]])
+					images[imageName] = res;
 			}
 		}
 	}
+	return res;
+}
 
+static NSImage* IconBadgeForAlias ()
+{
 	IconRef iconRef;
-	FSRef fileRef;
-
-	bool didGetIconRef = false;
-	if([path isEqualToString:@"/"]) // this is an optimization — not sure why, but it takes a second or so to get this icon on my system
-		didGetIconRef = GetIconRef(kOnSystemDisk, 0, kGenericHardDiskIcon, &iconRef) == noErr;
-	else if(FSPathMakeRefWithOptions((UInt8 const*)[path fileSystemRepresentation], kFSPathMakeRefDoNotFollowLeafSymlink, &fileRef, NULL) == noErr)
-		didGetIconRef = GetIconRefFromFileInfo(&fileRef, 0, NULL, 0, NULL, kIconServicesNormalUsageFlag, &iconRef, NULL) == noErr;
-
-	NSImage* image = nil;
-	if(didGetIconRef)
+	if(GetIconRef(kOnSystemDisk, kSystemIconsCreator, kAliasBadgeIcon, &iconRef) == noErr)
 	{
-		image = [[[NSImage alloc] initWithIconRef:iconRef] autorelease]; // the reason we use IconRef is that it adds a badge to symbolic links
+		NSImage* badge = [[NSImage alloc] initWithIconRef:iconRef];
 		ReleaseIconRef(iconRef);
+		return badge;
 	}
+	return nil;
+}
 
-	return image ?: [[NSWorkspace sharedWorkspace] iconForFile:path];
+static NSImage* SystemIconForHFSType (OSType hfsFileTypeCode)
+{
+	return [[NSWorkspace sharedWorkspace] iconForFileType:NSFileTypeForHFSTypeCode(hfsFileTypeCode)];
 }
 
 static NSImage* BadgeForSCMStatus (scm::status::type scmStatus)
@@ -139,71 +77,235 @@ static NSImage* BadgeForSCMStatus (scm::status::type scmStatus)
 	return nil;
 }
 
-@implementation OakFileIconImage
-@synthesize path, isModified, base, badge;
+// ===============================
+// = Custom Image Representation =
+// ===============================
 
-- (void)setExistsOnDisk:(BOOL)flag
+@interface OakFileIconImageRep : NSImageRep
+@property (nonatomic)                       NSString*         path;
+@property (nonatomic)                       BOOL              exists;
+@property (nonatomic, getter = isDirectory) BOOL              directory;
+@property (nonatomic, getter = isAlias)     BOOL              alias;
+@property (nonatomic)                       scm::status::type scmStatus;
+@property (nonatomic, getter = isModified)  BOOL              modified;
+@property (nonatomic)                       NSArray*          imageStack;
+@end
+
+@implementation OakFileIconImageRep
+- (id)copyWithZone:(NSZone*)zone
 {
-	if(existsOnDisk != flag)
+	OakFileIconImageRep* copy = [super copyWithZone:zone];
+	copy->_path       = _path;
+	copy->_exists     = _exists;
+	copy->_directory  = _directory;
+	copy->_alias      = _alias;
+	copy->_scmStatus  = _scmStatus;
+	copy->_modified   = _modified;
+	copy->_imageStack = _imageStack;
+	return copy;
+}
+
+- (NSArray*)imageStack
+{
+	if(!_imageStack)
 	{
-		existsOnDisk = flag;
-		self.base    = existsOnDisk ? IconImageForPath(path) : [[NSWorkspace sharedWorkspace] iconForFileType:NSFileTypeForHFSTypeCode(kUnknownFSObjectIcon)];
+		NSMutableArray* res = [NSMutableArray array];
+		_imageStack = res;
+
+		if(_path && _exists)
+		{
+			if(!_directory)
+			{
+				if(NSImage* customImage = CustomIconForPath(_path))
+				{
+					[res addObject:customImage];
+					if(_alias)
+					{
+						if(NSImage* imageBadge = IconBadgeForAlias())
+							[res addObject:imageBadge];
+					}
+				}
+			}
+
+			if(res.count == 0)
+			{
+				NSImage* image;
+				if(![[NSURL fileURLWithPath:_path isDirectory:_directory] getResourceValue:&image forKey:NSURLEffectiveIconKey error:NULL])
+					image = [[NSWorkspace sharedWorkspace] iconForFile:_path];
+
+				if(image)
+					[res addObject:image];
+			}
+		}
+		else if(_exists)
+		{
+			if(NSImage* image = [[NSWorkspace sharedWorkspace] iconForFileType:NSFileTypeForHFSTypeCode(_directory ? kGenericFolderIcon : kGenericDocumentIcon)])
+				[res addObject:image];
+		}
+		else
+		{
+			[res addObject:SystemIconForHFSType(kUnknownFSObjectIcon)];
+		}
+
+		if(NSImage* scmStatusImage = BadgeForSCMStatus(_scmStatus))
+			[res addObject:scmStatusImage];
+	}
+	return _imageStack;
+}
+
+- (BOOL)draw
+{
+	NSImage* buffer = nil;
+	if(self.isModified)
+	{
+		buffer = [[NSImage alloc] initWithSize:[self size]];
+		[buffer lockFocus];
+	}
+
+	NSCompositingOperation op = NSCompositeCopy;
+	for(NSImage* image in self.imageStack)
+	{
+		[image drawInRect:(NSRect){ NSZeroPoint, self.size } fromRect:NSZeroRect operation:op fraction:1];
+		op = NSCompositeSourceOver;
+	}
+
+	if(self.isModified)
+	{
+		[buffer unlockFocus];
+		[buffer drawAtPoint:NSZeroPoint fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:0.4];
+	}
+
+	return YES;
+}
+@end
+
+// ====================
+// = OakFileIconImage =
+// ====================
+
+@interface OakFileIconImage ()
+@property (nonatomic) OakFileIconImageRep* fileIconImageRep;
+@end
+
+@implementation OakFileIconImage
+- (id)initWithSize:(NSSize)aSize
+{
+	if((self = [super initWithSize:aSize]))
+	{
+		_fileIconImageRep = [OakFileIconImageRep new];
+		[self addRepresentation:_fileIconImageRep];
+		self.exists = YES;
+	}
+	return self;
+}
+
+- (id)init
+{
+	return [self initWithSize:NSZeroSize];
+}
+
+- (id)initWithWithPath:(NSString*)aPath isModified:(BOOL)modifiedFlag size:(NSSize)aSize
+{
+	if((self = [self initWithSize:aSize]))
+	{
+		self.path     = aPath;
+		self.modified = modifiedFlag;
+		self.exists   = NO;
+
+		if(aPath)
+		{
+			std::string path = [aPath fileSystemRepresentation];
+
+			struct stat buf;
+			if(lstat(path.c_str(), &buf) == 0)
+			{
+				self.exists    = YES;
+				self.directory = S_ISDIR(buf.st_mode);
+				self.alias     = S_ISLNK(buf.st_mode);
+			}
+
+			if(auto scmDriver = scm::info(path::parent(path)))
+				self.scmStatus = scmDriver->status(path);
+		}
+	}
+	return self;
+}
+
+- (id)copyWithZone:(NSZone*)zone
+{
+	OakFileIconImage* copy = [super copyWithZone:zone];
+	copy->_fileIconImageRep = _fileIconImageRep;
+	return copy;
+}
+
+- (NSString*)path              { return _fileIconImageRep.path;        }
+- (BOOL)exists                 { return _fileIconImageRep.exists;      }
+- (BOOL)isDirectory            { return _fileIconImageRep.isDirectory; }
+- (BOOL)isAlias                { return _fileIconImageRep.isAlias;     }
+- (scm::status::type)scmStatus { return _fileIconImageRep.scmStatus;   }
+- (BOOL)isModified             { return _fileIconImageRep.isModified;  }
+
+- (void)recache
+{
+	self.fileIconImageRep.imageStack = nil;
+	[super recache];
+}
+
+- (void)setPath:(NSString*)newPath
+{
+	if(self.path != newPath && ![self.path isEqualToString:newPath])
+	{
+		_fileIconImageRep.path = newPath;
+		[self recache];
+	}
+}
+
+- (void)setExists:(BOOL)newExists
+{
+	if(self.exists != newExists)
+	{
+		_fileIconImageRep.exists = newExists;
+		[self recache];
+	}
+}
+
+- (void)setDirectory:(BOOL)newDirectory
+{
+	if(self.isDirectory != newDirectory)
+	{
+		_fileIconImageRep.directory = newDirectory;
+		[self recache];
+	}
+}
+
+- (void)setAlias:(BOOL)newAlias
+{
+	if(self.isAlias != newAlias)
+	{
+		_fileIconImageRep.alias = newAlias;
+		[self recache];
 	}
 }
 
 - (void)setScmStatus:(scm::status::type)newScmStatus
 {
-	if(scmStatus != newScmStatus)
+	if(self.scmStatus != newScmStatus)
 	{
-		scmStatus = newScmStatus;
-		self.badge = [[BadgeForSCMStatus(scmStatus) copy] autorelease];
+		_fileIconImageRep.scmStatus = newScmStatus;
+		[self recache];
 	}
 }
 
-- (void)refreshFileStatus
+- (void)setModified:(BOOL)newModified
 {
-	if(!path)
-		return;
-
-	if(!scmDriver)
-		scmDriver = scm::info([path fileSystemRepresentation]);
-
-	[self setExistsOnDisk:lstat([path fileSystemRepresentation], &(struct stat){ 0 }) == 0];
-	[self setScmStatus:scmDriver ? scmDriver->status([path fileSystemRepresentation]) : scm::status::none];
-}
-
-- (void)setSize:(NSSize)aSize
-{
-	for(NSImageRep* imageRep in [self representations])
-		[imageRep setSize:aSize];
-	[super setSize:aSize];
-}
-
-- (id)initWithWithPath:(NSString*)aPath isModified:(BOOL)flag size:(NSSize)aSize
-{
-	if((self = [super initWithSize:aSize]))
+	if(self.isModified != newModified)
 	{
-		self.path    = aPath;
-		isModified   = flag;
-		existsOnDisk = NO;
-		scmStatus    = scm::status::none;
-
-		self.base    = [[NSWorkspace sharedWorkspace] iconForFileType:NSFileTypeForHFSTypeCode(kUnknownFSObjectIcon)];
-
-		[self addRepresentation:[[[OakFileIconImageRep alloc] initWithImage:self] autorelease]];
+		_fileIconImageRep.modified = newModified;
+		[self recache];
 	}
-	return self;
 }
 
-- (void)dealloc
-{
-	[path release];
-	[base release];
-	[badge release];
-	[super dealloc];
-}
-
-+ (id)fileIconImageWithPath:(NSString*)aPath isModified:(BOOL)flag size:(NSSize)aSize { return [[[self alloc] initWithWithPath:aPath isModified:flag size:aSize] autorelease]; }
++ (id)fileIconImageWithPath:(NSString*)aPath isModified:(BOOL)flag size:(NSSize)aSize { return [[self alloc] initWithWithPath:aPath isModified:flag size:aSize]; }
 + (id)fileIconImageWithPath:(NSString*)aPath isModified:(BOOL)flag                    { return [self fileIconImageWithPath:aPath isModified:flag size:NSMakeSize(16, 16)]; }
 + (id)fileIconImageWithPath:(NSString*)aPath size:(NSSize)aSize                       { return [self fileIconImageWithPath:aPath isModified:NO size:aSize]; }
 @end

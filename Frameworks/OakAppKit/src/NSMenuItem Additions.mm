@@ -4,84 +4,107 @@
 #import <OakFoundation/NSString Additions.h>
 #import <text/case.h>
 #import <text/utf8.h>
+#import <ns/ns.h>
 
-extern "C" MenuRef _NSGetCarbonMenu (NSMenu* aMenu);
-
-static void set_legacy_key_equivalent (MenuRef aMenu, UInt16 anIndex, std::string keyStr, NSUInteger nsModifiers)
+@interface MenuMutableAttributedString : NSMutableAttributedString
 {
-	std::string const uppercaseKeyStr = text::uppercase(keyStr);
-	if(keyStr != text::lowercase(keyStr))
-		nsModifiers |= NSShiftKeyMask;
-	if(keyStr != uppercaseKeyStr)
-		keyStr = uppercaseKeyStr;
-
-	UInt8 modifiers = kMenuNoCommandModifier;
-	if(nsModifiers & NSShiftKeyMask)     modifiers |= kMenuShiftModifier;
-	if(nsModifiers & NSControlKeyMask)   modifiers |= kMenuControlModifier;
-	if(nsModifiers & NSAlternateKeyMask) modifiers |= kMenuOptionModifier;
-	if(nsModifiers & NSCommandKeyMask)   modifiers &= ~kMenuNoCommandModifier;
-
-	uint32_t keyCode = utf8::to_ch(keyStr);
-	if(keyCode == NSDeleteFunctionKey)
-	{
-		SetMenuItemKeyGlyph(aMenu, anIndex, kMenuDeleteRightGlyph);
-	}
-	else if(keyCode == NSDeleteCharacter)
-	{
-		SetMenuItemKeyGlyph(aMenu, anIndex, kMenuDeleteLeftGlyph);
-	}
-	else
-	{
-		uint16_t code = 0;
-		if(nsModifiers & NSNumericPadKeyMask)
-		{
-			switch(keyCode)
-			{
-				case '0': code = 82; break;
-				case '1': code = 83; break;
-				case '2': code = 84; break;
-				case '3': code = 85; break;
-				case '4': code = 86; break;
-				case '5': code = 87; break;
-				case '6': code = 88; break;
-				case '7': code = 89; break;
-				case '8': code = 91; break;
-				case '9': code = 92; break;
-				case '=': code = 81; break;
-				case '/': code = 75; break;
-				case '*': code = 67; break;
-				case '+': code = 69; break;
-				case '-': code = 78; break;
-				case ',': code = 65; break;
-				case '.': code = 65; break;
-				case NSEnterCharacter: code = 76; break; // could also use kMenuEnterGlyph
-			}
-		}
-
-		if(code)
-		{
-			SetMenuItemCommandKey(aMenu, anIndex, true, code);
-		}
-		else
-		{
-			if(keyCode > 0x7F)
-			{
-				NSString* key = [NSString stringWithCxxString:keyStr];
-				if([key canBeConvertedToEncoding:NSMacOSRomanStringEncoding])
-				{
-					if(NSData* data = [key dataUsingEncoding:NSMacOSRomanStringEncoding])
-					{
-						if([data length] == 1)
-							keyCode = *(char const*)[data bytes];
-					}
-				}
-			}
-
-			SetMenuItemCommandKey(aMenu, anIndex, false, keyCode);
-		}
-	}
-	SetMenuItemModifiers(aMenu, anIndex, modifiers);
+	NSMutableAttributedString* contents;
+	CGSize size;
 }
+- (void)appendTableCellWithString:(NSString*)string table:(NSTextTable*)table textAlignment:(NSTextAlignment)textAlignment verticalAlignment:(NSTextBlockVerticalAlignment)verticalAlignment font:(NSFont*)font row:(int)row column:(int)column;
+- (CGSize)size;
+@end
+
+@implementation MenuMutableAttributedString
+
+// Methods to override in subclass
+
+- (id)init
+{
+	return [self initWithAttributedString:nil];
+}
+
+- (id)initWithAttributedString:(NSAttributedString*)attributedString
+{
+	if(self = [super init])
+		contents = attributedString ? [attributedString mutableCopy] : [[NSMutableAttributedString alloc] init];
+	return self;
+}
+
+- (NSString*)string
+{
+	return [contents string];
+}
+
+- (NSDictionary*)attributesAtIndex:(NSUInteger)location effectiveRange:(NSRange*)range
+{
+	return [contents attributesAtIndex:location effectiveRange:range];
+}
+
+- (void)replaceCharactersInRange:(NSRange)range withString:(NSString*)string
+{
+	[contents replaceCharactersInRange:range withString:string];
+}
+
+- (void)setAttributes:(NSDictionary*)attributes range:(NSRange)range
+{
+	[contents setAttributes:attributes range:range];
+}
+
+- (id)copyWithZone:(NSZone*)zone
+{
+	MenuMutableAttributedString* copy = [MenuMutableAttributedString allocWithZone:zone];
+	copy->contents = [contents copyWithZone:zone];
+	copy->size = size;
+	return copy;
+}
+
+// NOTE: AppKit additions produce invalid values here, provide our own implementation
+
+- (NSRect)boundingRectWithSize:(NSSize)aSize options:(NSStringDrawingOptions)options
+{
+	return NSMakeRect(0, 0, size.width, size.height);
+}
+
+// Helper method for adding table cell into the attributed string
+
+- (void)appendTableCellWithString:(NSString*)string table:(NSTextTable*)table textAlignment:(NSTextAlignment)textAlignment verticalAlignment:(NSTextBlockVerticalAlignment)verticalAlignment font:(NSFont*)font row:(int)row column:(int)column;
+{
+	CGSize stringSize = [string sizeWithAttributes:@{ NSFontAttributeName : font }];
+
+	NSTextTableBlock* block = [[NSTextTableBlock alloc] initWithTable:table startingRow:row rowSpan:1 startingColumn:column columnSpan:1];
+
+	if(column > 0)
+		[block setContentWidth:stringSize.width type:NSTextBlockAbsoluteValueType];
+
+	block.verticalAlignment = verticalAlignment;
+
+	NSMutableParagraphStyle* paragraphStyle = [NSMutableParagraphStyle new];
+	[paragraphStyle setTextBlocks:@[ block ]];
+	[paragraphStyle setAlignment:textAlignment];
+
+	string = [string stringByAppendingString:@"\n"];
+
+	NSMutableAttributedString* cellString = [[NSMutableAttributedString alloc] initWithString:string];
+	[cellString addAttribute:NSParagraphStyleAttributeName value:paragraphStyle range:NSMakeRange(0, [cellString length])];
+	[cellString addAttribute:NSFontAttributeName value:font range:NSMakeRange(0, [cellString length])];
+
+	size.width += stringSize.width;
+	if(size.height < stringSize.height)
+		size.height = stringSize.height;
+
+	[self appendAttributedString:cellString];
+}
+
+- (CGSize)size
+{
+	return size;
+}
+
+@end
+
+static char const* kOakMenuItemKeyEquivalent = "OakMenuItemKeyEquivalent";
+static char const* kOakMenuItemTabTrigger    = "OakMenuItemTabTrigger";
 
 @implementation NSMenuItem (FileIcon)
 - (void)setIconForFile:(NSString*)path;
@@ -99,6 +122,33 @@ static void set_legacy_key_equivalent (MenuRef aMenu, UInt16 anIndex, std::strin
 		[icon setSize:NSMakeSize(16, 16)];
 		[self setImage:icon];
 	}
+}
+
+- (void)setActivationString:(NSString*)anActivationString withFont:(NSFont*)aFont
+{
+	MenuMutableAttributedString* attributedTitle = [MenuMutableAttributedString new];
+	NSTextTable* table = [NSTextTable new];
+	[table setNumberOfColumns:2];
+
+	NSFont* font = self.menu.font ?: [NSFont menuFontOfSize:0];
+	[attributedTitle appendTableCellWithString:self.title table:table textAlignment:NSLeftTextAlignment verticalAlignment:NSTextBlockMiddleAlignment font:font row:0 column:0];
+	[attributedTitle appendTableCellWithString:anActivationString table:table textAlignment:NSRightTextAlignment verticalAlignment:aFont && aFont.pointSize >= 13 ? NSTextBlockBottomAlignment : NSTextBlockMiddleAlignment font:(aFont ?: font) row:0 column:1];
+
+	NSString* plainTitle = self.title;
+	self.attributedTitle = attributedTitle;
+	self.title = plainTitle;
+}
+
+- (void)updateTitle:(NSString*)newTitle
+{
+	if([self.title isEqualToString:newTitle])
+		return;
+
+	self.title = newTitle;
+	if(NSString* keyEquivalent = objc_getAssociatedObject(self, kOakMenuItemKeyEquivalent))
+		[self setInactiveKeyEquivalentCxxString:to_s(keyEquivalent)];
+	if(NSString* tabTrigger = objc_getAssociatedObject(self, kOakMenuItemTabTrigger))
+		[self setTabTriggerCxxString:to_s(tabTrigger)];
 }
 
 - (void)setKeyEquivalentCxxString:(std::string const&)aKeyEquivalent
@@ -128,40 +178,28 @@ static void set_legacy_key_equivalent (MenuRef aMenu, UInt16 anIndex, std::strin
 		}
 	}
 
-	if(MenuRef menu = _NSGetCarbonMenu([self menu]))
-	{
-		set_legacy_key_equivalent(menu, [[self menu] indexOfItem:self] + 1, aKeyEquivalent.substr(i), modifiers);
-	}
-	else
-	{
-		[self setKeyEquivalent:[NSString stringWithCxxString:aKeyEquivalent.substr(i)]];
-		[self setKeyEquivalentModifierMask:modifiers];
-	}
+	[self setKeyEquivalent:[NSString stringWithCxxString:aKeyEquivalent.substr(i)]];
+	[self setKeyEquivalentModifierMask:modifiers];
+}
+
+- (void)setInactiveKeyEquivalentCxxString:(std::string const&)aKeyEquivalent
+{
+	objc_setAssociatedObject(self, kOakMenuItemKeyEquivalent, [NSString stringWithCxxString:aKeyEquivalent], OBJC_ASSOCIATION_RETAIN);
+	if(aKeyEquivalent != NULL_STR && !aKeyEquivalent.empty())
+		[self setActivationString:[NSString stringWithCxxString:" " + ns::glyphs_for_event_string(aKeyEquivalent)] withFont:nil];
 }
 
 - (void)setTabTriggerCxxString:(std::string const&)aTabTrigger
 {
-	if(aTabTrigger == NULL_STR)
-		return;
-
-	if(MenuRef menu = _NSGetCarbonMenu([self menu]))
-	{
-		MenuItemIndex itemIndex = [[self menu] indexOfItem:self] + 1;
-
-		ChangeMenuItemAttributes(menu, itemIndex, kMenuItemAttrCustomDraw, 0);
-		std::string const& tabTrigger(aTabTrigger + "⇥");
-		size_t len = tabTrigger.size();
-		SetMenuItemProperty(menu, itemIndex, 'TxMt', 'TbLn', sizeof(size_t), &len);
-		SetMenuItemProperty(menu, itemIndex, 'TxMt', 'TbTr', tabTrigger.size(), tabTrigger.data());
-	}
+	objc_setAssociatedObject(self, kOakMenuItemTabTrigger, [NSString stringWithCxxString:aTabTrigger], OBJC_ASSOCIATION_RETAIN);
+	if(aTabTrigger != NULL_STR)
+		[self setActivationString:[NSString stringWithCxxString:(" "+aTabTrigger+"⇥")] withFont:[NSFont menuBarFontOfSize:floor([(self.menu.font ?: [NSFont menuFontOfSize:0]) pointSize] * 0.85)]];
 }
 
 - (void)setModifiedState:(BOOL)flag
 {
-	if(MenuRef menu = _NSGetCarbonMenu([self menu]))
-	{
-		MenuItemIndex itemIndex = [[self menu] indexOfItem:self] + 1;
-		SetItemMark(menu, itemIndex, flag ? 0xA5 : noMark);
-	}
+	if(NSImage* image = [NSImage imageNamed:@"NSMenuItemBullet"])
+		[self setMixedStateImage:image];
+	[self setState:flag ? NSMixedState : NSOffState];
 }
 @end

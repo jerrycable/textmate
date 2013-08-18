@@ -23,8 +23,8 @@ namespace osx
 			helper_t (std::string const& hex) : _valid(false)
 			{
 				std::vector<char> v;
-				for(size_t i = 0; i+1 < hex.size(); i += 2)
-					v.push_back(strtol(hex.substr(i, 2).c_str(), NULL, 16));
+				for(size_t i = 0; i+1 < hex.size() && isxdigit(hex[i]) && isxdigit(hex[i+1]); i += 2)
+					v.push_back(std::stol(hex.substr(i, 2), NULL, 16));
 
 				if(v.size() == sizeof(AuthorizationExternalForm))
 				{
@@ -53,8 +53,6 @@ namespace osx
 				if(myStatus == errAuthorizationSuccess)
 				{
 					res = true;
-					for(size_t i = 0; i < myAuthorizedRights->count; ++i)
-						fprintf(stderr, "authorization (pid %d): got ‘%s’\n", getpid(), myAuthorizedRights->items[i].name);
 					AuthorizationFreeItemSet(myAuthorizedRights);
 				}
 				else if(myStatus == errAuthorizationCanceled)
@@ -84,8 +82,8 @@ namespace osx
 				AuthorizationExternalForm extAuth;
 				if(AuthorizationMakeExternalForm(_authorization, &extAuth) == errAuthorizationSuccess)
 				{
-					foreach(ch, (char*)&extAuth, (char*)(&extAuth + 1))
-						res += text::format("%02X", *ch);
+					for(char* it = (char*)&extAuth; it != (char*)(&extAuth + 1); ++it)
+						res += text::format("%02X", *it);
 				}
 				return res;
 			}
@@ -97,7 +95,7 @@ namespace osx
 			bool _valid;
 		};
 
-		std::tr1::shared_ptr<helper_t> helper;
+		std::shared_ptr<helper_t> helper;
 	};
 
 } /* osx */

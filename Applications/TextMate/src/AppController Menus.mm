@@ -1,5 +1,4 @@
 #import "AppController.h"
-#import <oak/CocoaSTL.h>
 #import <oak/oak.h>
 #import <text/ctype.h>
 #import <bundles/bundles.h>
@@ -9,20 +8,14 @@
 #import <OakAppKit/NSMenu Additions.h>
 #import <OakAppKit/NSMenuItem Additions.h>
 #import <OakAppKit/OakToolTip.h>
-#import <OakFoundation/OakFoundation.h>
 #import <OakFoundation/NSString Additions.h>
 #import <oak/debug.h>
-#import <BundleMenu/BundleMenuDelegate.h>
+#import <BundleMenu/BundleMenu.h>
 
 OAK_DEBUG_VAR(AppController_Menus);
 
-@interface NSObject (BundleMenuDelegate)
-- (BOOL)canHandleMenuKeyEquivalent:(NSEvent*)anEvent;
-- (void)handleMenuKeyEquivalent:(id)sender;
-@end
-
 @implementation AppController (BundlesMenu)
-- (void)doBundleItem:(id)anArgument
+- (void)performBundleItemWithUUIDStringFrom:(id)anArgument
 {
 	[NSApp sendAction:@selector(performBundleItemWithUUIDString:) to:nil from:[anArgument representedObject]];
 }
@@ -30,17 +23,6 @@ OAK_DEBUG_VAR(AppController_Menus);
 - (BOOL)menuHasKeyEquivalent:(NSMenu*)aMenu forEvent:(NSEvent*)theEvent target:(id*)aTarget action:(SEL*)anAction
 {
 	D(DBF_AppController_Menus, bug("%s (%s)\n", ns::glyphs_for_event_string(to_s(theEvent)).c_str(), to_s(theEvent).c_str()););
-	if(aMenu != bundlesMenu)
-		return NO;
-
-	*anAction = @selector(handleMenuKeyEquivalent:);
-	*aTarget = self;
-
-	if(id target = [NSApp targetForAction:@selector(canHandleMenuKeyEquivalent:)])
-	{
-		*aTarget = target;
-		return [target canHandleMenuKeyEquivalent:theEvent];
-	}
 	return NO;
 }
 
@@ -51,13 +33,6 @@ OAK_DEBUG_VAR(AppController_Menus);
 	{
 		if([[aMenu itemAtIndex:i] isSeparatorItem])
 			break;
-
-		NSMenuItem* item = [aMenu itemAtIndex:i];
-		if([[[item submenu] delegate] isKindOfClass:[BundleMenuDelegate class]])
-		{
-			[[[item submenu] delegate] release];
-			[[item submenu] setDelegate:nil];
-		}
 		[aMenu removeItemAtIndex:i];
 	}
 
@@ -71,10 +46,8 @@ OAK_DEBUG_VAR(AppController_Menus);
 			continue;
 
 		NSMenuItem* menuItem = [aMenu addItemWithTitle:[NSString stringWithCxxString:pair->first] action:NULL keyEquivalent:@""];
-		menuItem.submenu = [NSMenu new];
-		menuItem.submenu.autoenablesItems = NO;
-		BundleMenuDelegate* delegate = [[BundleMenuDelegate alloc] initWithBundleItem:pair->second];
-		menuItem.submenu.delegate = delegate;
+		menuItem.submenu = [[NSMenu alloc] initWithTitle:[NSString stringWithCxxString:pair->second->uuid()]];
+		menuItem.submenu.delegate = [BundleMenuDelegate sharedInstance];
 	}
 
 	if(ordered.empty())
@@ -93,7 +66,7 @@ OAK_DEBUG_VAR(AppController_Menus);
 	iterate(pair, ordered)
 	{
 		NSMenuItem* menuItem = [aMenu addItemWithTitle:[NSString stringWithCxxString:pair->first] action:@selector(takeThemeUUIDFrom:) keyEquivalent:@""];
-		[menuItem setKeyEquivalentCxxString:pair->second->value_for_field(bundles::kFieldKeyEquivalent)];
+		[menuItem setKeyEquivalentCxxString:key_equivalent(pair->second)];
 		[menuItem setRepresentedObject:[NSString stringWithCxxString:pair->second->uuid()]];
 	}
 
@@ -109,10 +82,7 @@ OAK_DEBUG_VAR(AppController_Menus);
 	{
 		NSMenuItem* item = [aMenu itemAtIndex:i];
 		if([item action] == @selector(takeSpellingLanguageFrom:))
-		{
-			[[item retain] autorelease];
 			[aMenu removeItemAtIndex:i];
-		}
 	}
 
 	std::multimap<std::string, NSString*, text::less_t> ordered;
@@ -121,11 +91,9 @@ OAK_DEBUG_VAR(AppController_Menus);
 	for(NSString* lang in [spellChecker availableLanguages])
 	{
 		D(DBF_AppController_Menus, bug("%s\n", [lang UTF8String]););
-		CFStringRef str = CFLocaleCopyDisplayNameForPropertyValue(CFLocaleGetSystem(), kCFLocaleIdentifier, (CFStringRef)lang);
-		D(DBF_AppController_Menus, bug("→ %s\n", cf::to_s(str ?: (CFStringRef)lang).c_str()););
-		ordered.insert(std::make_pair(cf::to_s(str ?: (CFStringRef)lang), lang));
-		if(str)
-			CFRelease(str);
+		NSString* str = (NSString*)CFBridgingRelease(CFLocaleCopyDisplayNameForPropertyValue(CFLocaleGetSystem(), kCFLocaleIdentifier, (__bridge CFStringRef)lang));
+		D(DBF_AppController_Menus, bug("→ %s\n", [(str ?: lang) UTF8String]););
+		ordered.insert(std::make_pair(to_s(str ?: lang), lang));
 	}
 
 	iterate(it, ordered)

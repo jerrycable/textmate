@@ -1,44 +1,25 @@
-#import <network/key_chain.h>
+@class DownloadWindowController;
 
-struct shared_state_t
-{
-	double progress = 0;
-	bool stop = false;
-};
-
-typedef std::tr1::shared_ptr<shared_state_t> shared_state_ptr;
+@protocol DownloadWindowControllerDelegate <NSObject>
+- (void)install:(DownloadWindowController*)sender;
+- (void)cancel:(DownloadWindowController*)sender;
+@optional
+- (void)windowWillClose:(DownloadWindowController*)sender;
+@end
 
 @interface DownloadWindowController : NSWindowController
-{
-	NSString* activityText;
-	CGFloat progress;
-	CGFloat secondsLeft;
-	NSString* statusText;
-	BOOL isDownloading;
-	BOOL canInstall;
-	BOOL isInstalling;
-	BOOL showUpdateBadge;
-
-	NSTimer* progressTimer;
-	NSDate* downloadStartDate;
-	NSString* versionOfDownload;
-
-	NSString* url;
-	key_chain_t keyChain;
-	NSString* archive;
-	shared_state_ptr sharedState;
-}
-@property (nonatomic, retain) NSString* versionOfDownload; // API
-@property (nonatomic, readonly) BOOL isVisible;            // API
+@property (nonatomic, weak)   id <DownloadWindowControllerDelegate> delegate;
+@property (nonatomic, assign) BOOL showUpdateBadge;
 
 @property (nonatomic, retain) NSString* activityText;      // Text binding: “Downlading ‘TextMate_r1589.tbz’…”
 @property (nonatomic, retain) NSString* statusText;        // Text binding: “Less than one minute”
-@property (nonatomic, readonly) BOOL isWorking;            // Progress bar binding (animate)
-@property (nonatomic, assign) CGFloat progress;            // Progress bar binding (value)
-@property (nonatomic, assign) BOOL canInstall;             // Install Button binding
-@property (nonatomic, assign) BOOL isInstalling;           // Install/Cancel Button bindings + Progress bar (is indeterminate)
 
-- (id)initWithURL:(NSString*)aURL displayString:(NSString*)aDisplayString keyChain:(key_chain_t const&)aKeyChain;
+@property (nonatomic, assign) BOOL isWorking;              // Progress bar binding (animate)
+@property (nonatomic, assign) BOOL isIndeterminate;        // Progress bar binding (is indeterminate)
+@property (nonatomic, assign) CGFloat progress;            // Progress bar binding (value)
+
+@property (nonatomic, assign) BOOL canInstall;             // Install button binding (enabled)
+@property (nonatomic, assign) BOOL canCancel;              // Cancel button binding (enabled)
 
 - (IBAction)install:(id)sender;
 - (IBAction)cancel:(id)sender;

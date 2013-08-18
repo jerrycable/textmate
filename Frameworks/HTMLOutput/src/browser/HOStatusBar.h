@@ -1,27 +1,16 @@
-#import <OakAppKit/OakStatusBar.h>
+#import <OakAppKit/OakGradientView.h>
 
 @protocol HOStatusBarDelegate
 - (void)goBack:(id)sender;
 - (void)goForward:(id)sender;
 @end
 
-@interface HOStatusBar : OakStatusBar
-{
-	BOOL isBusy;
-	NSString* statusText;
-	BOOL canGoBack;
-	BOOL canGoForward;
+@interface HOStatusBar : OakGradientView
+@property (nonatomic, weak) id  delegate;
 
-	NSProgressIndicator* spinner;
-	NSProgressIndicator* progressIndicator;
-
-	id delegate;
-}
-@property (nonatomic, assign) BOOL isBusy;
-@property (nonatomic, assign) double progress;
-@property (nonatomic, copy)   NSString* statusText;
-@property (nonatomic, assign) BOOL canGoBack;
-@property (nonatomic, assign) BOOL canGoForward;
-
-@property (nonatomic, assign) id delegate;
+@property (nonatomic) NSString* statusText;
+@property (nonatomic) CGFloat   progress;
+@property (nonatomic) BOOL      isBusy;
+@property (nonatomic) BOOL      canGoBack;
+@property (nonatomic) BOOL      canGoForward;
 @end

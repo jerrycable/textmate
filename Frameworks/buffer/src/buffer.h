@@ -8,6 +8,7 @@
 #include <text/indent.h>
 #include <scope/scope.h>
 #include <parse/parse.h>
+#include <parse/grammar.h>
 #include <bundles/bundles.h>
 #include <regexp/regexp.h>
 #include <oak/debug.h>
@@ -60,7 +61,7 @@ namespace ng
 	struct marks_t;
 	struct lines_t;
 	struct buffer_parser_t;
-	typedef std::tr1::shared_ptr<buffer_parser_t> buffer_parser_ptr;
+	typedef std::shared_ptr<buffer_parser_t> buffer_parser_ptr;
 
 	struct PUBLIC buffer_t
 	{
@@ -69,13 +70,14 @@ namespace ng
 		buffer_t (char const* str = NULL);
 		buffer_t (buffer_t const& rhs) = delete;
 		buffer_t& operator= (buffer_t const& rhs) = delete;
+		~buffer_t ();
 
 		size_t size () const;
 		bool empty () const                    { return size() == 0; }
 		size_t revision () const               { return _revision; }
 		size_t next_revision () const          { return _next_revision; }
 		size_t bump_revision ()                { set_revision(_next_revision++); return _revision; }
-		void set_revision (size_t newRevision) { ASSERT_LT(newRevision, _next_revision); _revision = newRevision; initiate_repair(); }
+		void set_revision (size_t newRevision) { ASSERT_LT(newRevision, _next_revision); _revision = newRevision; initiate_repair(20); }
 
 		char at (size_t i) const;
 		std::string operator[] (size_t i) const;
@@ -152,6 +154,23 @@ namespace ng
 		oak::callbacks_t<callback_t> _callbacks;
 		std::vector<meta_data_t*> _meta_data;
 
+		// ====================
+		// = Grammar Callback =
+		// ====================
+
+		void grammar_did_change ();
+
+		struct grammar_callback_t : parse::grammar_t::callback_t
+		{
+			grammar_callback_t (buffer_t& buffer) : _buffer(buffer) { }
+			void grammar_did_change ()                              { _buffer.grammar_did_change(); }
+		private:
+			buffer_t& _buffer;
+		};
+
+		parse::grammar_ptr _grammar;
+		grammar_callback_t _grammar_callback;
+
 		// ============
 
 		void add_meta_data (meta_data_t* hook)      { if(hook) _meta_data.push_back(hook); }
@@ -166,8 +185,8 @@ namespace ng
 		friend struct buffer_parser_t;
 		buffer_parser_ptr parser;
 		text::indent_t _indent;
-		void initiate_repair ();
-		void update_scopes (std::pair<size_t, size_t> const& range, std::map<size_t, scope::scope_t> const& newScopes, parse::stack_ptr parserState);
+		void initiate_repair (size_t limit_redraw = 0, size_t super_from = -1);
+		void update_scopes (size_t limit_redraw, size_t const& super_range,std::pair<size_t, size_t> const& range, std::map<size_t, scope::scope_t> const& newScopes, parse::stack_ptr parserState);
 
 		size_t _revision, _next_revision;
 		std::string _spelling_language;
@@ -179,10 +198,10 @@ namespace ng
 		indexed_map_t<scope::scope_t>    _scopes;
 		indexed_map_t<parse::stack_ptr>  _parser_states;
 
-		std::tr1::shared_ptr<spelling_t> _spelling;
-		std::tr1::shared_ptr<symbols_t>  _symbols;
-		std::tr1::shared_ptr<marks_t>    _marks;
-		std::tr1::shared_ptr<pairs_t>    _pairs;
+		std::shared_ptr<spelling_t> _spelling;
+		std::shared_ptr<symbols_t>  _symbols;
+		std::shared_ptr<marks_t>    _marks;
+		std::shared_ptr<pairs_t>    _pairs;
 
 		friend struct spelling_t; // _scopes
 		friend struct symbols_t;  // _scopes

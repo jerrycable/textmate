@@ -1,197 +1,390 @@
-#include "drivers/api.h"
 #include "scm.h"
-#include "server.h"
+#include "drivers/api.h"
+#include "snapshot.h"
+#include "fs_events.h"
 #include <io/path.h>
-#include <cf/cf.h>
-#include <oak/oak.h>
 #include <text/format.h>
-
-OAK_DEBUG_VAR(SCM);
+#include <settings/settings.h>
 
 namespace scm
 {
-	static void callback_function (ConstFSEventStreamRef streamRef, void* clientCallBackInfo, size_t numEvents, void* eventPaths, FSEventStreamEventFlags const eventFlags[], FSEventStreamEventId const eventIds[]);
+	driver_t* git_driver ();
+	driver_t* hg_driver ();
+	driver_t* p4_driver ();
+	driver_t* svn_driver ();
 
-	struct watcher_t
+	static bool Disabled = false;
+	static std::map<std::string, shared_info_weak_ptr> PendingUpdates;
+
+	// =================
+	// = shared_info_t =
+	// =================
+
+	struct shared_info_t : std::enable_shared_from_this<shared_info_t>
 	{
-		watcher_t (std::string const& path, info_t* info) : path(path), info(info), stream(NULL)
-		{
-			struct statfs buf;
-			if(statfs(path.c_str(), &buf) != 0)
-				return;
+		shared_info_t (std::string const& rootPath, scm::driver_t const* driver);
+		~shared_info_t ();
 
-			mount_point            = buf.f_mntonname;
-			dev_t device           = buf.f_fsid.val[0];
-			std::string devicePath = path::relative_to(path, mount_point);
+		std::string const& root_path () const                           { return _root_path; }
+		std::map<std::string, std::string> const& variables () const    { return _variables; }
+		std::map<std::string, scm::status::type> const& status () const { return _status; }
+		bool tracks_directories () const                                { return _driver->tracks_directories(); }
 
-			FSEventStreamContext contextInfo = { 0, this, NULL, NULL, NULL };
-			if(stream = FSEventStreamCreateRelativeToDevice(kCFAllocatorDefault, &callback_function, &contextInfo, device, cf::wrap(std::vector<std::string>(1, devicePath)), kFSEventStreamEventIdSinceNow, 1.0, kFSEventStreamCreateFlagNone))
-			{
-				FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
-				FSEventStreamStart(stream);
-				FSEventStreamFlushSync(stream);
-			}
-			else
-			{
-				fprintf(stderr, "can’t observe ‘%s’\n", path.c_str());
-			}
-		}
+		void add_client (info_t* client);
+		void remove_client (info_t* client);
 
-		void callback (std::set<std::string> const& changedPaths)
-		{
-			info->callback(changedPaths);
-		}
+	private:
+		friend void enable ();
 
-		~watcher_t ()
-		{
-			if(!stream)
-				return;
+		void schedule_update ();
+		static void async_update (shared_info_weak_ptr weakThis);
+		void fs_did_change (std::set<std::string> const& changedPaths);
 
-			FSEventStreamStop(stream);
-			FSEventStreamInvalidate(stream);
-			FSEventStreamRelease(stream);
-		}
+		void update (std::map<std::string, std::string> const& variables, std::map<std::string, scm::status::type> const& status, fs::snapshot_t const& fsSnapshot);
 
-		std::string path;
-		info_t* info;
+		std::string const _root_path;
+		scm::driver_t const* const _driver;
 
-		std::string mount_point;
-		FSEventStreamRef stream;
+		std::map<std::string, std::string> _variables;
+		std::map<std::string, scm::status::type> _status;
+		fs::snapshot_t _fs_snapshot;
+
+		bool _pending_update = false;
+		std::chrono::steady_clock::time_point _no_check_before = std::chrono::steady_clock::now();
+		std::shared_ptr<watcher_t> _watcher;
+		std::set<info_t*> _clients;
 	};
-
-	static void callback_function (ConstFSEventStreamRef streamRef, void* clientCallBackInfo, size_t numEvents, void* eventPaths, FSEventStreamEventFlags const eventFlags[], FSEventStreamEventId const eventIds[])
-	{
-		watcher_t& watcher = *(watcher_t*)clientCallBackInfo;
-
-		std::set<std::string> changedPaths;
-
-		for(size_t i = 0; i < numEvents; ++i)
-		{
-			std::string const& file = ((char const* const*)eventPaths)[i];
-			std::string const& path = path::join(watcher.mount_point, "./" + file);
-			changedPaths.insert(path);
-		}
-		watcher.callback(changedPaths);
-	}
-}
-
-namespace scm
-{
-	static std::map<std::string, info_ptr>& cache () { static std::map<std::string, info_ptr> cache; return cache; }
 
 	// ==========
 	// = info_t =
 	// ==========
 
-	info_t::info_t (std::string const& wcPath, driver_t const* driver) : _wc_path(wcPath), _driver(driver)
+	info_t::info_t (std::string const& path)
 	{
-		ASSERTF(path::is_directory(_wc_path) || !path::exists(_wc_path) || _wc_path == NULL_STR, "Path: %s\n", _wc_path.c_str());
 	}
 
-	std::string info_t::scm_name () const   { return _driver->name(); }
-	std::string info_t::path () const       { return _wc_path; }
-	std::string info_t::branch () const     { return _driver->branch_name(_wc_path); }
-
-	status::type info_t::status (std::string const& path)
+	info_t::~info_t ()
 	{
-		D(DBF_SCM, bug("%s\n", path.c_str()););
-		if(_file_status.empty())
-			_file_status = _driver->status(_wc_path);
+		if(_shared_info)
+			_shared_info->remove_client(this);
 
-		if(!_watcher)
-			_watcher.reset(new scm::watcher_t(_wc_path, this));
-
-		status_map_t::const_iterator res = _file_status.find(path);
-		return res != _file_status.end() ? res->second : status::none;
+		while(!_callbacks.empty())
+			pop_callback();
 	}
 
-	status_map_t info_t::files_with_status (int mask)
+	void info_t::set_shared_info (shared_info_ptr sharedInfo)
 	{
-		if(_file_status.empty())
-			_file_status = _driver->status(path());
+		if(_shared_info)
+			_shared_info->remove_client(this);
+		if(_shared_info = sharedInfo)
+			_shared_info->add_client(this);
+	}
 
-		if(!_watcher)
-			_watcher.reset(new scm::watcher_t(_wc_path, this));
+	bool info_t::dry () const
+	{
+		return !_shared_info;
+	}
 
-		status_map_t res;
-		iterate(status, _file_status)
+	std::string info_t::root_path () const
+	{
+		return dry() ? NULL_STR : _shared_info->root_path();
+	}
+
+	std::map<std::string, std::string> info_t::scm_variables () const
+	{
+		return dry() ? std::map<std::string, std::string>() : _shared_info->variables();
+	}
+
+	std::map<std::string, scm::status::type> const& info_t::status () const
+	{
+		static std::map<std::string, scm::status::type> const EmptyMap;
+		return dry() ? EmptyMap : _shared_info->status();
+	}
+
+	scm::status::type info_t::status (std::string const& path) const
+	{
+		auto const& map = status();
+		auto it = map.find(path);
+		return dry() || path == NULL_STR ? scm::status::unknown : (it != map.end() ? it->second : scm::status::none);
+	}
+
+	bool info_t::tracks_directories () const
+	{
+		return dry() ? false : _shared_info->tracks_directories();
+	}
+
+	void info_t::add_callback (void (^block)(info_t const&))
+	{
+		_callbacks.push_back(Block_copy(block));
+		if(!dry())
+			did_update_shared_info();
+	}
+
+	void info_t::pop_callback ()
+	{
+		ASSERT(!_callbacks.empty());
+		Block_release(_callbacks.back());
+		_callbacks.pop_back();
+	}
+
+	void info_t::did_update_shared_info ()
+	{
+		ASSERT(!dry());
+		for(auto callback : _callbacks)
+			callback(*this);
+	}
+
+	// =================
+	// = shared_info_t =
+	// =================
+
+	shared_info_t::shared_info_t (std::string const& rootPath, scm::driver_t const* driver) : _root_path(rootPath), _driver(driver)
+	{
+	}
+
+	shared_info_t::~shared_info_t ()
+	{
+	}
+
+	void shared_info_t::add_client (info_t* client)
+	{
+		_clients.insert(client);
+		if(_clients.size() == 1)
 		{
-			if((status->second & mask) == status->second)
-				res.insert(*status);
+			_watcher.reset(new scm::watcher_t(_root_path, std::bind(&shared_info_t::fs_did_change, this, std::placeholders::_1)));
+			schedule_update();
 		}
+		else
+		{
+			client->did_update_shared_info();
+		}
+	}
+
+	void shared_info_t::remove_client (info_t* client)
+	{
+		if(_clients.size() == 1)
+			_watcher.reset();
+		_clients.erase(client);
+	}
+
+	void shared_info_t::update (std::map<std::string, std::string> const& variables, std::map<std::string, scm::status::type> const& status, fs::snapshot_t const& fsSnapshot)
+	{
+		bool shouldNotify = _variables != variables || _status != status;
+
+		_variables   = variables;
+		_status      = status;
+		_fs_snapshot = fsSnapshot;
+
+		if(shouldNotify)
+		{
+			for(info_t* client : _clients)
+				client->did_update_shared_info();
+		}
+	}
+
+	// =================
+	// = Update Status =
+	// =================
+
+	void shared_info_t::async_update (shared_info_weak_ptr weakThis)
+	{
+		if(shared_info_ptr info = weakThis.lock())
+		{
+			if(!info->_driver->may_touch_filesystem() || info->_fs_snapshot != fs::snapshot_t(info->_root_path))
+			{
+				auto const status    = info->_driver->status(info->_root_path);
+				auto const variables = info->_driver->variables(info->_root_path);
+				auto const snapshot  = info->_driver->may_touch_filesystem() ? fs::snapshot_t(info->_root_path) : fs::snapshot_t();
+				dispatch_async(dispatch_get_main_queue(), ^{
+					if(shared_info_ptr info = weakThis.lock())
+						info->update(variables, status, snapshot);
+				});
+			}
+
+			dispatch_async(dispatch_get_main_queue(), ^{
+				if(shared_info_ptr info = weakThis.lock())
+				{
+					info->_pending_update  = false;
+					info->_no_check_before = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+				}
+			});
+		}
+	}
+
+	void shared_info_t::schedule_update ()
+	{
+		if(Disabled)
+		{
+			PendingUpdates[_root_path] = shared_from_this();
+			return;
+		}
+
+		if(_pending_update)
+			return;
+		_pending_update = true;
+
+		auto now = std::chrono::steady_clock::now();
+		dispatch_time_t delay = now < _no_check_before ? dispatch_time(DISPATCH_TIME_NOW, std::chrono::duration_cast<std::chrono::duration<int64_t, std::nano>>(_no_check_before - now).count()) : DISPATCH_TIME_NOW;
+
+		shared_info_weak_ptr weakThis = shared_from_this();
+		static dispatch_queue_t queue = dispatch_queue_create("org.textmate.scm.status", DISPATCH_QUEUE_SERIAL);
+		dispatch_after(delay, queue, ^{
+			async_update(weakThis);
+		});
+	}
+
+	void shared_info_t::fs_did_change (std::set<std::string> const& changedPaths)
+	{
+		schedule_update();
+	}
+
+	// =========
+	// = Other =
+	// =========
+
+	static std::map<std::string, shared_info_weak_ptr>& cache ()
+	{
+		static auto res = new std::map<std::string, shared_info_weak_ptr>;
+		return *res;
+	}
+
+	static dispatch_queue_t cache_access_queue ()
+	{
+		static dispatch_queue_t res = dispatch_queue_create("org.textmate.scm.info-cache", DISPATCH_QUEUE_SERIAL);
 		return res;
 	}
 
-	// ====================
-	// = Callback Related =
-	// ====================
-
-	void info_t::add_callback (callback_t* cb)
+	static std::vector<driver_t*> const& drivers ()
 	{
-		D(DBF_SCM, bug("%s / %p\n", path().c_str(), cb););
-		_callbacks.add(cb);
-		cb->status_changed(*this, std::set<std::string>());
+		static auto const res = new std::vector<driver_t*>{ scm::git_driver(), scm::hg_driver(), scm::p4_driver(), scm::svn_driver() };
+		return *res;
 	}
 
-	void info_t::remove_callback (callback_t* cb)
+	static shared_info_ptr find_shared_info_for (std::string const& path)
 	{
-		_callbacks.remove(cb);
-	}
-
-	void info_t::callback (std::set<std::string> const& pathsChangedOnDisk)
-	{
-		D(DBF_SCM, bug("( %s )\n", text::join(pathsChangedOnDisk, ", ").c_str()););
-		background_status(_wc_path, _driver, _updated, _snapshot, &update_status);
-	}
-
-	void info_t::update_status (bool didUpdate, std::string const& path, fs::snapshot_t const& snapshot, scm::status_map_t const& status)
-	{
-		if(!didUpdate)
-			return;
-
-		auto it = cache().find(path);
-		if(it != cache().end())
+		for(std::string cwd = path; cwd != "/"; cwd = path::parent(cwd))
 		{
-			// TODO deleted paths
-			std::set<std::string> changedPaths;
-			iterate(pair, status)
+			auto it = cache().find(cwd);
+			if(it != cache().end())
 			{
-				if(it->second->_file_status[pair->first] != pair->second)
-					changedPaths.insert(pair->first);
+				if(shared_info_ptr res = it->second.lock())
+					return res;
 			}
 
-			it->second->_updated     = oak::date_t::now();
-			it->second->_snapshot    = snapshot;
-			it->second->_file_status = status;
-
-			it->second->_callbacks(&callback_t::status_changed, *it->second, changedPaths);
+			for(driver_t* driver : drivers())
+			{
+				if(driver && driver->has_info_for_directory(cwd))
+				{
+					shared_info_ptr res(new shared_info_t(cwd, driver));
+					cache()[cwd] = res;
+					return res;
+				}
+			}
 		}
+		return shared_info_ptr();
 	}
 
-	// ==============
-	// = Public API =
-	// ==============
-
-	info_ptr info (std::string const& path)
+	static bool scm_enabled_for_path (std::string const& path)
 	{
-		std::string wcPath;
-		if(driver_t const* driver = driver_for_path(path::parent(path), &wcPath))
+		return path::is_absolute(path) && path != "/" && path != path::home() && path::is_local(path) && settings_for_path(NULL_STR, "", path).get(kSettingsSCMStatusKey, true);
+	}
+
+	void disable ()
+	{
+		Disabled = true;
+	}
+
+	void enable ()
+	{
+		Disabled = false;
+		for(auto pair : PendingUpdates)
 		{
-			if(wcPath == NULL_STR || wcPath == "/" || wcPath == path::home() || !path::is_local(wcPath))
-				return info_ptr();
-
-			std::map<std::string, info_ptr>::iterator it = cache().find(wcPath);
-			if(it == cache().end())
-				it = cache().insert(std::make_pair(wcPath, info_ptr(new info_t(wcPath, driver)))).first;
-			return it->second;
+			if(shared_info_ptr info = pair.second.lock())
+				info->schedule_update();
 		}
-		return info_ptr();
+		PendingUpdates.clear();
 	}
 
-	status_map_t tracked_files (std::string const& dir, int mask)
+	std::string root_for_path (std::string const& path)
 	{
-		if(info_ptr const& driver = info(path::join(dir, ".scm-kludge")))
-			return driver->files_with_status(mask);
-		return status_map_t();
+		if(!scm_enabled_for_path(path))
+			return NULL_STR;
+
+		__block std::string res = NULL_STR;
+		dispatch_sync(cache_access_queue(), ^{
+			for(std::string cwd = path; res == NULL_STR && cwd != "/"; cwd = path::parent(cwd))
+			{
+				auto it = cache().find(cwd);
+				if(it != cache().end())
+				{
+					res = cwd;
+				}
+				else
+				{
+					for(driver_t* driver : drivers())
+					{
+						if(driver && driver->has_info_for_directory(cwd))
+						{
+							res = cwd;
+							break;
+						}
+					}
+				}
+			}
+		});
+		return res;
 	}
-}
+
+	info_ptr info (std::string path)
+	{
+		if(!scm_enabled_for_path(path))
+			return info_ptr();
+
+		info_ptr res(new info_t(path));
+
+		__block bool performBackgroundDriverSearch = true;
+		dispatch_sync(cache_access_queue(), ^{
+			for(std::string cwd = path; cwd != "/"; cwd = path::parent(cwd))
+			{
+				auto it = cache().find(cwd);
+				if(it != cache().end())
+				{
+					if(shared_info_ptr sharedInfo = it->second.lock())
+					{
+						res->set_shared_info(sharedInfo);
+						performBackgroundDriverSearch = cwd != path;
+					}
+					break;
+				}
+			}
+		});
+
+		if(performBackgroundDriverSearch)
+		{
+			weak_info_ptr weakInfo = res;
+			dispatch_async(cache_access_queue(), ^{
+				if(shared_info_ptr sharedInfo = find_shared_info_for(path))
+				{
+					dispatch_async(dispatch_get_main_queue(), ^{
+						if(info_ptr info = weakInfo.lock())
+							info->set_shared_info(sharedInfo);
+					});
+				}
+			});
+		}
+
+		return res;
+	}
+
+	void wait_for_status (info_ptr info)
+	{
+		dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+		info->add_callback(^(scm::info_t const& unused){
+			dispatch_semaphore_signal(semaphore);
+		});
+		dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
+		dispatch_release(semaphore);
+		info->pop_callback();
+	}
+
+} /* scm */

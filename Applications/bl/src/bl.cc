@@ -161,16 +161,36 @@ int main (int argc, char const* argv[])
 	for(int i = optind + 1; i < argc; ++i)
 		bundleNames.push_back(text::lowercase(argv[i]));
 
-	static std::string const CommandsNeedingBundleList[] = { "install", "uninstall", "show", "dependents" };
-	if(bundleNames.empty() && oak::contains(beginof(CommandsNeedingBundleList), endof(CommandsNeedingBundleList), command))
+	static std::set<std::string> const CommandsNeedingBundleList = { "install", "uninstall", "show", "dependents" };
+	if(bundleNames.empty() && CommandsNeedingBundleList.find(command) != CommandsNeedingBundleList.end())
 	{
 		fprintf(stderr, "no bundles specified\n");
 		return 1;
 	}
 
-	static std::string const CommandsNeedingUpdatedSources[] = { "update", "install", "list", "show" };
-	if(oak::contains(beginof(CommandsNeedingUpdatedSources), endof(CommandsNeedingUpdatedSources), command))
-		bundles_db::update_sources(installDir);
+	static std::set<std::string> const CommandsNeedingUpdatedSources = { "update", "install", "list", "show" };
+	if(CommandsNeedingUpdatedSources.find(command) != CommandsNeedingUpdatedSources.end())
+	{
+		std::vector<bundles_db::source_ptr> toUpdate;
+		citerate(source, bundles_db::sources(installDir))
+		{
+			if(!(*source)->disabled() && (*source)->needs_update())
+				toUpdate.push_back(*source);
+		}
+
+		__block std::vector<bundles_db::source_ptr> failedUpdate;
+		dispatch_apply(toUpdate.size(), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^(size_t i){
+			fprintf(stderr, "Downloading ‘%s’…\n", toUpdate[i]->url().c_str());
+			if(!update(toUpdate[i]))
+				failedUpdate.push_back(toUpdate[i]);
+		});
+
+		for(auto source : failedUpdate)
+			fprintf(stderr, "*** failed to update source: ‘%s’ (%s)\n", source->name().c_str(), source->url().c_str());
+
+		if(!failedUpdate.empty())
+			exit(1);
+	}
 
 	std::vector<bundles_db::bundle_ptr> index = bundles_db::index(installDir);
 	if(command == "list")
@@ -183,21 +203,54 @@ int main (int argc, char const* argv[])
 	}
 	else if(command == "install")
 	{
+		std::vector<bundles_db::bundle_ptr> toInstall;
 		citerate(bundle, filtered_bundles(index, sourceNames, bundleNames))
 		{
 			if(!(*bundle)->installed())
-			{
-				fprintf(stderr, "Installing ‘%s’...", (*bundle)->name().c_str());
-				if(install(*bundle, installDir))
-						fprintf(stderr, "ok!\n");
-				else	fprintf(stderr, " *** failed!\n");
-			}
-			else
-			{
-				fprintf(stderr, "skip ‘%s’ (%s) -- already installed\n", (*bundle)->name().c_str(), (*bundle)->origin().c_str());
-			}
+					toInstall.push_back(*bundle);
+			else	fprintf(stderr, "skip ‘%s’ (%s) -- already installed\n", (*bundle)->name().c_str(), (*bundle)->origin().c_str());
 		}
-		save_index(index, installDir);
+
+		dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+			size_t n = toInstall.size();
+			__block std::vector<bundles_db::bundle_ptr> failed;
+			__block std::vector<double> progress(n);
+
+			if(dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue()))
+			{
+				dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, NSEC_PER_SEC / 10, NSEC_PER_SEC / 5);
+				dispatch_source_set_event_handler(timer, ^{
+					double current = 0, total = 0;
+					for(size_t i = 0; i < n; ++i)
+					{
+						current += toInstall[i]->size() * progress[i];
+						total   += toInstall[i]->size();
+					}
+					fprintf(stderr, "\rDownloading... %4.1f%%", 100 * current / total);
+				});
+				dispatch_resume(timer);
+			}
+
+			dispatch_apply(n, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^(size_t i){
+				if(!install(toInstall[i], installDir, &progress[i]))
+					failed.push_back(toInstall[i]);
+			});
+
+			dispatch_async(dispatch_get_main_queue(), ^{
+				fprintf(stderr, "\rDownloading... Done!   \n");
+				if(!failed.empty())
+				{
+					std::vector<std::string> names;
+					std::transform(failed.begin(), failed.end(), back_inserter(names), [](bundles_db::bundle_ptr const& bundle){ return bundle->name(); });
+					fprintf(stderr, "*** failed to install %s.\n", text::join(names, ", ").c_str());
+				}
+				save_index(index, installDir);
+				if(!failed.empty())
+					exit(1);
+				exit(0);
+			});
+		});
+		dispatch_main();
 	}
 	else if(command == "uninstall")
 	{

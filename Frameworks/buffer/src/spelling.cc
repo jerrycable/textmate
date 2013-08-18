@@ -24,7 +24,7 @@ namespace ng
 			--from;
 
 		std::set<scope::scope_t> enabled, disabled;
-		foreach(pair, first, last)
+		for(auto pair = first; pair != last; ++pair)
 		{
 			if(enabled.find(pair->second) != enabled.end() || disabled.find(pair->second) != disabled.end())
 				continue;
@@ -80,6 +80,11 @@ namespace ng
 		if(!res.empty() && res.begin()->second == false)
 			res[0] = true;
 		return res;
+	}
+
+	void spelling_t::recheck (buffer_t const* buffer, size_t from, size_t to)
+	{
+		did_parse(buffer, from, to);
 	}
 
 } /* ng */

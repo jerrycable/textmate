@@ -49,11 +49,12 @@ namespace ng
 		std::string result;
 	};
 
-	typedef std::tr1::shared_ptr<completion_command_delegate_t> completion_command_delegate_ptr;
+	typedef std::shared_ptr<completion_command_delegate_t> completion_command_delegate_ptr;
 
-	std::vector<std::string> editor_t::completions (size_t bow, size_t eow, std::string const& prefix, std::string const& suffix)
+	std::vector<std::string> editor_t::completions (size_t bow, size_t eow, std::string const& prefix, std::string const& suffix, std::string const& scopeAttributes)
 	{
 		std::string const currentWord = _buffer.substr(bow, eow);
+		scope::context_t const scope = this->scope(scopeAttributes);
 
 		std::vector< std::pair<size_t, std::string> > tmp;
 		std::vector<std::string> commandResult;
@@ -63,7 +64,7 @@ namespace ng
 		// ====================================
 
 		bundles::item_ptr item;
-		plist::any_t value = bundles::value_for_setting("completionCommand", scope(), &item);
+		plist::any_t value = bundles::value_for_setting("completionCommand", scope, &item);
 		if(std::string const* str = boost::get<std::string>(&value))
 		{
 			bundle_command_t cmd;
@@ -75,19 +76,38 @@ namespace ng
 			cmd.output        = output::replace_selection;
 			cmd.output_format = output_format::completion_list;
 
-			std::map<std::string, std::string> env = variables(item->environment());
-			env["TM_CURRENT_WORD"] = prefix;
-			completion_command_delegate_ptr delegate(new completion_command_delegate_t(_buffer, _selections));
-			command::runner_ptr runner = command::runner(cmd, _buffer, _selections, env, delegate);
-			runner->launch();
-			runner->wait();
-
-			if(delegate->result != NULL_STR)
+			std::map<std::string, std::string> env;
+			if(_delegate)
 			{
-				citerate(line, text::tokenize(delegate->result.begin(), delegate->result.end(), '\n'))
+				env = _delegate->variables_for_bundle_item(item);
+			}
+			else
+			{
+				env << oak::basic_environment() << editor_variables(scopeAttributes) << item->bundle_variables();
+				env = bundles::scope_variables(env, this->scope(scopeAttributes));
+				env = variables_for_path(env, NULL_STR, this->scope(scopeAttributes).right);
+			}
+			env["TM_CURRENT_WORD"] = prefix;
+
+			bundles::required_command_t failedRequirement;
+			if(missing_requirement(item, env, &failedRequirement))
+			{
+				fprintf(stderr, "Failed running “%s” due to missing dependency “%s”.\n", cmd.name.c_str(), failedRequirement.command.c_str());
+			}
+			else
+			{
+				completion_command_delegate_ptr delegate(new completion_command_delegate_t(_buffer, _selections));
+				command::runner_ptr runner = command::runner(cmd, _buffer, _selections, env, delegate);
+				runner->launch();
+				runner->wait();
+
+				if(delegate->result != NULL_STR)
 				{
-					if(!(*line).empty())
-						commandResult.push_back(*line);
+					for(auto line : text::tokenize(delegate->result.begin(), delegate->result.end(), '\n'))
+					{
+						if(!line.empty() && utf8::is_valid(line.begin(), line.end()))
+							commandResult.push_back(line);
+					}
 				}
 			}
 		}
@@ -99,7 +119,7 @@ namespace ng
 		// = Collect Words from Buffer =
 		// =============================
 
-		if(!plist::is_true(bundles::value_for_setting("disableDefaultCompletion", scope(), &item)))
+		if(!plist::is_true(bundles::value_for_setting("disableDefaultCompletion", scope, &item)))
 		{
 			size_t cnt = tmp.size();
 			words_with_prefix_and_suffix(_buffer, prefix, suffix, currentWord, back_inserter(tmp));
@@ -111,7 +131,7 @@ namespace ng
 		// = Add Fallback Values from Bundle Preferences =
 		// ===============================================
 
-		plist::any_t completionsValue = bundles::value_for_setting("completions", scope(), &item);
+		plist::any_t completionsValue = bundles::value_for_setting("completions", scope, &item);
 		if(plist::array_t const* completions = boost::get<plist::array_t>(&completionsValue))
 		{
 			for(size_t i = 0; i < completions->size(); ++i)
@@ -151,7 +171,7 @@ namespace ng
 		return res;
 	}
 
-	bool editor_t::setup_completion ()
+	bool editor_t::setup_completion (std::string const& scopeAttributes)
 	{
 		completion_info_t& info = _completion_info;
 		if(info.revision() != _buffer.revision() || info.ranges() != _selections)
@@ -165,14 +185,14 @@ namespace ng
 			r = ng::extend(_buffer, r, kSelectionExtendToWord).last();
 			size_t bow = r.min().index, eow = r.max().index;
 
-			info.set_suggestions(completions(bow, eow, _buffer.substr(bow, from), _buffer.substr(to, eow)));
+			info.set_suggestions(completions(bow, eow, _buffer.substr(bow, from), _buffer.substr(to, eow), scopeAttributes));
 		}
 		return !info.suggestions().empty();
 	}
 
-	void editor_t::next_completion ()
+	void editor_t::next_completion (std::string const& scopeAttributes)
 	{
-		if(setup_completion())
+		if(setup_completion(scopeAttributes))
 		{
 			completion_info_t& info = _completion_info;
 			info.advance();
@@ -187,10 +207,10 @@ namespace ng
 		}
 	}
 
-	void editor_t::previous_completion ()
+	void editor_t::previous_completion (std::string const& scopeAttributes)
 	{
-		if(setup_completion())
-		{                  
+		if(setup_completion(scopeAttributes))
+		{
 			completion_info_t& info = _completion_info;
 			info.retreat();
 

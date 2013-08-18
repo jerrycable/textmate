@@ -1,7 +1,6 @@
 #import "HTMLOutput.h"
 #import <OakSystem/process.h>
 #import <command/runner.h>
-#import <oak/lock.h>
 #import <oak/server.h>
 #import <oak/debug.h>
 
@@ -15,7 +14,7 @@ namespace
 
 		int add_process (pid_t processId)
 		{
-			oak::lock_t lock = _lock();
+			std::lock_guard<std::mutex> lock(_lock);
 
 			std::vector<int> toDelete;
 			iterate(record, _records)
@@ -32,57 +31,72 @@ namespace
 
 		void output (int key, char const* data, size_t len)
 		{
-			oak::lock_t lock = _lock();
+			NSURLProtocol* protocol;
+
+			_lock.lock();
 			if(record_t* record = find(key))
 			{
-				if(record->protocol)
-						[[record->protocol client] URLProtocol:record->protocol didLoadData:[NSData dataWithBytes:data length:len]];
-				else	record->buffer.insert(record->buffer.end(), data, data + len);
+				if(!(protocol = record->protocol))
+					record->buffer.insert(record->buffer.end(), data, data + len);
 			}
+			_lock.unlock();
+
+			[[protocol client] URLProtocol:protocol didLoadData:[NSData dataWithBytes:data length:len]];
 		}
 
 		void done (int key)
 		{
-			oak::lock_t lock = _lock();
+			NSURLProtocol* protocol;
+
+			_lock.lock();
 			if(record_t* record = find(key))
 			{
 				record->process_id = 0;
 				record->done       = true;
-
-				if(record->protocol)
-					[[record->protocol client] URLProtocolDidFinishLoading:record->protocol];
+				protocol = record->protocol;
 			}
+			_lock.unlock();
+
+			[[protocol client] URLProtocolDidFinishLoading:protocol];
 		}
 
 		void start (int key, NSURLProtocol* protocol)
 		{
-			oak::lock_t lock = _lock();
+			NSData* data;
+			bool done = false;
 
+			_lock.lock();
 			if(record_t* record = find(key))
 			{
 				record->protocol = protocol;
 				if(!record->buffer.empty())
-				{
-					[[record->protocol client] URLProtocol:record->protocol didLoadData:[NSData dataWithBytes:record->buffer.data() length:record->buffer.size()]];
-					record->buffer.clear();
-				}
-
-				if(record->done)
-					[[record->protocol client] URLProtocolDidFinishLoading:record->protocol];
+					data = [NSData dataWithBytes:record->buffer.data() length:record->buffer.size()];
+				record->buffer.clear();
+				done = record->done;
 			}
+			_lock.unlock();
+
+			if(data)
+				[[protocol client] URLProtocol:protocol didLoadData:data];
+			if(done)
+				[[protocol client] URLProtocolDidFinishLoading:protocol];
 		}
 
 		void stop (int key)
 		{
-			oak::lock_t lock = _lock();
+			pid_t processId = 0;
+
+			_lock.lock();
 			if(record_t* record = find(key))
 			{
 				record->protocol = NULL;
 				record->stop     = true;
-
-				if(record->process_id)
-					oak::kill_process_group_in_background(record->process_id);
+				processId = record->process_id;
 			}
+			_lock.unlock();
+
+			if(processId)
+				oak::kill_process_group_in_background(processId);
 		}
 
 	private:
@@ -103,7 +117,7 @@ namespace
 
 		int _next_key;
 		std::map<int, record_t> _records;
-		oak::mutex_t _lock;
+		std::mutex _lock;
 	};
 
 	runners_t& runners ()
@@ -156,7 +170,7 @@ namespace
 
 - (void)startLoading
 {
-	NSURLResponse* response = [[[NSURLResponse alloc] initWithURL:[[self request] URL] MIMEType:@"text/html" expectedContentLength:-1 textEncodingName:@"utf-8"] autorelease];
+	NSURLResponse* response = [[NSURLResponse alloc] initWithURL:[[self request] URL] MIMEType:@"text/html" expectedContentLength:-1 textEncodingName:@"utf-8"];
 	[[self client] URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
 
 	// WebView seems to stall until it has received at least 1024 bytes

@@ -7,7 +7,13 @@ OAK_DEBUG_VAR(NSEvent);
 
 std::string to_s (NSString* aString)
 {
-	return aString ? [aString UTF8String] : NULL_STR;
+	if(!aString)
+		return NULL_STR;
+
+	NSData* data = [aString dataUsingEncoding:NSUTF8StringEncoding];
+	std::string res([data length], ' ');
+	memcpy(&res[0], [data bytes], [data length]);
+	return res;
 }
 
 std::string to_s (NSData* someData)
@@ -66,7 +72,7 @@ static bool is_ascii (std::string const& str)
 		end if
 */
 
-std::string to_s (NSEvent* anEvent)
+std::string to_s (NSEvent* anEvent, bool preserveNumPadFlag)
 {
 	CGEventRef cgEvent = [anEvent CGEvent];
 	CGKeyCode key      = (CGKeyCode)[anEvent keyCode];
@@ -81,7 +87,7 @@ std::string to_s (NSEvent* anEvent)
 	if(flags & kCGEventFlagMaskNumericPad)
 	{
 		static std::string const numPadKeys = "0123456789=/*-+.,";
-		if(numPadKeys.find(keyStringNoFlags) != std::string::npos)
+		if(preserveNumPadFlag && numPadKeys.find(keyStringNoFlags) != std::string::npos)
 			newFlags |= kCGEventFlagMaskNumericPad;
 		flags &= ~kCGEventFlagMaskControl;
 	}

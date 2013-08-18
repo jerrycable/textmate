@@ -9,26 +9,24 @@ OAK_DEBUG_VAR(SCM_Git);
 
 static scm::status::type parse_status_flag (std::string const& str)
 {
-	static struct { scm::status::type flag; std::string string; } const StatusLetterConversionMap[] =
+	static auto const StatusLetterConversionMap = new std::map<std::string, scm::status::type>
 	{
-		{ scm::status::unversioned, "?" },
-		{ scm::status::ignored,     "I" },
-		{ scm::status::versioned,   "H" },
-		{ scm::status::modified,    "M" },
-		{ scm::status::added,       "A" },
-		{ scm::status::deleted,     "D" },
-		{ scm::status::conflicted,  "U" },
-		{ scm::status::modified,    "T" }, // type change, e.g. symbolic link → regular file
+		{ "?", scm::status::unversioned },
+		{ "I", scm::status::ignored     },
+		{ "H", scm::status::none        },
+		{ "M", scm::status::modified    },
+		{ "A", scm::status::added       },
+		{ "D", scm::status::deleted     },
+		{ "U", scm::status::conflicted  },
+		{ "T", scm::status::modified    }  // type change, e.g. symbolic link → regular file
 	};
 
-	for(size_t i = 0; i < sizeofA(StatusLetterConversionMap); ++i)
-	{
-		if(str == StatusLetterConversionMap[i].string)
-			return StatusLetterConversionMap[i].flag;
-	}
+	auto it = StatusLetterConversionMap->find(str);
+	if(it != StatusLetterConversionMap->end())
+		return it->second;
 
 	ASSERT_EQ(str, NULL_STR); // we use ‘str’ in the assertion to output the unrecognized status flag
-	return scm::status::none;
+	return scm::status::unknown;
 }
 
 static void parse_diff (std::map<std::string, scm::status::type>& entries, std::string const& output)
@@ -43,7 +41,7 @@ static void parse_diff (std::map<std::string, scm::status::type>& entries, std::
 		entries[v[i+1]] = parse_status_flag(v[i]);
 }
 
-static void parse_ls (std::map<std::string, scm::status::type>& entries, std::string const& output, scm::status::type state = scm::status::none)
+static void parse_ls (std::map<std::string, scm::status::type>& entries, std::string const& output, scm::status::type state = scm::status::unknown)
 {
 	if(output == NULL_STR)
 		return;
@@ -54,7 +52,7 @@ static void parse_ls (std::map<std::string, scm::status::type>& entries, std::st
 	iterate(str, v)
 	{
 		ASSERT_EQ((*str)[1], ' ');
-		entries[str->substr(2)] = state != scm::status::none ? state : parse_status_flag(str->substr(0, 1));
+		entries[str->substr(2)] = state != scm::status::unknown ? state : parse_status_flag(str->substr(0, 1));
 	}
 }
 
@@ -73,19 +71,39 @@ static std::string copy_git_index (std::string const& dir)
 			gitDir = path::join(dir, setting.substr(8, setting.size()-9));
 	}
 
+	std::string res = NULL_STR;
+
 	std::string indexPath = path::join(gitDir, "index");
-	if(path::exists(indexPath))
+	int src = open(indexPath.c_str(), O_RDONLY|O_CLOEXEC);
+	if(src != -1)
 	{
 		std::string const tmpIndex = path::temp("git-index");
-		if(path::copy(indexPath, tmpIndex))
-			return tmpIndex;
-		path::remove(tmpIndex);
+		int dst = open(tmpIndex.c_str(), O_CREAT|O_TRUNC|O_WRONLY|O_CLOEXEC, S_IRUSR|S_IWUSR);
+		if(dst != -1)
+		{
+			if(fcopyfile(src, dst, NULL, COPYFILE_ALL | COPYFILE_NOFOLLOW_SRC) != -1)
+			{
+				res = tmpIndex;
+			}
+			else
+			{
+				perror(text::format("copyfile(\"%s\", \"%s\")", indexPath.c_str(), tmpIndex.c_str()).c_str());
+				if(unlink(tmpIndex.c_str()) == -1)
+					perror(text::format("unlink(\"%s\")", tmpIndex.c_str()).c_str());
+			}
+			close(dst);
+		}
+		else
+		{
+			perror(text::format("open(\"%s\", O_CREAT|O_TRUNC|O_WRONLY|O_CLOEXEC, S_IRUSR|S_IWUSR)", tmpIndex.c_str()).c_str());
+		}
+		close(src);
 	}
 	else
 	{
-		fprintf(stderr, "*** missing git index: %s\n", indexPath.c_str());
+		perror(text::format("open(\"%s\", O_RDONLY|O_CLOEXEC)", indexPath.c_str()).c_str());
 	}
-	return NULL_STR;
+	return res;
 }
 
 static void collect_all_paths (std::string const& git, std::map<std::string, scm::status::type>& entries, std::string const& dir)
@@ -93,7 +111,8 @@ static void collect_all_paths (std::string const& git, std::map<std::string, scm
 	ASSERT_NE(git, NULL_STR);
 
 	std::map<std::string, std::string> env = oak::basic_environment();
-	env["PWD"] = dir;
+	env["GIT_WORK_TREE"] = dir;
+	env["GIT_DIR"]       = path::join(dir, ".git");
 
 	bool haveHead = io::exec(env, git, "show-ref", "-qh", NULL) != NULL_STR;
 
@@ -132,7 +151,7 @@ namespace
 			helper_t (std::map<std::string, scm::status::type> const& entries) : _entries(entries) { }
 			std::map<std::string, scm::status::type> _entries;
 		};
-		typedef std::tr1::shared_ptr<helper_t> helper_ptr;
+		typedef std::shared_ptr<helper_t> helper_ptr;
 		helper_ptr _helper;
 		std::string _key;
 		bool _is_dir;
@@ -172,31 +191,31 @@ static scm::status::type status_for (entry_t const& root)
 	if(!root.is_dir())
 		return root.status();
 
-	size_t unknown = 0, ignored = 0, tracked = 0, modified = 0, added = 0, deleted = 0, mixed = 0;
+	size_t untracked = 0, ignored = 0, tracked = 0, modified = 0, added = 0, deleted = 0, mixed = 0;
 	citerate(entry, root.entries())
 	{
 		switch(status_for(*entry))
 		{
-			case scm::status::unversioned:  ++unknown;  break;
-			case scm::status::ignored:      ++ignored;  break;
-			case scm::status::versioned:    ++tracked;  break;
-			case scm::status::modified:     ++modified; break;
-			case scm::status::added:        ++added;    break;
-			case scm::status::deleted:      ++deleted;  break;
-			case scm::status::mixed:        ++mixed;    break;
+			case scm::status::unversioned:  ++untracked; break;
+			case scm::status::ignored:      ++ignored;   break;
+			case scm::status::none:         ++tracked;   break;
+			case scm::status::modified:     ++modified;  break;
+			case scm::status::added:        ++added;     break;
+			case scm::status::deleted:      ++deleted;   break;
+			case scm::status::mixed:        ++mixed;     break;
 		}
 	}
 	
 	if(mixed > 0) return scm::status::mixed;
 	
-	size_t	total=unknown + ignored + tracked + modified + added + deleted;
+	size_t total = untracked + ignored + tracked + modified + added + deleted;
 	
-	if(total == unknown)  return scm::status::unversioned;
-	if(total == ignored)  return scm::status::none;
-	if(total == tracked)  return scm::status::versioned;
-	if(total == modified) return scm::status::modified;
-	if(total == added)    return scm::status::added;
-	if(total == deleted)  return scm::status::deleted;
+	if(total == untracked) return scm::status::unversioned;
+	if(total == ignored)   return scm::status::none;
+	if(total == tracked)   return scm::status::none;
+	if(total == modified)  return scm::status::modified;
+	if(total == added)     return scm::status::added;
+	if(total == deleted)   return scm::status::deleted;
 	
 	if(total > 0) return scm::status::mixed;
 	
@@ -220,23 +239,29 @@ namespace scm
 	{
 		git_driver_t () : driver_t("git", "%s/.git", "git") { }
 
-		std::string branch_name (std::string const& wcPath) const
+		std::map<std::string, std::string> variables (std::string const& wcPath) const
 		{
-			if(executable() == NULL_STR)
-				return NULL_STR;
+			D(DBF_SCM_Git, bug("%s\n", wcPath.c_str()););
+			std::map<std::string, std::string> res = { { "TM_SCM_NAME", name() } };
+			if(executable() != NULL_STR)
+			{
+				std::map<std::string, std::string> env = oak::basic_environment();
+				env["GIT_WORK_TREE"] = wcPath;
+				env["GIT_DIR"]       = path::join(wcPath, ".git");
 
-			std::map<std::string, std::string> env = oak::basic_environment();
-			env["PWD"] = wcPath;
-
-			bool haveHead = io::exec(env, executable(), "show-ref", "-qh", NULL) != NULL_STR;
-			if(!haveHead)
-				return NULL_STR;
-
-			std::string branchName = io::exec(env, executable(), "symbolic-ref", "HEAD");
-			branchName = branchName.substr(0, branchName.find("\n"));
-			if(branchName.find("refs/heads/") == 0)
-				branchName = branchName.substr(11);
-			return branchName;
+				bool haveHead = io::exec(env, executable(), "show-ref", "-qh", NULL) != NULL_STR;
+				if(haveHead)
+				{
+					std::string branchName = io::exec(env, executable(), "symbolic-ref", "HEAD", NULL);
+					if(branchName.find("refs/heads/") == 0)
+					{
+						branchName = branchName.substr(11);
+						branchName = branchName.substr(0, branchName.find("\n"));
+						res.insert(std::make_pair("TM_SCM_BRANCH", branchName));
+					}
+				}
+			}
+			return res;
 		}
 
 		status_map_t status (std::string const& wcPath) const

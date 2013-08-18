@@ -6,7 +6,6 @@
 #include <oak/callbacks.h>
 #include <regexp/find.h>
 #include <command/parser.h>
-#include <command/runner.h>
 #include <document/document.h>
 #include <layout/layout.h>
 
@@ -30,6 +29,8 @@ namespace ng
 		kMoveToBeginningOfColumnAndModifySelection,
 		kMoveToBeginningOfDocument,
 		kMoveToBeginningOfDocumentAndModifySelection,
+		kMoveToBeginningOfIndentedLine,
+		kMoveToBeginningOfIndentedLineAndModifySelection,
 		kMoveToBeginningOfLine,
 		kMoveToBeginningOfLineAndModifySelection,
 		kMoveToBeginningOfParagraph,
@@ -40,6 +41,8 @@ namespace ng
 		kMoveToEndOfColumnAndModifySelection,
 		kMoveToEndOfDocument,
 		kMoveToEndOfDocumentAndModifySelection,
+		kMoveToEndOfIndentedLine,
+		kMoveToEndOfIndentedLineAndModifySelection,
 		kMoveToEndOfLine,
 		kMoveToEndOfLineAndModifySelection,
 		kMoveToEndOfParagraph,
@@ -69,6 +72,8 @@ namespace ng
 
 		kFindNext,
 		kFindPrevious,
+		kFindNextAndModifySelection,
+		kFindPreviousAndModifySelection,
 		kFindAll,
 		kFindAllInSelection,
 
@@ -82,8 +87,10 @@ namespace ng
 		kDeleteForward,
 		kDeleteSubWordLeft,
 		kDeleteSubWordRight,
+		kDeleteToBeginningOfIndentedLine,
 		kDeleteToBeginningOfLine,
 		kDeleteToBeginningOfParagraph,
+		kDeleteToEndOfIndentedLine,
 		kDeleteToEndOfLine,
 		kDeleteToEndOfParagraph,
 		kDeleteWordBackward,
@@ -96,6 +103,8 @@ namespace ng
 		kCopySelectionToFindPboard,
 		kCopySelectionToReplacePboard,
 		kCopySelectionToYankPboard,
+		kAppendSelectionToYankPboard,
+		kPrependSelectionToYankPboard,
 		kPaste,
 		kPastePrevious,
 		kPasteNext,
@@ -142,18 +151,29 @@ namespace ng
 
 	PUBLIC action_t to_action (std::string const& sel);
 
+	struct editor_delegate_t
+	{
+		virtual ~editor_delegate_t () { }
+		virtual std::map<std::string, std::string> variables_for_bundle_item (bundles::item_ptr item) = 0;
+	};
+
 	struct PUBLIC editor_t
 	{
 		editor_t ();
 		editor_t (buffer_t& buffer);
 		editor_t (document::document_ptr document);
 
-		void perform (action_t action, layout_t const* layout = NULL);
+		editor_delegate_t* delegate () const            { return _delegate; }
+		void set_delegate (editor_delegate_t* delegate) { _delegate = delegate; }
+
+		void perform (action_t action, layout_t const* layout = NULL, bool indentCorrections = false, std::string const& scopeAttributes = NULL_STR);
+
+		bool disallow_tab_expansion () const;
 
 		void insert (std::string const& str, bool selectInsertion = false);
-		void insert_with_pairing (std::string const& str);
+		void insert_with_pairing (std::string const& str, bool indentCorrections, bool autoPairing, std::string const& scopeAttributes = NULL_STR);
 		void move_selection_to (ng::index_t const& index, bool selectInsertion = true);
-		ranges_t replace (std::string const& searchFor, std::string const& replaceWith, find::options_t options = find::none, bool searchOnlySelection = false);
+		ranges_t replace_all (std::string const& searchFor, std::string const& replaceWith, find::options_t options = find::none, bool searchOnlySelection = false);
 		void delete_tab_trigger (std::string const& str);
 
 		void macro_dispatch (plist::dictionary_t const& args, std::map<std::string, std::string> const& variables);
@@ -161,8 +181,8 @@ namespace ng
 		void snippet_dispatch (plist::dictionary_t const& args, std::map<std::string, std::string> const& variables);
 		void execute_dispatch (plist::dictionary_t const& args, std::map<std::string, std::string> const& variables);
 
-		scope::context_t scope () const;
-		std::map<std::string, std::string> variables (std::map<std::string, std::string> map) const;
+		scope::context_t scope (std::string const& scopeAttributes) const;
+		std::map<std::string, std::string> editor_variables (std::string const& scopeAttributes) const;
 
 		std::vector<std::string> const& choices () const;
 		std::string placeholder_content (ng::range_t* placeholderSelection = NULL) const;
@@ -173,8 +193,10 @@ namespace ng
 		bool has_selection () const                                           { return not_empty(_buffer, _selections); }
 		std::string as_string (size_t from = 0, size_t to = SIZE_T_MAX) const { return _buffer.substr(from, to != SIZE_T_MAX ? to : _buffer.size()); }
 
-		void perform_replacements (std::multimap<text::range_t, std::string> const& replacements);
+		void perform_replacements (std::multimap<std::pair<size_t, size_t>, std::string> const& replacements);
 		bool handle_result (std::string const& out, output::type placement, output_format::type format, output_caret::type outputCaret, text::range_t input_range, std::map<std::string, std::string> environment);
+
+		void clear_snippets ();
 
 		// ==============
 		// = Clipboards =
@@ -183,19 +205,19 @@ namespace ng
 		clipboard_ptr clipboard () const              { ASSERT(_clipboard);           return _clipboard; }
 		clipboard_ptr find_clipboard () const         { ASSERT(_find_clipboard);      return _find_clipboard; }
 		clipboard_ptr replace_clipboard () const      { ASSERT(_replace_clipboard);   return _replace_clipboard; }
-		clipboard_ptr yank_line_clipboard () const    { ASSERT(_yank_line_clipboard); return _yank_line_clipboard; }
+		clipboard_ptr yank_clipboard () const         { ASSERT(_yank_clipboard); return _yank_clipboard; }
 
-		void set_clipboard (clipboard_ptr cb)           { _clipboard = cb; }
-		void set_find_clipboard (clipboard_ptr cb)      { _find_clipboard = cb; }
-		void set_replace_clipboard (clipboard_ptr cb)   { _replace_clipboard = cb; }
-		void set_yank_line_clipboard (clipboard_ptr cb) { _yank_line_clipboard = cb; }
+		void set_clipboard (clipboard_ptr cb)         { _clipboard = cb; }
+		void set_find_clipboard (clipboard_ptr cb)    { _find_clipboard = cb; }
+		void set_replace_clipboard (clipboard_ptr cb) { _replace_clipboard = cb; }
+		void set_yank_clipboard (clipboard_ptr cb)    { _yank_clipboard = cb; }
 
 	private:
 		void setup ();
 		friend struct indent_helper_t;
 
-		static size_t visual_distance (ng::buffer_t const& buffer, index_t first, index_t last);
-		static index_t visual_advance (ng::buffer_t const& buffer, index_t caret, size_t distance);
+		static size_t visual_distance (ng::buffer_t const& buffer, index_t first, index_t last, bool eastAsianWidth = true);
+		static index_t visual_advance (ng::buffer_t const& buffer, index_t caret, size_t distance, bool eastAsianWidth = true);
 
 		static ng::ranges_t insert_tab_with_indent (ng::buffer_t& buffer, ng::ranges_t const& selections, snippet_controller_t& snippets);
 		static ng::ranges_t insert_newline_with_indent (ng::buffer_t& buffer, ng::ranges_t const& selections, snippet_controller_t& snippets);
@@ -236,17 +258,17 @@ namespace ng
 			ssize_t _index = 0;
 		};
 
-		std::vector<std::string> completions (size_t bow, size_t eow, std::string const& prefix, std::string const& suffix);
-		bool setup_completion ();
-		void next_completion ();
-		void previous_completion ();
+		std::vector<std::string> completions (size_t bow, size_t eow, std::string const& prefix, std::string const& suffix, std::string const& scopeAttributes);
+		bool setup_completion (std::string const& scopeAttributes);
+		void next_completion (std::string const& scopeAttributes);
+		void previous_completion (std::string const& scopeAttributes);
 
 		// ============
 		// = Snippets =
 		// ============
 
-		void snippet (std::string const& str, std::map<std::string, std::string> const& variables);
-		ranges_t snippet (size_t from, size_t to, std::string const& str, std::map<std::string, std::string> const& variables);
+		void snippet (std::string const& str, std::map<std::string, std::string> const& variables, bool disableIndent = false);
+		ranges_t snippet (size_t from, size_t to, std::string const& str, std::map<std::string, std::string> const& variables, bool disableIndent);
 
 		void find (std::string const& searchFor, find::options_t options = find::none, bool searchOnlySelection = false);
 		ranges_t replace (std::multimap<range_t, std::string> const& replacements, bool selectInsertions = false);
@@ -265,12 +287,14 @@ namespace ng
 		clipboard_ptr _clipboard;
 		clipboard_ptr _find_clipboard;
 		clipboard_ptr _replace_clipboard;
-		clipboard_ptr _yank_line_clipboard;
+		clipboard_ptr _yank_clipboard;
+		bool _extend_yank_clipboard = false;
 
+		editor_delegate_t* _delegate = NULL;
 		document::document_ptr _document;
 	};
 
-	typedef std::tr1::shared_ptr<editor_t> editor_ptr;
+	typedef std::shared_ptr<editor_t> editor_ptr;
 
 	PUBLIC editor_ptr editor_for_document (document::document_ptr document);
 

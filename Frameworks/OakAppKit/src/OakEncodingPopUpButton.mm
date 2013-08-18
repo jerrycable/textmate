@@ -1,6 +1,5 @@
 #import "OakEncodingPopUpButton.h"
 #import "NSMenu Additions.h"
-#import <OakFoundation/OakFoundation.h>
 #import <OakFoundation/NSString Additions.h>
 #import <io/path.h>
 #import <ns/ns.h>
@@ -38,7 +37,7 @@ namespace // encoding_list
 			{
 				std::string name, code;
 				if(plist::get_key_path(*item, "name", name) && plist::get_key_path(*item, "code", code))
-					res.push_back(charset_t(name, code));
+					res.emplace_back(name, code);
 			}
 		}
 
@@ -82,7 +81,7 @@ namespace // PopulateMenu{Flat,Hierarchical}
 			{
 				groupName = item->group;
 
-				menu = [[NSMenu new] autorelease];
+				menu = [NSMenu new];
 				[menu setAutoenablesItems:NO];
 				[[containingMenu addItemWithTitle:[NSString stringWithCxxString:groupName] action:NULL keyEquivalent:@""] setSubmenu:menu];
 			}
@@ -104,12 +103,11 @@ namespace // PopulateMenu{Flat,Hierarchical}
 @end
 
 @interface OakEncodingPopUpButton ()
-@property (nonatomic, retain) NSArray* availableEncodings;
+@property (nonatomic) NSArray*    availableEncodings;
+@property (nonatomic) NSMenuItem* firstMenuItem;
 @end
 
 @implementation OakEncodingPopUpButton
-@synthesize encoding, availableEncodings;
-
 + (void)initialize
 {
 	NSArray* encodings = @[ @"WINDOWS-1252", @"MACROMAN", @"ISO-8859-1", @"UTF-8", @"UTF-16LE", @"UTF-16BE", @"SHIFT_JIS", @"GB18030" ];
@@ -122,8 +120,8 @@ namespace // PopulateMenu{Flat,Hierarchical}
 	for(NSString* str in [[NSUserDefaults standardUserDefaults] arrayForKey:kUserDefaultsAvailableEncodingsKey])
 		[encodings addObject:str];
 
-	if(encoding && ![encodings containsObject:encoding])
-		[encodings addObject:encoding];
+	if(self.encoding && ![encodings containsObject:self.encoding])
+		[encodings addObject:self.encoding];
 
 	self.availableEncodings = encodings;
 }
@@ -131,33 +129,33 @@ namespace // PopulateMenu{Flat,Hierarchical}
 - (void)updateMenu
 {
 	std::vector<menu_item_t> items;
-	std::string currentEncodingsTitle = to_s(encoding);
+	std::string currentEncodingsTitle = to_s(self.encoding);
 	citerate(charset, encoding_list())
 	{
-		if([availableEncodings containsObject:[NSString stringWithCxxString:charset->code()]])
+		if([self.availableEncodings containsObject:[NSString stringWithCxxString:charset->code()]])
 		{
 			auto v = text::split(charset->name(), " – ");
 			if(v.size() == 2)
 			{
 				items.push_back(menu_item_t(v.front(), v.back(), charset->code()));
-				if(to_s(encoding) == charset->code())
+				if(to_s(self.encoding) == charset->code())
 					currentEncodingsTitle = charset->name();
 			}
 		}
 	}
 
 	[self.menu removeAllItems];
-	firstMenuItem = nil;
+	self.firstMenuItem = nil;
 	if(items.size() >= 10)
 	{
-		firstMenuItem = [self.menu addItemWithTitle:[NSString stringWithCxxString:currentEncodingsTitle] action:NULL keyEquivalent:@""];
+		self.firstMenuItem = [self.menu addItemWithTitle:[NSString stringWithCxxString:currentEncodingsTitle] action:NULL keyEquivalent:@""];
 		[self.menu addItem:[NSMenuItem separatorItem]];
-		[self selectItem:firstMenuItem];
+		[self selectItem:self.firstMenuItem];
 	}
 
 	if(items.size() < 10)
-			[self selectItem:PopulateMenuFlat(self.menu, items, self, @selector(selectEncoding:), to_s(encoding))];
-	else	PopulateMenuHierarchical(self.menu, items, self, @selector(selectEncoding:), to_s(encoding));
+			[self selectItem:PopulateMenuFlat(self.menu, items, self, @selector(selectEncoding:), to_s(self.encoding))];
+	else	PopulateMenuHierarchical(self.menu, items, self, @selector(selectEncoding:), to_s(self.encoding));
 
 	[self.menu addItem:[NSMenuItem separatorItem]];
 	[[self.menu addItemWithTitle:@"Customize Encodings List…" action:@selector(customizeAvailableEncodings:) keyEquivalent:@""] setTarget:self];
@@ -167,7 +165,7 @@ namespace // PopulateMenu{Flat,Hierarchical}
 {
 	if(self = [super initWithCoder:aCoder])
 	{
-		encoding = [@"UTF-8" retain];
+		self.encoding = @"UTF-8";
 		[self updateAvailableEncodings];
 		[self updateMenu];
 		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(userDefaultsDidChange:) name:NSUserDefaultsDidChangeNotification object:[NSUserDefaults standardUserDefaults]];
@@ -179,7 +177,7 @@ namespace // PopulateMenu{Flat,Hierarchical}
 {
 	if(self = [super initWithFrame:aRect pullsDown:flag])
 	{
-		encoding = [@"UTF-8" retain];
+		self.encoding = @"UTF-8";
 		[self updateAvailableEncodings];
 		[self updateMenu];
 		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(userDefaultsDidChange:) name:NSUserDefaultsDidChangeNotification object:[NSUserDefaults standardUserDefaults]];
@@ -187,12 +185,20 @@ namespace // PopulateMenu{Flat,Hierarchical}
 	return self;
 }
 
+- (id)init
+{
+	if(self = [self initWithFrame:NSZeroRect pullsDown:NO])
+	{
+		[self sizeToFit];
+		if(NSWidth([self frame]) > 200)
+			[self setFrameSize:NSMakeSize(200, NSHeight([self frame]))];
+	}
+	return self;
+}
+
 - (void)dealloc
 {
 	[[NSNotificationCenter defaultCenter] removeObserver:self];
-	[encoding release];
-	[availableEncodings release];
-	[super dealloc];
 }
 
 - (void)selectEncoding:(NSMenuItem*)sender
@@ -202,23 +208,21 @@ namespace // PopulateMenu{Flat,Hierarchical}
 
 - (void)setEncoding:(NSString*)newEncoding
 {
-	if(encoding == newEncoding || [encoding isEqualToString:newEncoding])
+	if(_encoding == newEncoding || [_encoding isEqualToString:newEncoding])
 		return;
 
-	[encoding release];
-	encoding = [newEncoding retain];
-	if(encoding && ![availableEncodings containsObject:encoding])
+	_encoding = newEncoding;
+	if(_encoding && ![self.availableEncodings containsObject:_encoding])
 		[self updateAvailableEncodings];
 	[self updateMenu];
 }
 
 - (void)setAvailableEncodings:(NSArray*)newEncodings
 {
-	if(availableEncodings == newEncodings || [availableEncodings isEqualToArray:newEncodings])
+	if(_availableEncodings == newEncodings || [_availableEncodings isEqualToArray:newEncodings])
 		return;
 
-	[availableEncodings release];
-	availableEncodings = [newEncodings retain];
+	_availableEncodings = newEncodings;
 	[self updateMenu];
 }
 
@@ -238,21 +242,16 @@ namespace // PopulateMenu{Flat,Hierarchical}
 // = Customize Encodings Window Controller =
 // =========================================
 
-static OakCustomizeEncodingsWindowController* SharedInstance;
-
 @implementation OakCustomizeEncodingsWindowController
 + (OakCustomizeEncodingsWindowController*)sharedInstance
 {
-	return SharedInstance ?: [[OakCustomizeEncodingsWindowController new] autorelease];
+	static OakCustomizeEncodingsWindowController* instance = [OakCustomizeEncodingsWindowController new];
+	return instance;
 }
 
 - (id)init
 {
-	if(SharedInstance)
-	{
-		[self release];
-	}
-	else if(self = SharedInstance = [[super initWithWindowNibName:@"CustomizeEncodings"] retain])
+	if(self = [super initWithWindowNibName:@"CustomizeEncodings"])
 	{
 		std::set<std::string> enabledEncodings;
 		for(NSString* encoding in [[NSUserDefaults standardUserDefaults] arrayForKey:kUserDefaultsAvailableEncodingsKey])

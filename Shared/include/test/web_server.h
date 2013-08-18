@@ -18,13 +18,14 @@ static int create_socket (int port)
 	int sock = socket(AF_INET, SOCK_STREAM, 0);
 	if(sock != -1)
 	{
+		fcntl(sock, F_SETFD, FD_CLOEXEC);
 		static int const on = 1;
 		setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
 
 		struct sockaddr_in addr = { sizeof(sockaddr_in), AF_INET, htons(port), { htonl(INADDR_LOOPBACK) } };
 		if(bind(sock, (sockaddr*)&addr, sizeof(addr)) != -1)
 		{
-			if(listen(sock, 1) != -1)
+			if(listen(sock, 256) != -1)
 				return sock;
 		}
 		close(sock);

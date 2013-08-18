@@ -25,6 +25,10 @@ namespace ng
 			{ "moveToBeginningOfColumnAndModifySelection:",         kMoveToBeginningOfColumnAndModifySelection    },
 			{ "moveToBeginningOfDocument:",                         kMoveToBeginningOfDocument                    },
 			{ "moveToBeginningOfDocumentAndModifySelection:",       kMoveToBeginningOfDocumentAndModifySelection  },
+			{ "moveToBeginningOfIndentedLine:",                     kMoveToBeginningOfIndentedLine                   },
+			{ "moveToBeginningOfIndentedLineAndModifySelection:",   kMoveToBeginningOfIndentedLineAndModifySelection },
+			{ "moveToEndOfIndentedLine:",                           kMoveToEndOfIndentedLine                      },
+			{ "moveToEndOfIndentedLineAndModifySelection:",         kMoveToEndOfIndentedLineAndModifySelection    },
 			{ "moveToBeginningOfLine:",                             kMoveToBeginningOfLine                        },
 			{ "moveToBeginningOfLineAndModifySelection:",           kMoveToBeginningOfLineAndModifySelection      },
 			{ "moveToBeginningOfParagraph:",                        kMoveToBeginningOfParagraph                   },
@@ -74,6 +78,8 @@ namespace ng
 
 			{ "findNext:",                                          kFindNext                                     },
 			{ "findPrevious:",                                      kFindPrevious                                 },
+			{ "findNextAndModifySelection:",                        kFindNextAndModifySelection                   },
+			{ "findPreviousAndModifySelection:",                    kFindPreviousAndModifySelection               },
 			{ "findAll:",                                           kFindAll                                      },
 			{ "findAllInSelection:",                                kFindAllInSelection                           },
 
@@ -87,8 +93,10 @@ namespace ng
 			{ "deleteForward:",                                     kDeleteForward                                },
 			{ "deleteSubWordLeft:",                                 kDeleteSubWordLeft                            },
 			{ "deleteSubWordRight:",                                kDeleteSubWordRight                           },
+			{ "deleteToBeginningOfIndentedLine:",                   kDeleteToBeginningOfIndentedLine              },
 			{ "deleteToBeginningOfLine:",                           kDeleteToBeginningOfLine                      },
 			{ "deleteToBeginningOfParagraph:",                      kDeleteToBeginningOfParagraph                 },
+			{ "deleteToEndOfIndentedLine:",                         kDeleteToEndOfIndentedLine                    },
 			{ "deleteToEndOfLine:",                                 kDeleteToEndOfLine                            },
 			{ "deleteToEndOfParagraph:",                            kDeleteToEndOfParagraph                       },
 			{ "deleteWordBackward:",                                kDeleteWordBackward                           },
@@ -170,21 +178,23 @@ namespace ng
 		std::string where;
 		bool searchOnlySelection = plist::get_key_path(args, "replaceAllScope", where) && where == "selection";
 
-		if(action == "replaceAndFind")
+		if(action == "replace")
+		{
+			perform(kReplace);
+		}
+		else if(action == "replaceAndFind")
 		{
 			perform(kReplace);
 			find(searchFor, options, searchOnlySelection);
 		}
-		else if(action == "replace")
-		{
-			replace(searchFor, replaceWith, options, searchOnlySelection);
-		}
 		else if(action == "replaceAll")
 		{
-			replace(searchFor, replaceWith, options|find::all_matches, searchOnlySelection);
+			replace_all(searchFor, replaceWith, options|find::all_matches, searchOnlySelection);
 		}
 		else // findNext, findPrevious, and findAll
 		{
+			if(action == "findPrevious")
+				options |= find::backwards;
 			find(searchFor, options, searchOnlySelection);
 		}
 	}
@@ -192,9 +202,12 @@ namespace ng
 	void editor_t::snippet_dispatch (plist::dictionary_t const& plist, std::map<std::string, std::string> const& variables)
 	{
 		std::string str;
-		// TODO handle ‘disableAutoIndent’ key
 		if(plist::get_key_path(plist, "content", str))
-			snippet(str, variables);
+		{
+			bool disableAutoIndent = false;
+			plist::get_key_path(plist, "disableAutoIndent", disableAutoIndent);
+			snippet(str, variables, disableAutoIndent);
+		}
 	}
 
 	void editor_t::execute_dispatch (plist::dictionary_t const& plist, std::map<std::string, std::string> const& variables)

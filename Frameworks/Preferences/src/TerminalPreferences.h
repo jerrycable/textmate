@@ -1,6 +1,7 @@
 #import "PreferencesPane.h"
+#import <oak/misc.h>
 
-@interface TerminalPreferences : PreferencesPane
+PUBLIC @interface TerminalPreferences : PreferencesPane
 {
 	IBOutlet NSTextField* installStatusText;
 	IBOutlet NSTextField* installSummaryText;
@@ -15,4 +16,6 @@
 @property (nonatomic, retain) NSImage* installIndicaitorImage;
 - (IBAction)performInstallMate:(id)sender;
 - (IBAction)performUninstallMate:(id)sender;
+
++ (void)updateMateIfRequired;
 @end

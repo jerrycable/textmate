@@ -2,13 +2,13 @@
 <archive type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="7.10">
 	<data>
 		<int key="IBDocument.SystemTarget">1070</int>
-		<string key="IBDocument.SystemVersion">12A269</string>
-		<string key="IBDocument.InterfaceBuilderVersion">2549</string>
-		<string key="IBDocument.AppKitVersion">1187</string>
-		<string key="IBDocument.HIToolboxVersion">624.00</string>
+		<string key="IBDocument.SystemVersion">12C60</string>
+		<string key="IBDocument.InterfaceBuilderVersion">2844</string>
+		<string key="IBDocument.AppKitVersion">1187.34</string>
+		<string key="IBDocument.HIToolboxVersion">625.00</string>
 		<object class="NSMutableDictionary" key="IBDocument.PluginVersions">
 			<string key="NS.key.0">com.apple.InterfaceBuilder.CocoaPlugin</string>
-			<string key="NS.object.0">2549</string>
+			<string key="NS.object.0">2844</string>
 		</object>
 		<object class="NSArray" key="IBDocument.IntegratedClassDependencies">
 			<bool key="EncodedWithXMLCoder">YES</bool>
@@ -79,6 +79,7 @@
 							<string key="NSFrame">{{20, 20}, {96, 96}}</string>
 							<reference key="NSSuperview" ref="671095835"/>
 							<reference key="NSWindow"/>
+							<reference key="NSNextKeyView" ref="745098621"/>
 							<bool key="NSEnabled">YES</bool>
 							<object class="NSImageCell" key="NSCell" id="877320973">
 								<int key="NSCellFlags">134217728</int>
@@ -101,6 +102,7 @@
 							<string key="NSFrame">{{132, 71}, {311, 20}}</string>
 							<reference key="NSSuperview" ref="671095835"/>
 							<reference key="NSWindow"/>
+							<reference key="NSNextKeyView" ref="93647479"/>
 							<int key="NSpiFlags">16396</int>
 							<double key="NSMaxValue">1</double>
 						</object>
@@ -110,6 +112,7 @@
 							<string key="NSFrame">{{212, 12}, {82, 32}}</string>
 							<reference key="NSSuperview" ref="671095835"/>
 							<reference key="NSWindow"/>
+							<reference key="NSNextKeyView" ref="865616887"/>
 							<bool key="NSEnabled">YES</bool>
 							<object class="NSButtonCell" key="NSCell" id="992124687">
 								<int key="NSCellFlags">-2080374784</int>
@@ -136,6 +139,7 @@
 							<string key="NSFrame">{{294, 12}, {153, 32}}</string>
 							<reference key="NSSuperview" ref="671095835"/>
 							<reference key="NSWindow"/>
+							<reference key="NSNextKeyView"/>
 							<bool key="NSEnabled">YES</bool>
 							<object class="NSButtonCell" key="NSCell" id="342522879">
 								<int key="NSCellFlags">-2080374784</int>
@@ -158,6 +162,7 @@
 							<string key="NSFrame">{{131, 99}, {313, 17}}</string>
 							<reference key="NSSuperview" ref="671095835"/>
 							<reference key="NSWindow"/>
+							<reference key="NSNextKeyView" ref="233311379"/>
 							<bool key="NSEnabled">YES</bool>
 							<object class="NSTextFieldCell" key="NSCell" id="713007749">
 								<int key="NSCellFlags">68157504</int>
@@ -192,6 +197,7 @@
 							<string key="NSFrame">{{131, 54}, {313, 13}}</string>
 							<reference key="NSSuperview" ref="671095835"/>
 							<reference key="NSWindow"/>
+							<reference key="NSNextKeyView" ref="196209169"/>
 							<bool key="NSEnabled">YES</bool>
 							<object class="NSTextFieldCell" key="NSCell" id="838069023">
 								<int key="NSCellFlags">68157504</int>
@@ -212,10 +218,12 @@
 					<string key="NSFrameSize">{461, 136}</string>
 					<reference key="NSSuperview"/>
 					<reference key="NSWindow"/>
+					<reference key="NSNextKeyView" ref="381562804"/>
 				</object>
-				<string key="NSScreenRect">{{0, 0}, {1680, 1028}}</string>
+				<string key="NSScreenRect">{{0, 0}, {2560, 1578}}</string>
 				<string key="NSMinSize">{213, 129}</string>
 				<string key="NSMaxSize">{10000000000000, 10000000000000}</string>
+				<string key="NSFrameAutosaveName">SUDownload</string>
 				<bool key="NSWindowIsRestorable">YES</bool>
 			</object>
 		</object>
@@ -288,47 +296,43 @@
 				</object>
 				<object class="IBConnectionRecord">
 					<object class="IBBindingConnection" key="connection">
-						<string key="label">isIndeterminate: isInstalling</string>
+						<string key="label">isIndeterminate: isIndeterminate</string>
 						<reference key="source" ref="233311379"/>
 						<reference key="destination" ref="469019052"/>
 						<object class="NSNibBindingConnector" key="connector">
 							<reference key="NSSource" ref="233311379"/>
 							<reference key="NSDestination" ref="469019052"/>
-							<string key="NSLabel">isIndeterminate: isInstalling</string>
+							<string key="NSLabel">isIndeterminate: isIndeterminate</string>
 							<string key="NSBinding">isIndeterminate</string>
-							<string key="NSKeyPath">isInstalling</string>
+							<string key="NSKeyPath">isIndeterminate</string>
 							<reference key="NSPreviousConnector" ref="221091218"/>
 							<int key="NSNibBindingConnectorVersion">2</int>
 						</object>
 					</object>
-					<int key="connectionID">41</int>
+					<int key="connectionID">45</int>
 				</object>
 				<object class="IBConnectionRecord">
 					<object class="IBBindingConnection" key="connection">
-						<string key="label">enabled: isInstalling</string>
+						<string key="label">enabled: canCancel</string>
 						<reference key="source" ref="196209169"/>
 						<reference key="destination" ref="469019052"/>
 						<object class="NSNibBindingConnector" key="connector">
 							<reference key="NSSource" ref="196209169"/>
 							<reference key="NSDestination" ref="469019052"/>
-							<string key="NSLabel">enabled: isInstalling</string>
+							<string key="NSLabel">enabled: canCancel</string>
 							<string key="NSBinding">enabled</string>
-							<string key="NSKeyPath">isInstalling</string>
-							<object class="NSDictionary" key="NSOptions">
-								<string key="NS.key.0">NSValueTransformerName</string>
-								<string key="NS.object.0">NSNegateBoolean</string>
-							</object>
+							<string key="NSKeyPath">canCancel</string>
 							<int key="NSNibBindingConnectorVersion">2</int>
 						</object>
 					</object>
-					<int key="connectionID">42</int>
+					<int key="connectionID">46</int>
 				</object>
 				<object class="IBConnectionRecord">
 					<object class="IBBindingConnection" key="connection">
 						<string key="label">enabled: canInstall</string>
 						<reference key="source" ref="865616887"/>
 						<reference key="destination" ref="469019052"/>
-						<object class="NSNibBindingConnector" key="connector" id="316075721">
+						<object class="NSNibBindingConnector" key="connector">
 							<reference key="NSSource" ref="865616887"/>
 							<reference key="NSDestination" ref="469019052"/>
 							<string key="NSLabel">enabled: canInstall</string>
@@ -338,42 +342,6 @@
 						</object>
 					</object>
 					<int key="connectionID">25</int>
-				</object>
-				<object class="IBConnectionRecord">
-					<object class="IBBindingConnection" key="connection">
-						<string key="label">enabled2: isInstalling</string>
-						<reference key="source" ref="865616887"/>
-						<reference key="destination" ref="469019052"/>
-						<object class="NSNibBindingConnector" key="connector">
-							<reference key="NSSource" ref="865616887"/>
-							<reference key="NSDestination" ref="469019052"/>
-							<string key="NSLabel">enabled2: isInstalling</string>
-							<string key="NSBinding">enabled2</string>
-							<string key="NSKeyPath">isInstalling</string>
-							<object class="NSDictionary" key="NSOptions">
-								<bool key="EncodedWithXMLCoder">YES</bool>
-								<object class="NSArray" key="dict.sortedKeys">
-									<bool key="EncodedWithXMLCoder">YES</bool>
-									<string>NSMultipleValuesPlaceholder</string>
-									<string>NSNoSelectionPlaceholder</string>
-									<string>NSNotApplicablePlaceholder</string>
-									<string>NSNullPlaceholder</string>
-									<string>NSValueTransformerName</string>
-								</object>
-								<object class="NSArray" key="dict.values">
-									<bool key="EncodedWithXMLCoder">YES</bool>
-									<integer value="-1"/>
-									<integer value="-1"/>
-									<integer value="-1"/>
-									<integer value="-1"/>
-									<string>NSNegateBoolean</string>
-								</object>
-							</object>
-							<reference key="NSPreviousConnector" ref="316075721"/>
-							<int key="NSNibBindingConnectorVersion">2</int>
-						</object>
-					</object>
-					<int key="connectionID">43</int>
 				</object>
 				<object class="IBConnectionRecord">
 					<object class="IBBindingConnection" key="connection">
@@ -593,7 +561,7 @@
 				<reference key="dict.values" ref="0"/>
 			</object>
 			<nil key="sourceID"/>
-			<int key="maxID">43</int>
+			<int key="maxID">46</int>
 		</object>
 		<object class="IBClassDescriber" key="IBDocument.Classes">
 			<object class="NSMutableArray" key="referencedPartialClassDescriptions">

@@ -8,9 +8,9 @@ namespace sw_update
 {
 	struct version_info_t
 	{
-		version_info_t (long version = 0, std::string const& url = NULL_STR) : version(version), url(url) { }
+		version_info_t (std::string const& version = NULL_STR, std::string const& url = NULL_STR) : version(version), url(url) { }
 
-		long version;
+		std::string version;
 		std::string url;
 	};
 

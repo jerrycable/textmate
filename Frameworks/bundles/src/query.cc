@@ -1,5 +1,7 @@
 #include "query.h"
 #include <text/ctype.h>
+#include <text/parse.h>
+#include <text/trim.h>
 #include <oak/callbacks.h>
 
 namespace bundles
@@ -10,6 +12,11 @@ namespace bundles
 
 	void add_callback (callback_t* cb)    { Callbacks.add(cb); }
 	void remove_callback (callback_t* cb) { Callbacks.remove(cb); }
+
+	static bool deleted_or_disabled (item_ptr item)
+	{
+		return item->deleted() || item->disabled() || item->bundle() && (item->bundle()->deleted() || item->bundle()->disabled());
+	}
 
 	namespace
 	{
@@ -24,7 +31,7 @@ namespace bundles
 				std::multimap<std::string, item_ptr>& res = _cache[field];
 				iterate(item, AllItems)
 				{
-					if((*item)->disabled() || (*item)->bundle() && (*item)->bundle()->disabled() || (*item)->deleted() || (*item)->bundle() && (*item)->bundle()->deleted())
+					if(deleted_or_disabled(*item))
 						continue;
 					citerate(value, (*item)->values_for_field(field))
 						res.insert(std::make_pair(*value, *item));
@@ -66,8 +73,14 @@ namespace bundles
 				return menu != _menus.end() ? menu->second : kEmptyMenu;
 			}
 
+			std::recursive_mutex& mutex ()
+			{
+				return _cache_mutex;
+			}
+
 			void clear ()
 			{
+				std::lock_guard<std::recursive_mutex> lock(_cache_mutex);
 				_cache.clear();
 				_menus.clear();
 			}
@@ -99,6 +112,7 @@ namespace bundles
 				}
 			}
 
+			std::recursive_mutex _cache_mutex;
 			std::map< std::string, std::multimap<std::string, item_ptr> > _cache;
 			std::map< oak::uuid_t, std::vector<item_ptr> > _menus;
 		};
@@ -187,11 +201,20 @@ namespace bundles
 	{
 		std::string actionClass;
 		if(plist::get_key_path(item->plist(), "content", actionClass))
-			search(kFieldSemanticClass, actionClass, scope, kind, bundle, includeDisabledItems, ordered);
+		{
+			citerate(aClass, text::split(actionClass, "||"))
+			{
+				size_t oldSize = ordered.size();
+				search(kFieldSemanticClass, text::trim(*aClass), scope, kind, bundle, includeDisabledItems, ordered);
+				if(ordered.size() != oldSize)
+					break;
+			}
+		}
 	}
 
  	static void cache_search (std::string const& field, std::string const& value, scope::context_t const& scope, int kind, oak::uuid_t const& bundle, bool includeDisabledItems, std::multimap<double, item_ptr>& ordered)
 	{
+		std::lock_guard<std::recursive_mutex> lock(cache().mutex());
 		std::multimap<std::string, item_ptr> const& values = cache().fetch(field);
 		foreach(pair, values.lower_bound(value), field == kFieldSemanticClass ? values.lower_bound(value + "/") : values.upper_bound(value)) // Since kFieldSemanticClass is a prefix match we want lower bound of the first item after the last possible prefix (which would be “value.zzzzz…” → “value/”).
 		{
@@ -209,7 +232,7 @@ namespace bundles
 	{
 		iterate(item, AllItems)
 		{
-			if(!includeDisabledItems && ((*item)->disabled() || (*item)->bundle() && (*item)->bundle()->disabled()) || (*item)->deleted() || (*item)->bundle() && (*item)->bundle()->deleted())
+			if(!includeDisabledItems && deleted_or_disabled(*item))
 				continue;
 
 			double rank = 1.0;
@@ -224,8 +247,8 @@ namespace bundles
 
  	static void search (std::string const& field, std::string const& value, scope::context_t const& scope, int kind, oak::uuid_t const& bundle, bool includeDisabledItems, std::multimap<double, item_ptr>& ordered)
 	{
-		static std::string CachedFields[] = { kFieldKeyEquivalent, kFieldTabTrigger, kFieldSemanticClass, kFieldGrammarScope, kFieldSettingName };
-		if(!includeDisabledItems && !bundle && oak::contains(beginof(CachedFields), endof(CachedFields), field))
+		static auto const CachedFields = new std::set<std::string>{ kFieldKeyEquivalent, kFieldTabTrigger, kFieldSemanticClass, kFieldGrammarScope, kFieldSettingName };
+		if(!includeDisabledItems && !bundle && CachedFields->find(field) != CachedFields->end())
 				cache_search(field, value, scope, kind, bundle, includeDisabledItems, ordered);
 		else	linear_search(field, value, scope, kind, bundle, includeDisabledItems, ordered);
 	}
@@ -241,6 +264,21 @@ namespace bundles
 		return res;
 	}
 
+	std::vector<item_ptr> items_for_proxy (item_ptr proxyItem, scope::context_t const& scope, int kind, oak::uuid_t const& bundle, bool filter, bool includeDisabledItems)
+	{
+		std::string actionClass;
+		if(plist::get_key_path(proxyItem->plist(), "content", actionClass))
+		{
+			citerate(aClass, text::split(actionClass, "||"))
+			{
+				auto const res = query(kFieldSemanticClass, text::trim(*aClass), scope, kind, bundle, filter, includeDisabledItems);
+				if(!res.empty())
+					return res;
+			}
+		}
+		return std::vector<item_ptr>();
+	}
+
 	item_ptr lookup (oak::uuid_t const& uuid)
 	{
 		iterate(item, AllItems)
@@ -253,13 +291,68 @@ namespace bundles
 
 	std::vector<item_ptr> item_t::menu (bool includeDisabledItems) const
 	{
+		std::lock_guard<std::recursive_mutex> lock(cache().mutex());
 		std::vector<item_ptr> res;
 		iterate(item, cache().menu(_uuid))
 		{
-			if(!includeDisabledItems && ((*item)->disabled() || (*item)->bundle() && (*item)->bundle()->disabled()) || (*item)->deleted() || (*item)->bundle() && (*item)->bundle()->deleted())
+			if(!includeDisabledItems && deleted_or_disabled(*item))
 				continue;
 			res.push_back(*item);
 		}
+		return res;
+	}
+
+	static std::string format_bundle_item_title (std::string title, bool hasSelection)
+	{
+		static std::string const kSelectionSubString = " / Selection";
+
+		std::string::size_type pos = title.find(kSelectionSubString);
+		if(pos == 0 || pos == std::string::npos)
+			return title;
+
+		if(hasSelection)
+		{
+			std::string::size_type from = title.rfind(' ', pos - 1);
+			if(from == std::string::npos)
+				return title.erase(0, pos + 3);
+			return title.erase(from + 1, pos + 3 - from - 1);
+		}
+		return title.erase(pos, kSelectionSubString.size());
+	}
+
+	std::string name_with_selection (item_ptr const& item, bool hasSelection)
+	{
+		return format_bundle_item_title(item->name(), hasSelection);
+	}
+
+	std::string full_name_with_selection (item_ptr const& item, bool hasSelection)
+	{
+		return format_bundle_item_title(item->full_name(), hasSelection);
+	}
+
+	std::string key_equivalent (item_ptr const& item)
+	{
+		std::string const res = item->value_for_field(kFieldKeyEquivalent);
+		if(res != NULL_STR || item->kind() == kItemTypeProxy)
+			return res;
+
+		std::string const sClass = item->value_for_field(kFieldSemanticClass);
+		if(sClass == NULL_STR)
+			return res;
+
+		iterate(proxyItem, AllItems)
+		{
+			if((*proxyItem)->kind() != kItemTypeProxy)
+				continue;
+
+			std::string actionClass;
+			if(plist::get_key_path((*proxyItem)->plist(), "content", actionClass))
+			{
+				if(sClass.find(actionClass) == 0)
+					return key_equivalent(*proxyItem);
+			}
+		}
+
 		return res;
 	}
 

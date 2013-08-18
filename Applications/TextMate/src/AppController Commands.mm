@@ -13,26 +13,8 @@
 #import <OakSystem/application.h>
 #import <plist/uuid.h>
 #import <HTMLOutputWindow/HTMLOutputWindow.h>
-#import <oak/CocoaSTL.h>
 
 OAK_DEBUG_VAR(AppController_Commands);
-
-static CGPoint MenuPosition ()
-{
-	NSPoint pos = [NSEvent mouseLocation];
-	pos.y -= 16;
-
-	NSRect mainScreen = [[NSScreen mainScreen] frame];
-	for(NSScreen* candidate in [NSScreen screens])
-	{
-		if(NSMinX([candidate frame]) == 0 && NSMinY([candidate frame]) == 0)
-			mainScreen = [candidate frame];
-	}
-
-	CGFloat top = round(NSMaxY(mainScreen) - pos.y);
-	CGFloat left = round(pos.x - NSMinX(mainScreen));
-	return CGPointMake(top, left);
-}
 
 @implementation AppController (Commands)
 - (void)performBundleItemWithUUIDString:(NSString*)uuidString
@@ -40,27 +22,32 @@ static CGPoint MenuPosition ()
 	if(bundles::item_ptr item = bundles::lookup(to_s(uuidString)))
 	{
 		DocumentController* delegate = (DocumentController*)[[NSApp mainWindow] delegate];
-		if([delegate respondsToSelector:@selector(performBundleItem:)])
+		if(![delegate respondsToSelector:@selector(performBundleItem:)])
+			delegate = [NSApp targetForAction:@selector(performBundleItem:)];
+		if(delegate)
 			return [delegate performBundleItem:item];
 
 		switch(item->kind())
 		{
 			case bundles::kItemTypeSnippet:
 			{
-				// TODO set language according to snippet’s scope selector
-				// TODO mark document as “not modified”
 				document::document_ptr doc = document::create();
+				// TODO set language according to snippet’s scope selector
 				doc->open();
-				ng::editor_ptr editor = ng::editor_for_document(doc);
-				editor->snippet_dispatch(item->plist(), editor->variables(item->environment()));
-				document::show(doc);
+				document::show(doc); // If we call show() with a document that isn’t open then it will be loaded in the background, and show() will return before this has completed, meaning the next line may not target our new document.
+				[[DocumentController controllerForDocument:doc] performBundleItem:item];
 				doc->close();
+				// TODO mark document as “not modified”
 			}
 			break;
 
 			case bundles::kItemTypeCommand:
 			{
-				document::run(parse_command(item), ng::buffer_t(), ng::ranges_t(), document::document_ptr());
+				std::map<std::string, std::string> map = oak::basic_environment();
+				map << item->bundle_variables();
+				map = bundles::scope_variables(map);
+				map = variables_for_path(map);
+				document::run(parse_command(item), ng::buffer_t(), ng::ranges_t(), document::document_ptr(), map);
 			}
 			break;
 
@@ -71,18 +58,5 @@ static CGPoint MenuPosition ()
 			break;
 		}
 	}
-}
-
-- (BOOL)canHandleMenuKeyEquivalent:(NSEvent*)anEvent
-{
-	if([[[NSApp keyWindow] delegate] isKindOfClass:[DocumentController class]])
-		return NO;
-	return !bundles::query(bundles::kFieldKeyEquivalent, to_s(anEvent), "").empty();
-}
-
-- (void)handleMenuKeyEquivalent:(id)sender
-{
-	if(bundles::item_ptr item = bundles::show_menu_for_items(bundles::query(bundles::kFieldKeyEquivalent, to_s([NSApp currentEvent]), ""), MenuPosition()))
-		[self performBundleItemWithUUIDString:[NSString stringWithCxxString:item->uuid()]];
 }
 @end

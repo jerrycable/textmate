@@ -30,11 +30,11 @@
 	"@\UF728"  = "deleteToEndOfLine:";
 	"~\UF705"  = "showContextMenu:";
 
-	"^s"       = "incrementalSearch:";
+	"~\UF704"  = "showBundlesMenu:";
 
 	"^w"       = "selectWord:";
 	"@L"       = "selectHardLine:";
-	"@P"       = "selectParagraph:";
+	"^~p"      = "selectParagraph:";
 	"^~b"      = "selectCurrentScope:";
 
 	"^T"       = "transposeWords:";
@@ -53,7 +53,4 @@
 	"^q"       = "reformatText:";
 	"^j"       = "reformatTextAndJustify:";
 	"^~q"      = "unwrapText:";
-
-	"^r"       = "executeSelectionInsertingOutput:";
-	"^~r"      = "executeSelectionReplacingSelection:";
 }

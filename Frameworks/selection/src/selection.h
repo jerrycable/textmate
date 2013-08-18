@@ -6,8 +6,8 @@
 #include <text/types.h>
 #include <oak/misc.h>
 
-enum move_unit_type { kSelectionMoveLeft, kSelectionMoveRight, kSelectionMoveFreehandedLeft, kSelectionMoveFreehandedRight, kSelectionMoveUp, kSelectionMoveDown, kSelectionMoveToBeginOfSelection, kSelectionMoveToEndOfSelection, kSelectionMoveToBeginOfSubWord, kSelectionMoveToEndOfSubWord, kSelectionMoveToBeginOfWord, kSelectionMoveToEndOfWord, kSelectionMoveToBeginOfSoftLine, kSelectionMoveToEndOfSoftLine, kSelectionMoveToBeginOfLine, kSelectionMoveToEndOfLine, kSelectionMoveToBeginOfParagraph, kSelectionMoveToEndOfParagraph, kSelectionMoveToBeginOfTypingPair, kSelectionMoveToEndOfTypingPair, kSelectionMoveToBeginOfColumn, kSelectionMoveToEndOfColumn, kSelectionMovePageUp, kSelectionMovePageDown, kSelectionMoveToBeginOfDocument, kSelectionMoveToEndOfDocument, kSelectionMoveNowhere };
-enum select_unit_type { kSelectionExtendLeft, kSelectionExtendRight, kSelectionExtendFreehandedLeft, kSelectionExtendFreehandedRight, kSelectionExtendUp, kSelectionExtendDown, kSelectionExtendToBeginOfSubWord, kSelectionExtendToEndOfSubWord, kSelectionExtendToBeginOfWord, kSelectionExtendToEndOfWord, kSelectionExtendToBeginOfSoftLine, kSelectionExtendToEndOfSoftLine, kSelectionExtendToBeginOfLine, kSelectionExtendToEndOfLine, kSelectionExtendToBeginOfParagraph, kSelectionExtendToEndOfParagraph, kSelectionExtendToBeginOfTypingPair, kSelectionExtendToEndOfTypingPair, kSelectionExtendToBeginOfColumn, kSelectionExtendToEndOfColumn, kSelectionExtendPageUp, kSelectionExtendPageDown, kSelectionExtendToBeginOfDocument, kSelectionExtendToEndOfDocument, kSelectionExtendToWord, kSelectionExtendToScope, kSelectionExtendToSoftLine, kSelectionExtendToLineExclLF, kSelectionExtendToLine, kSelectionExtendToParagraph, kSelectionExtendToTypingPair, kSelectionExtendToAll };
+enum move_unit_type { kSelectionMoveLeft, kSelectionMoveRight, kSelectionMoveFreehandedLeft, kSelectionMoveFreehandedRight, kSelectionMoveUp, kSelectionMoveDown, kSelectionMoveToBeginOfSelection, kSelectionMoveToEndOfSelection, kSelectionMoveToBeginOfSubWord, kSelectionMoveToEndOfSubWord, kSelectionMoveToBeginOfWord, kSelectionMoveToEndOfWord, kSelectionMoveToBeginOfSoftLine, kSelectionMoveToEndOfSoftLine, kSelectionMoveToBeginOfIndentedLine, kSelectionMoveToEndOfIndentedLine, kSelectionMoveToBeginOfLine, kSelectionMoveToEndOfLine, kSelectionMoveToBeginOfParagraph, kSelectionMoveToEndOfParagraph, kSelectionMoveToBeginOfHardParagraph, kSelectionMoveToEndOfHardParagraph, kSelectionMoveToBeginOfTypingPair, kSelectionMoveToEndOfTypingPair, kSelectionMoveToBeginOfColumn, kSelectionMoveToEndOfColumn, kSelectionMovePageUp, kSelectionMovePageDown, kSelectionMoveToBeginOfDocument, kSelectionMoveToEndOfDocument, kSelectionMoveNowhere };
+enum select_unit_type { kSelectionExtendLeft, kSelectionExtendRight, kSelectionExtendFreehandedLeft, kSelectionExtendFreehandedRight, kSelectionExtendUp, kSelectionExtendDown, kSelectionExtendToBeginOfSubWord, kSelectionExtendToEndOfSubWord, kSelectionExtendToBeginOfWord, kSelectionExtendToEndOfWord, kSelectionExtendToBeginOfSoftLine, kSelectionExtendToEndOfSoftLine, kSelectionExtendToBeginOfIndentedLine, kSelectionExtendToEndOfIndentedLine, kSelectionExtendToBeginOfLine, kSelectionExtendToEndOfLine, kSelectionExtendToBeginOfParagraph, kSelectionExtendToEndOfParagraph, kSelectionExtendToBeginOfTypingPair, kSelectionExtendToEndOfTypingPair, kSelectionExtendToBeginOfColumn, kSelectionExtendToEndOfColumn, kSelectionExtendPageUp, kSelectionExtendPageDown, kSelectionExtendToBeginOfDocument, kSelectionExtendToEndOfDocument, kSelectionExtendToWord, kSelectionExtendToScope, kSelectionExtendToSoftLine, kSelectionExtendToLineExclLF, kSelectionExtendToLine, kSelectionExtendToParagraph, kSelectionExtendToTypingPair, kSelectionExtendToAll };
 
 namespace scope { struct context_t; struct selector_t; }
 
@@ -37,11 +37,18 @@ namespace ng
 	PUBLIC ranges_t toggle_columnar (ranges_t const& selection);
 	PUBLIC scope::context_t scope (buffer_t const& buffer, ranges_t const& selection, std::string const& extraAttributes = NULL_STR);
 	PUBLIC ranges_t highlight_ranges_for_movement (buffer_t const& buffer, ranges_t const& oldSelection, ranges_t const& newSelection);
-	PUBLIC std::map< range_t, std::map<std::string, std::string> > find (buffer_t const& buffer, ranges_t const& selection, std::string const& searchFor, find::options_t options, ranges_t const& searchRanges = ranges_t());
+	PUBLIC std::map< range_t, std::map<std::string, std::string> > find (buffer_t const& buffer, ranges_t const& selection, std::string const& searchFor, find::options_t options, ranges_t const& searchRanges = ranges_t(), bool* didWrap = nullptr);
 	PUBLIC std::map< range_t, std::map<std::string, std::string> > find_all (buffer_t const& buffer, std::string const& searchFor, find::options_t options, ranges_t const& searchRanges = ranges_t());
 	PUBLIC ranges_t all_words (buffer_t const& buffer);
 
 	PUBLIC ranges_t dissect_columnar (buffer_t const& buffer, ranges_t const& selection);
+
+	PUBLIC extern std::string const kCharacterClassWord;
+	PUBLIC extern std::string const kCharacterClassSpace;
+	PUBLIC extern std::string const kCharacterClassOther;
+	PUBLIC extern std::string const kCharacterClassUnknown;
+
+	PUBLIC std::string character_class (buffer_t const& buffer, size_t index);
 
 	PUBLIC ranges_t from_string (buffer_t const& buffer, std::string const& str);
 	PUBLIC std::string to_s (buffer_t const& buffer, ranges_t const& ranges);

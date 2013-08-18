@@ -1,58 +1,35 @@
 #include "tbz.h"
 #include <text/format.h>
-#include <oak/datatypes.h>
-#include <io/environment.h>
+#include <text/trim.h>
+#include <oak/compat.h>
+#include <io/exec.h>
+
+#define OAK_CHECK(expr) do { if((expr) != 0) { perror(#expr); return -1; } } while(false)
 
 namespace network
 {
-	static char const* strip_components_flag ()
-	{
-		SInt32 osVersion = 0;
-		Gestalt(gestaltSystemVersion, &osVersion);
-		return osVersion >= 0x1050 ? "--strip-components" : "--strip-path";
-	}
-
 	pid_t launch_tbz (std::string const& dest, int& input, int& output, std::string& error)
 	{
-		signal(SIGPIPE, SIG_IGN);
-
-		int in[2], out[2];
-		pipe(&in[0]);
-		pipe(&out[0]);
-
-		char const* argv[] = { "/usr/bin/tar", "-jxmkC", dest.c_str(), strip_components_flag(), "1", NULL };
-		oak::c_array env(oak::basic_environment());
-		pid_t pid = vfork();
-		if(pid == 0)
+		if(io::process_t process = io::spawn(std::vector<std::string>{ "/usr/bin/tar", "-jxmkC", dest, "--strip-components", "1" }))
 		{
-			close(0); close(1); close(2);
-			dup(in[0]); dup(out[1]); dup(out[1]);
-			close(in[0]); close(in[1]); close(out[0]); close(out[1]);
+			input  = process.in;
+			output = process.out;
 
-			signal(SIGPIPE, SIG_DFL);
+			dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+				ssize_t len;
+				char bytes[512];
+				std::string str;
+				while((len = read(process.err, bytes, sizeof(bytes))) > 0)
+					str.insert(str.end(), bytes, bytes + len);
+				close(process.err);
 
-			execve(argv[0], (char* const*)argv, env);
-			_exit(-1);
+				if(!str.empty())
+					fprintf(stderr, "%s\n", str.c_str());
+			});
+
+			return process.pid;
 		}
-		else
-		{
-			close(in[0]);
-			close(out[1]);
-
-			if(pid == -1)
-			{
-				close(in[1]);
-				close(out[0]);
-
-				error = text::format("Error launching tar: %s", strerror(errno));
-			}
-			else
-			{
-				fcntl(input  = in[1],  F_SETFD, 1);
-				fcntl(output = out[0], F_SETFD, 1);
-			}
-		}
-		return pid;
+		return -1;
 	}
 
 	bool finish_tbz (pid_t pid, int& input, int& output, std::string& error)
@@ -71,8 +48,8 @@ namespace network
 		{
 			if(WEXITSTATUS(status) == 0 && tbzOut.empty())
 				return true;
-			error = "Corrupt archive.";
-			// error = text::format("Unexpected exit code from tar (%d)\n%s\n", WEXITSTATUS(status), text::trim(tbzOut).c_str());
+			error = "Extracting archive.";
+			// fprintf(stderr, "%s: unexpected exit code from tar %d: %s\n", getprogname(), WEXITSTATUS(status), text::trim(tbzOut).c_str());
 		}
 		else
 		{

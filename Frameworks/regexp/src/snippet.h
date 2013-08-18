@@ -80,7 +80,7 @@ namespace snippet
 		WATCH_LEAKS(snippet::choice_t);
 	};
 	
-	typedef std::tr1::shared_ptr<placeholder_t> field_ptr;
+	typedef std::shared_ptr<placeholder_t> field_ptr;
 
 	struct PUBLIC snippet_t
 	{
@@ -115,6 +115,7 @@ namespace snippet
 
 		bool next ();
 		bool previous ();
+		bool in_last_placeholder () const;
 
 		void clear ()       { records.clear(); }
 		bool empty () const { return records.empty(); }

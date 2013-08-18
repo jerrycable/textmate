@@ -2,6 +2,7 @@
 #import <BundlesManager/BundlesManager.h>
 #import <OakFoundation/NSDate Additions.h>
 #import <OakFoundation/NSString Additions.h>
+#import <MGScopeBar/MGScopeBar.h>
 #import <ns/ns.h>
 #import <regexp/format_string.h>
 #import <text/ctype.h>
@@ -15,6 +16,10 @@ static std::string textify (std::string str)
 	return str;
 }
 
+@interface BundlesPreferences ()
+@property (nonatomic, retain) BundlesManager* bundlesManager;
+@end
+
 @implementation BundlesPreferences
 - (NSString*)identifier            { return @"Bundles"; }
 - (NSImage*)toolbarItemImage       { return [[NSWorkspace sharedWorkspace] iconForFileType:@"tmbundle"]; }
@@ -24,12 +29,12 @@ static std::string textify (std::string str)
 - (void)bundlesDidChange:(id)sender
 {
 	std::set<std::string, text::less_t> set;
-	for(size_t i = 0; i < [bundlesManager numberOfBundles]; ++i)
+	for(size_t i = 0; i < [_bundlesManager numberOfBundles]; ++i)
 	{
-		bundles_db::bundle_ptr bundle = [bundlesManager bundleAtIndex:i];
+		bundles_db::bundle_ptr bundle = [_bundlesManager bundleAtIndex:i];
 		if(bundle->category() != NULL_STR)
 				set.insert(bundle->category());
-		else	NSLog(@"%s No category for bundle: %s", SELNAME(_cmd), bundle->name().c_str());;
+		else	NSLog(@"%s No category for bundle: %s", sel_getName(_cmd), bundle->name().c_str());;
 	}
 
 	if(categories != std::vector<std::string>(set.begin(), set.end()))
@@ -39,12 +44,15 @@ static std::string textify (std::string str)
 	}
 
 	bundles.clear();
-	for(size_t i = 0; i < [bundlesManager numberOfBundles]; ++i)
+	for(size_t i = 0; i < [_bundlesManager numberOfBundles]; ++i)
 	{
-		bundles_db::bundle_ptr bundle = [bundlesManager bundleAtIndex:i];
+		bundles_db::bundle_ptr bundle = [_bundlesManager bundleAtIndex:i];
 		if(enabledCategories.empty() || enabledCategories.find(bundle->category()) != enabledCategories.end())
 			bundles.push_back(bundle);
 	}
+	for(NSTableColumn* tableColumn in [bundlesTableView tableColumns])
+		[bundlesTableView setIndicatorImage:nil inTableColumn:tableColumn];
+	[bundlesTableView setIndicatorImage:[NSImage imageNamed:@"NSAscendingSortIndicator"] inTableColumn:[bundlesTableView tableColumnWithIdentifier:@"name"]];
 	[bundlesTableView reloadData];
 }
 
@@ -52,17 +60,21 @@ static std::string textify (std::string str)
 {
 	if(self = [super initWithNibName:@"BundlesPreferences" bundle:[NSBundle bundleForClass:[self class]]])
 	{
-		bundlesManager = [BundlesManager sharedInstance];
-		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(bundlesDidChange:) name:BundlesManagerBundlesDidChangeNotification object:bundlesManager];
+		self.bundlesManager = [BundlesManager sharedInstance];
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(bundlesDidChange:) name:BundlesManagerBundlesDidChangeNotification object:_bundlesManager];
 		[self bundlesDidChange:self];
 	}
 	return self;
 }
 
+- (void)awakeFromNib
+{
+	[bundlesTableView setIndicatorImage:[NSImage imageNamed:@"NSAscendingSortIndicator"] inTableColumn:[bundlesTableView tableColumnWithIdentifier:@"name"]];
+}
+
 - (void)dealloc
 {
 	[[NSNotificationCenter defaultCenter] removeObserver:self];
-	[super dealloc];
 }
 
 // =======================
@@ -112,19 +124,44 @@ static std::string textify (std::string str)
 // = NSTableView Delegate =
 // ========================
 
+- (void)tableView:(NSTableView*)aTableView didClickTableColumn:(NSTableColumn*)aTableColumn
+{
+	text::less_t lessThan;
+
+	if([[aTableColumn identifier] isEqualToString:@"name"])
+		std::sort(bundles.begin(), bundles.end(), [&lessThan](bundles_db::bundle_ptr lhs, bundles_db::bundle_ptr rhs){ return lessThan(lhs.get()->name(), rhs.get()->name()); });
+	else if([[aTableColumn identifier] isEqualToString:@"date"])
+		std::sort(bundles.begin(), bundles.end(), [](bundles_db::bundle_ptr lhs, bundles_db::bundle_ptr rhs){ return (rhs.get()->installed() ? rhs.get()->path_updated() : rhs.get()->url_updated()) < (lhs.get()->installed() ? lhs.get()->path_updated() : lhs.get()->url_updated()); });
+	else if([[aTableColumn identifier] isEqualToString:@"description"])
+		std::sort(bundles.begin(), bundles.end(), [&lessThan](bundles_db::bundle_ptr lhs, bundles_db::bundle_ptr rhs){ return lessThan(textify(lhs.get()->description()), textify(rhs.get()->description())); });
+	else
+		return;
+
+	BOOL sortDescending = [aTableView indicatorImageInTableColumn:aTableColumn] == [NSImage imageNamed:@"NSAscendingSortIndicator"];
+	if(sortDescending)
+		std::reverse(bundles.begin(), bundles.end());
+
+	for(NSTableColumn* tableColumn in [aTableView tableColumns])
+		[aTableView setIndicatorImage:nil inTableColumn:tableColumn];
+	[aTableView setIndicatorImage:[NSImage imageNamed:(sortDescending ? @"NSDescendingSortIndicator" : @"NSAscendingSortIndicator")] inTableColumn:aTableColumn];
+
+	[aTableView reloadData];
+}
+
 - (BOOL)tableView:(NSTableView*)aTableView shouldEditTableColumn:(NSTableColumn*)aTableColumn row:(NSInteger)rowIndex
 {
 	if([[aTableColumn identifier] isEqualToString:@"installed"])
 	{
-		if([bundlesManager installStateForBundle:bundles[rowIndex]] != NSMixedState)
+		if([_bundlesManager installStateForBundle:bundles[rowIndex]] != NSMixedState)
 			return YES;
 	}
 	return NO;
 }
 
-- (BOOL)tableView:(NSTableView*)aTableView shouldSelectRow:(int)anInt
+- (BOOL)tableView:(NSTableView*)aTableView shouldSelectRow:(NSInteger)rowIndex
 {
-	return [aTableView clickedColumn] != 0;
+	NSInteger clickedColumn = [aTableView clickedColumn];
+	return clickedColumn != [aTableView columnWithIdentifier:@"installed"] && clickedColumn != [aTableView columnWithIdentifier:@"link"];
 }
 
 // ==========================
@@ -141,7 +178,7 @@ static std::string textify (std::string str)
 	bundles_db::bundle_ptr bundle = bundles[rowIndex];
 	if([[aTableColumn identifier] isEqualToString:@"installed"])
 	{
-		return @([bundlesManager installStateForBundle:bundle]);
+		return @([_bundlesManager installStateForBundle:bundle]);
 	}
 	else if([[aTableColumn identifier] isEqualToString:@"name"])
 	{
@@ -150,8 +187,7 @@ static std::string textify (std::string str)
 	else if([[aTableColumn identifier] isEqualToString:@"date"])
 	{
 		oak::date_t updated = bundle->installed() ? bundle->path_updated() : bundle->url_updated();
-		NSDate* date = [(id)CFDateCreate(kCFAllocatorDefault, updated.value()) autorelease];
-		return [date humanReadableTimeElapsed];
+		return [[NSDate dateWithTimeIntervalSinceReferenceDate:updated.value()] humanReadableTimeElapsed];
 	}
 	else if([[aTableColumn identifier] isEqualToString:@"description"])
 	{
@@ -166,8 +202,16 @@ static std::string textify (std::string str)
 	{
 		bundles_db::bundle_ptr bundle = bundles[rowIndex];
 		if([anObject boolValue])
-				[bundlesManager installBundle:bundle];
-		else	[bundlesManager uninstallBundle:bundle];
+				[_bundlesManager installBundle:bundle completionHandler:nil];
+		else	[_bundlesManager uninstallBundle:bundle];
 	}
+}
+
+- (IBAction)didClickBundleLink:(NSTableView*)aTableView
+{
+	NSInteger rowIndex = [aTableView clickedRow];
+	bundles_db::bundle_ptr bundle = bundles[rowIndex];
+	if(bundle->html_url() != NULL_STR)
+		[[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:[NSString stringWithCxxString:bundle->html_url()]]];
 }
 @end

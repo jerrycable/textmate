@@ -150,6 +150,7 @@ namespace network
 			curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION,   true);
 			curl_easy_setopt(handle, CURLOPT_FAILONERROR,      true);
 			curl_easy_setopt(handle, CURLOPT_ENCODING,         "");
+			curl_easy_setopt(handle, CURLOPT_NOSIGNAL,         1);
 
 			std::string const userAgent = request._user_agent == NULL_STR ? create_agent_info_string() : request._user_agent;
 			curl_easy_setopt(handle, CURLOPT_USERAGENT,        userAgent.c_str());
@@ -175,10 +176,11 @@ namespace network
 				curl_easy_setopt(handle, CURLOPT_HTTPHEADER,    headers);
 			}
 
-			if(auto proxySettings = get_proxy_settings())
+			if(auto proxySettings = get_proxy_settings(request._url))
 			{
 				curl_easy_setopt(handle, CURLOPT_PROXY,     proxySettings.server.c_str());
 				curl_easy_setopt(handle, CURLOPT_PROXYPORT, proxySettings.port);
+				curl_easy_setopt(handle, CURLOPT_PROXYTYPE, proxySettings.socks ? CURLPROXY_SOCKS4 : CURLPROXY_HTTP);
 				if(proxySettings.password != NULL_STR)
 					curl_easy_setopt(handle, CURLOPT_PROXYUSERPWD, (proxySettings.user + ":" + proxySettings.password).c_str());
 			}

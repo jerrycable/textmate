@@ -1,20 +1,14 @@
-#import <scm/scm.h>
+#import <oak/misc.h>
+#import <scm/status.h>
 
-@interface OakFileIconImage : NSImage
-{
-	scm::info_ptr scmDriver;
-
-	NSString* path;
-	BOOL isModified;
-	BOOL existsOnDisk;
-	scm::status::type scmStatus;
-
-	NSImage* base;
-	NSImage* badge;
-}
+PUBLIC @interface OakFileIconImage : NSImage
+@property (nonatomic)                       NSString*         path;
+@property (nonatomic)                       BOOL              exists;
+@property (nonatomic, getter = isDirectory) BOOL              directory;
+@property (nonatomic, getter = isAlias)     BOOL              alias;
+@property (nonatomic)                       scm::status::type scmStatus;
+@property (nonatomic, getter = isModified)  BOOL              modified;
 + (id)fileIconImageWithPath:(NSString*)aPath isModified:(BOOL)flag size:(NSSize)aSize;
 + (id)fileIconImageWithPath:(NSString*)aPath isModified:(BOOL)flag;
 + (id)fileIconImageWithPath:(NSString*)aPath size:(NSSize)aSize;
-@property (nonatomic, retain) NSString* path;
-@property (nonatomic, assign) BOOL isModified;
 @end

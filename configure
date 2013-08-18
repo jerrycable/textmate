@@ -15,33 +15,35 @@ function error () { printf >&2 "%s\n\nPlease see README.md for build instruction
 # ========================================================
 
 name=TextMate
-ver=2.0
-rev=1
+ver=2.0-alpha.\$APP_REVISION${tag:-+git.$(git rev-parse --short HEAD)}
+rev=$(( $(curl -sf "${rest_api}/releases/nightly/revision")+1 ))
 min_os=10.7
-
-rev=$(( $(curl -sf "${rest_api}/releases/nightly/revision")+1 )) || \
-	if test -d .git && which -s git; then
-		rev=$(git log --oneline master | wc -l)
-	fi
 
 # ===============================================
 # = Find clang via xcrun, MacPorts, or Homebrew =
 # ===============================================
 
-if which -s xcrun; then
-	: ${CC:=$(xcrun -find clang)}
-	: ${CXX:=$(xcrun -find clang++)}
-fi
-
-for cc in /{opt,usr}/local/bin/clang /usr/bin/clang; do
-	if [[ ! -x "$CC" || ! -x "$CXX" ]]; then
+clang_good_enough() {
+	[[ -x "$CC" && -x "$CXX" ]] && "$CC" &>/dev/null -x objective-c -include Foundation/Foundation.h -c -o /dev/null - <<< 'int main () { id str = @("str"); return 0; }'
+}
+test_xcode_clang() {
+	if which -s xcrun; then
+		CC=$(xcrun -find clang)
+		CXX=$(xcrun -find clang++)
+		clang_good_enough && return
+	fi
+	false
+}
+test_local_clang() {
+	for cc in /{opt,usr}/local/bin/clang /usr/bin/clang; do
 		CC="${cc}"
 		CXX="${cc}++"
-	fi
-done
+		clang_good_enough && return
+	done
+	false
+}
 
-test -x "$CC" || error "*** clang not installed."
-"$CC" &>/dev/null -x objective-c -include Foundation/Foundation.h -c -o /dev/null - <<< 'int main () { id str = @("str"); return 0; }' || error "$CC is too old to build this project."
+clang_good_enough || test_xcode_clang || test_local_clang || error "$CC is too old to build this project."
 
 # ===============================
 # = Check if boost is installed =
@@ -64,13 +66,18 @@ test -L "${builddir}/include/boost" || error "*** boost not installed."
 # ==================================
 
 xcodedir=/Developer
-sdk="/Developer/SDKs/${sdk:-MacOSX10.7}.sdk"
+sdk="/Developer/SDKs/${sdk:-MacOSX10.8}.sdk"
 
 if which -s xcode-select; then
 	xcodedir=$(xcode-select -print-path)
 	if ! [[ -e "$sdk" ]]; then
 		sdk="$xcodedir/Platforms/MacOSX.platform$sdk"
 	fi
+fi
+
+if ! [[ -e "$sdk" ]]; then
+	sdk=""
+	echo 2>&1 "WARNING: Building without platform-specific SDK."
 fi
 
 # ===============================================
@@ -86,9 +93,7 @@ fi
 # = Check various dependencies =
 # ==============================
 
-which -s multimarkdown || which -s maruku || which -s Markdown.pl || error "*** no markdown converter installed."
-
-for dep in ninja ragel pgrep pkill "$CC" "$CXX"; do
+for dep in ninja ragel multimarkdown pgrep pkill "$CC" "$CXX"; do
 	which -s "$dep" || error "*** dependency missing: ‘${dep}’."
 done
 
@@ -96,9 +101,10 @@ done
 # = Generate fixtures and build files =
 # =====================================
 
-DST="$builddir/Frameworks/SoftwareUpdate/fixtures" make -C Frameworks/SoftwareUpdate/fixtures
+mkdir -p "$builddir/Frameworks/SoftwareUpdate/fixtures"
+DST=$(cd >/dev/null "$builddir/Frameworks/SoftwareUpdate/fixtures"; pwd) make -C Frameworks/SoftwareUpdate/fixtures
 
-# # Necessary if you do distribution builds (which should include some default bundles)
-# builddir="$builddir" bin/create_default_bundles_tbz
+bin/gen_build -o build.ninja -C "$builddir" -dAPP_NAME="$name" -dAPP_REVISION="$rev" -dAPP_VERSION="$ver" -dAPP_MIN_OS="$min_os" -dCC="$CC" -dCXX="$CXX" -dxcodedir="$xcodedir" -didentity="$identity" -drest_api="$rest_api" -dsdk="$sdk" -dbzip2_flag="$bzip2_flag" target
 
-bin/gen_build -o build.ninja -C "$builddir" -dAPP_NAME="$name" -dAPP_VERSION="$ver" -dAPP_REVISION="$rev" -dAPP_MIN_OS="$min_os" -dCC="$CC" -dCXX="$CXX" -dxcodedir="$xcodedir" -didentity="$identity" -drest_api="$rest_api" -dsdk="$sdk" -dbzip2_flag="$bzip2_flag" target
+BUNDLES_TBZ=Applications/TextMate/resources/DefaultBundles.tbz
+test -e "$BUNDLES_TBZ" || builddir="$builddir" bin/create_default_bundles_tbz "$BUNDLES_TBZ"

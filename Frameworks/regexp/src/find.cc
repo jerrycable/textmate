@@ -1,6 +1,6 @@
 #include "find.h"
 #include "private.h"
-#include "oniguruma.h"
+#include <Onigmo/oniguruma.h>
 #include <text/utf8.h>
 #include <cf/cf.h>
 
@@ -57,11 +57,38 @@ namespace find
 	// ==============
 	
 	struct dfa_node_t;
-	typedef std::tr1::shared_ptr<dfa_node_t> dfa_node_ptr;
+	typedef std::shared_ptr<dfa_node_t> dfa_node_ptr;
 
 	struct dfa_node_t
 	{
 		dfa_node_t (char byte, std::vector<dfa_node_ptr> const& children) : children(children), byte(byte) { }
+
+		void breadth_first_dispose ()
+		{
+			std::vector<std::vector<dfa_node_ptr>*> allChildren(1, &children);
+			std::set<dfa_node_t*> seen{this};
+
+			size_t lastPos = 0;
+			while(lastPos < allChildren.size())
+			{
+				size_t oldPos = lastPos;
+				lastPos = allChildren.size();
+				for(size_t i = oldPos; i < lastPos; ++i)
+				{
+					for(dfa_node_ptr child : *allChildren[i])
+					{
+						if(seen.find(child.get()) == seen.end())
+						{
+							allChildren.push_back(&child->children);
+							seen.insert(child.get());
+						}
+					}
+				}
+			}
+
+			riterate(it, allChildren)
+				(*it)->clear();
+		}
 
 		bool does_match (char needle) const							{ return needle == byte; }
 		std::vector<dfa_node_ptr> const& descend () const		{ return children; }
@@ -142,7 +169,7 @@ namespace find
 
 	struct regular_find_t : find_implementation_t
 	{
-		regular_find_t (std::string const& str, options_t options) : options(options), is_at_bow(true)
+		regular_find_t (std::string const& str, options_t options) : options(options)
 		{
 			std::vector< std::vector<std::string> > matrix;
 			iterate(it, diacritics::make_range(str.data(), str.data() + str.size()))
@@ -158,36 +185,12 @@ namespace find
 
 			if(options & backwards)
 			{
-				// fprintf(stderr, "before:\n");
-				// iterate(rowIter, matrix)
-				// {
-				// 	iterate(colIter, *rowIter)
-				// 	{
-				// 		iterate(it, *colIter)
-				// 			fprintf(stderr, "%04x, ", *it);
-				// 		fprintf(stderr, " | ");
-				// 	}
-				// 	fprintf(stderr, "\n");
-				// }
-
 				std::reverse(matrix.begin(), matrix.end());
 				iterate(rowIter, matrix)
 				{
 					iterate(colIter, *rowIter)
 						std::reverse(colIter->begin(), colIter->end());
 				}
-
-				// fprintf(stderr, "after:\n");
-				// iterate(rowIter, matrix)
-				// {
-				// 	iterate(colIter, *rowIter)
-				// 	{
-				// 		iterate(it, *colIter)
-				// 			fprintf(stderr, "%04x, ", *it);
-				// 		fprintf(stderr, " | ");
-				// 	}
-				// 	fprintf(stderr, "\n");
-				// }
 			}
 
 			riterate(rowIter, matrix)
@@ -213,10 +216,13 @@ namespace find
 			}
 
 			current_node = &children;
+		}
 
-			// fprintf(stderr, "DFA:\n");
-			// dump(children);
-			// fprintf(stderr, "\n====\n");
+		~regular_find_t ()
+		{
+			// Ensure non-recursive dispose of nodes to avoid blowing the stack
+			for(dfa_node_ptr node : children)
+				node->breadth_first_dispose();
 		}
 
 		std::pair<ssize_t, ssize_t> match (char const* buf, ssize_t len, std::map<std::string, std::string>* captures)
@@ -285,7 +291,6 @@ namespace find
 		std::vector<dfa_node_ptr> const* current_node;
 		std::vector<char> match_data;
 		options_t options;
-		bool is_at_bow;
 
 		dfa_node_ptr node_from_string (std::string const& str, std::vector<dfa_node_ptr> children) const
 		{
@@ -313,7 +318,7 @@ namespace find
 			last_end = 0;
 
 			OnigErrorInfo einfo;
-			int r = onig_new(&compiled_pattern, str.data(), str.data() + str.size(), (options & ignore_case ? ONIG_OPTION_IGNORECASE : 0) | ONIG_OPTION_CAPTURE_GROUP, ONIG_ENCODING_UTF8, ONIG_SYNTAX_RUBY, &einfo);
+			int r = onig_new(&compiled_pattern, (OnigUChar const*)str.data(), (OnigUChar const*)str.data() + str.size(), (options & ignore_case ? ONIG_OPTION_IGNORECASE : 0) | ONIG_OPTION_CAPTURE_GROUP, ONIG_ENCODING_UTF8, ONIG_SYNTAX_DEFAULT, &einfo);
 			if(r != ONIG_NORMAL)
 			{
 				OnigUChar s[ONIG_MAX_ERROR_MESSAGE_LEN];
@@ -358,14 +363,14 @@ namespace find
 
 				if(last_beg == buffer.size()) // last match was zero-width and end-of-buffer
 					return res;
-				else if(last_beg == last_end) // last match was zero-width, so advance one character to not repeat it
-					++last_end;
+				else if(last_beg == last_end && last_end < buffer.size()) // last match was zero-width, so advance one character to not repeat it
+					last_end += utf8::multibyte<char>::is_start(buffer[last_end]) ? std::min(utf8::multibyte<char>::length(buffer[last_end]), buffer.size() - last_end) : 1;
 
-				char const* first = &buffer[0];
-				char const* last = first + buffer.size();
+				OnigUChar const* first = (OnigUChar const*)&buffer[0];
+				OnigUChar const* last = first + buffer.size();
 
-				char const* range_start = first + last_end;
-				char const* range_stop = last - skip_last;
+				OnigUChar const* range_start = first + last_end;
+				OnigUChar const* range_stop = last - skip_last;
 				if(options & backwards)
 					std::swap(range_start, range_stop);
 
@@ -402,7 +407,7 @@ namespace find
 
 				onig_region_free(region, 1);
 			}
-			else
+			else if(buffer.size() < 5 * SQ(1024))
 			{
 				buffer.insert(buffer.end(), buf, buf + len);
 				if(options & backwards)
@@ -412,7 +417,7 @@ namespace find
 		}
 
 	private:
-		regex_t* compiled_pattern;
+		OnigRegex compiled_pattern;
 		options_t options;
 		std::vector<char> buffer;
 		int last_beg, last_end;

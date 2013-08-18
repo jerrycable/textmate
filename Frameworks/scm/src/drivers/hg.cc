@@ -12,7 +12,7 @@ static scm::status::type parse_status_flag (char flag)
 	{
 		{ scm::status::unversioned, '?' },
 		{ scm::status::ignored,     'I' },
-		{ scm::status::versioned,   'C' },
+		{ scm::status::none,        'C' },
 		{ scm::status::modified,    'M' },
 		{ scm::status::added,       'A' },
 		{ scm::status::deleted,     'R' },
@@ -26,7 +26,7 @@ static scm::status::type parse_status_flag (char flag)
 	}
 
 	ASSERT_EQ(flag, '\0'); // we use ‘flag’ in the assertion to output the unrecognized status flag
-	return scm::status::none;
+	return scm::status::unknown;
 }
 
 static void parse_status_output (scm::status_map_t& entries, std::string const& output)
@@ -47,11 +47,7 @@ static void parse_status_output (scm::status_map_t& entries, std::string const& 
 static void collect_all_paths (std::string const& hg, scm::status_map_t& entries, std::string const& dir)
 {
 	ASSERT_NE(hg, NULL_STR);
-
-	std::map<std::string, std::string> env = oak::basic_environment();
-	env["PWD"] = dir;
-
-	parse_status_output(entries, io::exec(env, hg, "status", "--all", "-0", NULL));
+	parse_status_output(entries, io::exec(hg, "status", "--cwd", dir.c_str(), "--all", "-0", NULL));
 }
 
 namespace scm
@@ -60,16 +56,17 @@ namespace scm
 	{
 		hg_driver_t () : driver_t("hg", "%s/.hg", "hg") { }
 
-		std::string branch_name (std::string const& wcPath) const
+		bool may_touch_filesystem () const { return true; }
+
+		std::map<std::string, std::string> variables (std::string const& wcPath) const
 		{
-			if(executable() == NULL_STR)
-				return NULL_STR;
-
-			std::map<std::string, std::string> env = oak::basic_environment();
-			env["PWD"] = wcPath;
-
-			std::string branchName = io::exec(env, executable(), "branch", NULL);
-			return branchName.substr(0, branchName.find("\n"));
+			std::map<std::string, std::string> res = { { "TM_SCM_NAME", name() } };
+			if(executable() != NULL_STR)
+			{
+				std::string branchName = io::exec(executable(), "branch", "--cwd", wcPath.c_str(), NULL);
+				res.insert(std::make_pair("TM_SCM_BRANCH", branchName.substr(0, branchName.find("\n"))));
+			}
+			return res;
 		}
 
 		status_map_t status (std::string const& wcPath) const

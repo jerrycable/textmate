@@ -3,9 +3,8 @@
 #else
 #import "../OakFilterList.h"
 #endif
-#import <plist/uuid.h>
 #import <scope/scope.h>
-#import <bundles/bundles.h>
+#import <oak/misc.h>
 
 namespace search
 {
@@ -17,22 +16,11 @@ namespace search
 	};
 }
 
-@interface BundleItemChooser : NSObject <FilterListDataSource>
-{
-	OBJC_WATCH_LEAKS(BundleItemChooser);
-	scope::context_t scope;
-	std::vector<bundles::item_ptr> all_items;
-	std::set<oak::uuid_t> items_filtered_by_scope;
-	BOOL searchAllScopes;
-	std::string originalFilterString;
-	std::string filterString;
-	NSViewController* viewController;
-	BOOL keyEquivalentSearch;
-	search::type searchType;
-}
+PUBLIC @interface BundleItemChooser : NSObject <FilterListDataSource>
 + (id)bundleItemChooserForScope:(scope::context_t const&)aScope;
 @property (nonatomic, retain) NSString*    filterString;
 @property (nonatomic, assign) BOOL         keyEquivalentSearch;
+@property (nonatomic, assign) BOOL         textViewHasSelection;
 @property (nonatomic, assign) BOOL         searchAllScopes;
 @property (nonatomic, assign) search::type searchType;
 @end

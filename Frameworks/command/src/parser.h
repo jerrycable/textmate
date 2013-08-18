@@ -10,7 +10,7 @@ namespace pre_exec      { enum type { nop = 0, save_document, save_project }; }
 namespace input         { enum type { selection = 0, entire_document, scope, line, word, character, nothing }; }
 namespace input_format  { enum type { text = 0, xml }; }
 namespace output        { enum type { replace_input = 0, replace_document, at_caret, after_input, new_window, tool_tip, discard, replace_selection }; }
-namespace output_format { enum type { text = 0, snippet, html, completion_list }; }
+namespace output_format { enum type { text = 0, snippet, html, completion_list, snippet_no_auto_indent }; }
 namespace output_caret  { enum type { after_output = 0, select_output, interpolate_by_char, interpolate_by_line, heuristic }; }
 
 #ifndef NDEBUG
@@ -44,21 +44,11 @@ inline char const* to_s (output_caret::type const& caret)
 
 struct PUBLIC bundle_command_t
 {
-	struct shell_command_t
-	{
-		shell_command_t (std::string const& command, std::string const& variable = NULL_STR, std::vector<std::string> const& locations = std::vector<std::string>()) : command(command), variable(variable), locations(locations) { }
-
-		std::string command;
-		std::string variable;
-		std::vector<std::string> locations;
-	};
-
 	std::string name;
 	oak::uuid_t uuid;
 	scope::selector_t scope_selector;
 	std::string command;
 
-	std::vector<shell_command_t> requirements;
 	pre_exec::type pre_exec;
 
 	input::type input;
@@ -70,6 +60,7 @@ struct PUBLIC bundle_command_t
 	output_caret::type output_caret;
 
 	bool auto_scroll_output;
+	bool disable_output_auto_indent;
 };
 
 PUBLIC bundle_command_t parse_command (bundles::item_ptr bundleItem);

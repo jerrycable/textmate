@@ -1,27 +1,27 @@
 #import "OakFileBrowser.h"
-#import "OakHistoryController.h"
-#import "ui/OakFileBrowserView.h"
+#import "OakFSUtilities.h"
+#import "ui/OFBHeaderView.h"
 #import "ui/OFBOutlineView.h"
 #import "ui/OFBPathInfoCell.h"
+#import "ui/OFBActionsView.h"
 #import "io/FSDataSource.h"
 #import "io/FSSCMDataSource.h"
 #import "io/FSItem.h"
 #import "FSOutlineViewDelegate.h"
 #import <Preferences/Keys.h>
 #import <io/io.h>
-#import <oak/CocoaSTL.h>
 #import <oak/oak.h>
 #import <io/entries.h>
+#import <OakFoundation/NSArray Additions.h>
 #import <OakFoundation/NSString Additions.h>
 #import <OakAppKit/OakAppKit.h>
-#import <OakAppKit/OakStatusBar.h>
 #import <OakAppKit/OakFileIconImage.h>
+#import <OakAppKit/OakFileManager.h>
 #import <OakAppKit/OakFinderLabelChooser.h>
 #import <OakAppKit/OakOpenWithMenu.h>
+#import <OakAppKit/OakUIConstructionFunctions.h>
 #import <OakAppKit/OakZoomingIcon.h>
-#import <OakAppKit/OakPreview.h>
 #import <OakAppKit/NSView Additions.h>
-#import <OakAppKit/OakSound.h>
 #import <OakSystem/application.h>
 #import <bundles/bundles.h>
 #import <document/document.h>
@@ -29,38 +29,24 @@
 #import <ns/ns.h>
 #import <text/ctype.h>
 #import <regexp/format_string.h>
+#import <regexp/glob.h>
+#import <settings/settings.h>
 
 OAK_DEBUG_VAR(FileBrowser_Controller);
 
-@interface OakFileBrowser ()
-@property (nonatomic, retain)            OakHistoryController* historyController;
-@property (nonatomic, copy, readwrite)   NSURL* url;
-@property (nonatomic, retain, readwrite) NSView* view;
-@property (nonatomic, readonly)          NSArray* selectedItems;
-@property (nonatomic, readonly)          NSArray* selectedPaths;
-- (void)updateView;
-- (void)loadFileBrowserOptions;
-@end
-
-static NSString* const kUserDefaultsFileBrowserDataSourceOptions = @"FileBrowser DataSourceOptions";
-
-static NSURL* kURLLocationComputer;
-static NSURL* kURLLocationHome;
-static NSURL* kURLLocationDesktop;
-static NSURL* kURLLocationFavorites;
-static NSURL* kURLLocationBundles;
-
 static NSString* DisplayName (NSURL* url, size_t numberOfParents = 0)
 {
+	NSString* res = nil;
 	if([[url scheme] isEqualToString:[kURLLocationComputer scheme]])
-		return [(NSString*)SCDynamicStoreCopyComputerName(NULL, NULL) autorelease];
+		res = [[NSHost currentHost] localizedName];
 	else if([[url scheme] isEqualToString:[kURLLocationBundles scheme]])
-		return @"Bundles";
+		res = @"Bundles";
 	else // if([url isFileURL])
-		return [NSString stringWithCxxString:path::display_name([[url path] fileSystemRepresentation], numberOfParents)];
+		res = [NSString stringWithCxxString:path::display_name([[url path] fileSystemRepresentation], numberOfParents)];
+	return res ?: [url absoluteString] ?: @"«nil»";
 }
 
-static NSImage* IconImage (NSURL* url, NSSize size = (NSSize){16, 16})
+static NSImage* IconImage (NSURL* url, NSSize size = NSMakeSize(16, 16))
 {
 	NSImage* iconImage = nil;
 	if([[url scheme] isEqualToString:[kURLLocationComputer scheme]])
@@ -76,39 +62,528 @@ static NSImage* IconImage (NSURL* url, NSSize size = (NSSize){16, 16})
 	return iconImage;
 }
 
-static NSURL* ParentForURL (NSURL* url)
-{
-	struct statfs buf;
-	NSString* currentPath = [url path];
-	NSString* parentPath  = [currentPath stringByDeletingLastPathComponent];
+@interface OakFileBrowserView : NSView
+@end
 
-	if([[url scheme] isEqualToString:[kURLLocationComputer scheme]])
-		return nil;
-	else if([currentPath isEqualToString:parentPath] || [url isFileURL] && statfs([currentPath fileSystemRepresentation], &buf) == 0 && path::normalize(buf.f_mntonname) == path::normalize([currentPath fileSystemRepresentation]))
-		return kURLLocationComputer;
-	else if([url isFileURL])
-		return [NSURL fileURLWithPath:parentPath isDirectory:YES];
-	else if([[url scheme] isEqualToString:@"scm"])
-		return [NSURL fileURLWithPath:[url path] isDirectory:YES];
+@implementation OakFileBrowserView
+- (BOOL)accessibilityIsIgnored
+{
+	return NO;
+}
+
+- (NSArray*)accessibilityAttributeNames
+{
+	static NSArray* attributes = nil;
+	if(!attributes)
+	{
+		NSSet* set = [NSSet setWithArray:[super accessibilityAttributeNames]];
+		set = [set setByAddingObjectsFromArray:@[
+			NSAccessibilityRoleAttribute,
+			NSAccessibilityDescriptionAttribute,
+		]];
+		attributes = [set allObjects];
+	}
+	return attributes;
+}
+
+- (id)accessibilityAttributeValue:(NSString*)attribute
+{
+	if([attribute isEqualToString:NSAccessibilityRoleAttribute])
+		return NSAccessibilityGroupRole;
+	else if([attribute isEqualToString:NSAccessibilityDescriptionAttribute])
+		return @"File Browser";
 	else
-		return [[[NSURL alloc] initWithScheme:[url scheme] host:[url host] path:parentPath] autorelease];
+		return [super accessibilityAttributeValue:attribute];
+}
+@end
+
+@interface OakFileBrowser () <OFBOutlineViewMenuDelegate, NSMenuDelegate>
+{
+	OBJC_WATCH_LEAKS(OakFileBrowser);
+	NSUInteger _historyIndex;
+}
+@property (nonatomic, readwrite)         OakFileBrowserView* view;
+@property (nonatomic)                    OFBHeaderView* headerView;
+@property (nonatomic)                    OFBOutlineView* outlineView;
+@property (nonatomic)                    OFBActionsView* actionsView;
+
+@property (nonatomic)                    FSOutlineViewDelegate* outlineViewDelegate;
+@property (nonatomic)                    NSUInteger dataSourceOptions;
+
+@property (nonatomic, readonly)          NSArray* selectedItems;
+@property (nonatomic, readonly)          NSArray* selectedPaths;
+
+@property (nonatomic)                    NSMutableArray* history;
+@property (nonatomic)                    NSUInteger historyIndex;
+@end
+
+static bool is_binary (std::string const& path)
+{
+	if(path == NULL_STR)
+		return false;
+
+	settings_t const& settings = settings_for_path(path);
+	if(settings.has(kSettingsBinaryKey))
+		return path::glob_t(settings.get(kSettingsBinaryKey, "")).does_match(path);
+
+	return false;
+}
+
+static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anotherSet)
+{
+	NSMutableSet* unionSet = [aSet mutableCopy];
+	[unionSet unionSet:anotherSet];
+	[anotherSet intersectSet:aSet];
+	[unionSet minusSet:anotherSet];
+	return unionSet;
 }
 
 @implementation OakFileBrowser
-@synthesize url, historyController, delegate, view;
-
-- (BOOL)acceptsFirstResponder { return NO; }
-- (NSString*)location
+- (id)init
 {
-	NSURL* tmp = [[url scheme] isEqualToString:@"scm"] ? ParentForURL(url) : url;
+	if(self = [super init])
+	{
+		NSString* urlString = [[NSUserDefaults standardUserDefaults] stringForKey:kUserDefaultsInitialFileBrowserURLKey];
+		_url     = urlString ? [NSURL URLWithString:urlString] : kURLLocationHome;
+		_history = [NSMutableArray arrayWithObject:@{ @"url" : _url }];
+
+		BOOL foldersOnTop   = [[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsFoldersOnTopKey];
+		BOOL showExtensions = [[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsShowFileExtensionsKey];
+
+		_dataSourceOptions |= (foldersOnTop   ? kFSDataSourceOptionGroupsFirst   : 0);
+		_dataSourceOptions |= (showExtensions ? kFSDataSourceOptionShowExtension : 0);
+
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(userDefaultsDidChange:) name:NSUserDefaultsDidChangeNotification object:[NSUserDefaults standardUserDefaults]];
+	}
+	return self;
+}
+
+- (void)dealloc
+{
+	[[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)userDefaultsDidChange:(NSNotification*)aNotification
+{
+	BOOL foldersOnTop   = [[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsFoldersOnTopKey];
+	BOOL showExtensions = [[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsShowFileExtensionsKey];
+
+	BOOL oldFoldersOnTop   = (_dataSourceOptions & kFSDataSourceOptionGroupsFirst) == kFSDataSourceOptionGroupsFirst;
+	BOOL oldShowExtensions = (_dataSourceOptions & kFSDataSourceOptionShowExtension) == kFSDataSourceOptionShowExtension;
+
+	if(foldersOnTop != oldFoldersOnTop || showExtensions != oldShowExtensions)
+	{
+		_dataSourceOptions ^= (foldersOnTop != oldFoldersOnTop     ? kFSDataSourceOptionGroupsFirst   : 0);
+		_dataSourceOptions ^= (showExtensions != oldShowExtensions ? kFSDataSourceOptionShowExtension : 0);
+
+		[self reload:self];
+	}
+}
+
+- (void)createViews
+{
+	_outlineView = [[OFBOutlineView alloc] initWithFrame:NSZeroRect];
+	_outlineView.focusRingType            = NSFocusRingTypeNone;
+	_outlineView.allowsMultipleSelection  = YES;
+	_outlineView.autoresizesOutlineColumn = NO;
+	_outlineView.headerView               = nil;
+	_outlineView.target                   = self;
+	_outlineView.action                   = @selector(didSingleClickOutlineView:);
+	_outlineView.doubleAction             = @selector(didDoubleClickOutlineView:);
+	_outlineView.menuDelegate             = self;
+
+	if([[[[NSUserDefaults standardUserDefaults] objectForKey:kUserDefaultsFileBrowserStyleKey] lowercaseString] isEqualToString:@"sourcelist"])
+		_outlineView.renderAsSourceList = YES;
+
+	[_outlineView setDraggingSourceOperationMask:NSDragOperationCopy|NSDragOperationMove|NSDragOperationLink forLocal:YES];
+	[_outlineView setDraggingSourceOperationMask:NSDragOperationEvery forLocal:NO];
+	[_outlineView registerForDraggedTypes:@[ NSFilenamesPboardType ]];
+
+	NSScrollView* scrollView = [NSScrollView new];
+	scrollView.hasVerticalScroller   = YES;
+	scrollView.hasHorizontalScroller = NO;
+	scrollView.borderType            = NSNoBorder;
+	scrollView.documentView          = _outlineView;
+
+	_headerView = [[OFBHeaderView alloc] initWithFrame:NSZeroRect];
+	_headerView.goBackButton.target  = self;
+	_headerView.goBackButton.action  = @selector(goBack:);
+	_headerView.goBackButton.enabled = NO;
+	_headerView.goForwardButton.target  = self;
+	_headerView.goForwardButton.action  = @selector(goForward:);
+	_headerView.goForwardButton.enabled = NO;
+
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(folderPopUpButtonWillPopUp:) name:NSPopUpButtonWillPopUpNotification object:_headerView.folderPopUpButton];
+
+	_actionsView = [[OFBActionsView alloc] initWithFrame:NSZeroRect];
+	_actionsView.createButton.action    = @selector(newDocumentInDirectory:);
+	_actionsView.reloadButton.target    = self;
+	_actionsView.reloadButton.action    = @selector(reload:);
+	_actionsView.searchButton.action    = @selector(orderFrontFindPanelForFileBrowser:);
+	_actionsView.favoritesButton.target = self;
+	_actionsView.favoritesButton.action = @selector(goToFavorites:);
+	_actionsView.scmButton.target       = self;
+	_actionsView.scmButton.action       = @selector(goToSCMDataSource:);
+
+	_actionsView.actionsPopUpButton.menu.delegate = self;
+
+	_view = [OakFileBrowserView new];
+
+	NSCell* cell = [OFBPathInfoCell new];
+	cell.lineBreakMode = NSLineBreakByTruncatingMiddle;
+	[cell setEditable:YES];
+
+	NSTableColumn* tableColumn = [NSTableColumn new];
+	[tableColumn setDataCell:cell];
+	[_outlineView addTableColumn:tableColumn];
+	[_outlineView setOutlineTableColumn:tableColumn];
+	[_outlineView sizeLastColumnToFit];
+
+	_outlineViewDelegate = [FSOutlineViewDelegate new];
+	_outlineViewDelegate.outlineView = _outlineView;
+
+	NSDictionary* views = @{
+		@"header"         : _headerView,
+		@"headerDivider"  : OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.500 alpha:1], [NSColor colorWithCalibratedWhite:0.750 alpha:1]),
+		@"browser"        : scrollView,
+		@"actionsDivider" : OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.500 alpha:1], [NSColor colorWithCalibratedWhite:0.750 alpha:1]),
+		@"actions"        : _actionsView,
+	};
+
+	for(NSView* view in [views allValues])
+	{
+		[view setTranslatesAutoresizingMaskIntoConstraints:NO];
+		[_view addSubview:view];
+	}
+
+	[_view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[browser(==header,==headerDivider,==actionsDivider,==actions)]|" options:0 metrics:nil views:views]];
+	[_view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[header][headerDivider][browser][actionsDivider][actions]|"      options:NSLayoutFormatAlignAllLeft metrics:nil views:views]];
+}
+
+- (void)setupViewWithState:(NSDictionary*)fileBrowserState
+{
+	[self createViews];
+	self.sessionState = fileBrowserState;
+	self.url = _url;
+}
+
+- (NSRect)iconFrameForEntry:(id)anEntry
+{
+	NSInteger rowIndex = [_outlineView rowForItem:anEntry];
+	if(rowIndex == -1)
+		return NSZeroRect;
+	NSRect r = [_outlineView frameOfCellAtColumn:0 row:rowIndex];
+	r.origin.x += 7.0; // FIXME some hard-coded values here
+	r.origin.y -= 1.0;
+	r.size = NSMakeSize(16, 16);
+	r = [_outlineView convertRect:r toView:nil];
+	r.origin = [_outlineView.window convertBaseToScreen:r.origin];
+	return r;
+}
+
+- (NSRect)iconFrameForURL:(NSURL*)aURL
+{
+	NSRange visibleRange = [_outlineView rowsInRect:[_outlineView visibleRect]];
+	for(NSUInteger row = visibleRange.location; row < NSMaxRange(visibleRange); ++row)
+	{
+		FSItem* item = [_outlineView itemAtRow:row];
+		if([item.url isEqualTo:aURL])
+			return [self iconFrameForEntry:item];
+	}
+	return NSZeroRect;
+}
+
+// =============
+// = Basic API =
+// =============
+
+- (void)setUrl:(NSURL*)aURL
+{
+	if(_outlineViewDelegate.dataSource && [_url isEqualTo:aURL])
+		return;
+
+	_url = aURL;
+	_outlineViewDelegate.dataSource = DataSourceForURL(_url, _dataSourceOptions);
+
+	NSMenu* folderPopUpMenu = _headerView.folderPopUpButton.menu;
+	[folderPopUpMenu removeAllItems];
+
+	NSMenuItem* menuItem = [folderPopUpMenu addItemWithTitle:_outlineViewDelegate.dataSource.rootItem.name action:@selector(takeURLFrom:) keyEquivalent:@""];
+	menuItem.image = _outlineViewDelegate.dataSource.rootItem.icon;
+	menuItem.image.size = NSMakeSize(16, 16);
+	menuItem.target = self;
+	menuItem.representedObject = _url;
+
+	[_headerView.folderPopUpButton selectItem:menuItem];
+}
+
+- (void)folderPopUpButtonWillPopUp:(NSNotification*)aNotification
+{
+	NSMenu* menu = _headerView.folderPopUpButton.menu;
+	while([menu numberOfItems] > 1)
+		[menu removeItemAtIndex:[menu numberOfItems]-1];
+
+	for(NSURL* currentURL = ParentForURL(_url); currentURL; currentURL = ParentForURL(currentURL))
+	{
+		NSMenuItem* menuItem = [menu addItemWithTitle:DisplayName(currentURL) action:@selector(takeURLFrom:) keyEquivalent:@""];
+		menuItem.representedObject = currentURL;
+		menuItem.image             = IconImage(currentURL);
+		menuItem.target            = self;
+	}
+
+	[menu addItem:[NSMenuItem separatorItem]];
+	[[menu addItemWithTitle:@"Other…" action:@selector(orderFrontGoToFolder:) keyEquivalent:@""] setTarget:self];
+
+	if(NSString* path = [[_url filePathURL] path])
+	{
+		[menu addItem:[NSMenuItem separatorItem]];
+		[[menu addItemWithTitle:[NSString stringWithFormat:@"Use “%@” as Project Folder", DisplayName(_url)] action:@selector(takeProjectPathFrom:) keyEquivalent:@""] setRepresentedObject:path];
+	}
+
+}
+
+- (void)goToURL:(NSURL*)aURL
+{
+	ASSERT(_historyIndex != NSNotFound);
+	if([_url isEqualTo:aURL])
+		return;
+
+	if(_historyIndex + 1 < _history.count)
+		[_history removeObjectsInRange:NSMakeRange(_historyIndex + 1, _history.count - (_historyIndex + 1))];
+	[_history addObject:@{ @"url" : aURL }];
+	self.historyIndex = self.historyIndex + 1;
+}
+
+- (void)selectURL:(NSURL*)aURL withParentURL:(NSURL*)parentURL
+{
+	BOOL alreadyVisible = NO;
+	for(NSInteger row = 0; !alreadyVisible && row < [_outlineView numberOfRows]; ++row)
+		alreadyVisible = alreadyVisible || [aURL isEqualTo:[[_outlineView itemAtRow:row] url]];
+
+	if(!alreadyVisible)
+	{
+		BOOL isChild = NO;
+		for(NSURL* currentURL = ParentForURL(aURL); currentURL && !isChild; currentURL = ParentForURL(currentURL))
+		{
+			if([parentURL isEqual:currentURL])
+				isChild = YES;
+		}
+		[self goToURL:isChild ? parentURL : ParentForURL(aURL)];
+	}
+
+	[_outlineViewDelegate selectURLs:@[ aURL ] expandChildren:YES];
+}
+
+- (void)editURL:(NSURL*)aURL
+{
+	[_outlineView.window makeFirstResponder:_outlineView];
+	[_outlineViewDelegate editURL:aURL];
+}
+
+- (NSString*)path
+{
+	NSURL* tmp = [[_url scheme] isEqualToString:@"scm"] ? ParentForURL(_url) : _url;
 	return [tmp isFileURL] ? [tmp path] : nil;
 }
+
+- (std::map<std::string, std::string>)variables
+{
+	std::map<std::string, std::string> env;
+
+	std::vector<std::string> selection;
+	for(NSString* aPath in self.selectedPaths)
+		selection.push_back([aPath fileSystemRepresentation]);
+
+	if(!selection.empty())
+	{
+		std::vector<std::string> quoted;
+		iterate(path, selection)
+			quoted.push_back(format_string::replace(*path, "\\A(?m:.*)\\z", "'${0/'/'\\''/}'"));
+		env["TM_SELECTED_FILE"]  = selection.back();
+		env["TM_SELECTED_FILES"] = text::join(quoted, " ");
+	}
+
+	return env;
+}
+
+- (BOOL)showExcludedItems
+{
+	return (_dataSourceOptions & kFSDataSourceOptionIncludeHidden) == kFSDataSourceOptionIncludeHidden;
+}
+
+- (void)setShowExcludedItems:(BOOL)flag
+{
+	if(self.showExcludedItems == flag)
+		return;
+
+	if(flag)
+			_dataSourceOptions |= kFSDataSourceOptionIncludeHidden;
+	else	_dataSourceOptions &= ~kFSDataSourceOptionIncludeHidden;
+
+	[self reload:self];
+}
+
+// ===================
+// = History support =
+// ===================
+
+- (void)setHistory:(NSArray*)newHistory
+{
+	_history      = [newHistory mutableCopy];
+	_historyIndex = NSNotFound;
+
+	_headerView.goBackButton.enabled    = NO;
+	_headerView.goForwardButton.enabled = NO;
+}
+
+- (NSUInteger)historyIndex
+{
+	ASSERT(_historyIndex != NSNotFound);
+	return _historyIndex;
+}
+
+- (void)setHistoryIndex:(NSUInteger)newIndex
+{
+	ASSERT_LT(newIndex, _history.count);
+	if(_historyIndex == newIndex)
+		return;
+
+	[self syncHistoryState];
+	_historyIndex = newIndex;
+
+	NSDictionary* entry = _history[newIndex];
+	[self setUrl:entry[@"url"]];
+	[_outlineViewDelegate scrollToOffset:[entry[@"scrollOffset"] floatValue]];
+
+	_headerView.goBackButton.enabled    = self.canGoBack;
+	_headerView.goForwardButton.enabled = self.canGoForward;
+}
+
+- (void)syncHistoryState
+{
+	ASSERT(_url);
+	if(_historyIndex == NSNotFound)
+		return;
+
+	_history[_historyIndex] = @{
+		@"url"          : _url,
+		@"scrollOffset" : @(NSMinY([_outlineView visibleRect]))
+	};
+}
+
+- (NSDictionary*)sessionState
+{
+	[self syncHistoryState];
+
+	NSMutableArray* history = [NSMutableArray array];
+	for(NSDictionary* entry in self.history)
+	{
+		NSMutableDictionary* dict = [entry mutableCopy];
+		dict[@"url"] = [dict[@"url"] absoluteString];
+		if([dict[@"scrollOffset"] floatValue] == 0)
+			[dict removeObjectForKey:@"scrollOffset"];
+		[history addObject:dict];
+	}
+
+	return @{
+		@"history"      : history,
+		@"historyIndex" : @(self.historyIndex),
+		@"selection"    : [self.selectedURLs valueForKey:@"absoluteString"],
+	};
+}
+
+- (void)setSessionState:(NSDictionary*)newState
+{
+	NSMutableArray* newHistory = [NSMutableArray array];
+	for(NSDictionary* entry in newState[@"history"])
+	{
+		if(NSString* urlString = entry[@"url"])
+		{
+			NSMutableDictionary* dict = [entry mutableCopy];
+			dict[@"url"] = [NSURL URLWithString:urlString];
+			[newHistory addObject:dict];
+		}
+	}
+
+	if([newHistory count])
+	{
+		self.history      = newHistory;
+		self.historyIndex = oak::cap<NSUInteger>(0, [newState[@"historyIndex"] unsignedIntValue], newHistory.count);
+
+		NSMutableArray* selection = [NSMutableArray array];
+		for(NSString* urlString in newState[@"selection"])
+			[selection addObject:[NSURL URLWithString:urlString]];
+		[_outlineViewDelegate selectURLs:selection expandChildren:NO];
+	}
+}
+
+- (BOOL)canGoBack    { return self.historyIndex > 0; }
+- (BOOL)canGoForward { return self.historyIndex < self.history.count-1; }
+
+// ==================================
+// = Externally provided item state =
+// ==================================
+
+- (NSArray*)openURLs
+{
+	return _outlineViewDelegate.openURLs;
+}
+
+- (void)setOpenURLs:(NSArray*)newOpenURLs
+{
+	if([_outlineViewDelegate.openURLs isEqualToArray:newOpenURLs])
+		return;
+
+	NSSet* symmetricDifference = SymmetricDifference([NSMutableSet setWithArray:_outlineViewDelegate.openURLs], [NSMutableSet setWithArray:newOpenURLs]);
+
+	// make a note of files in view, with changed open state
+	NSIndexSet* updateRows = [self indexSetforURLs:symmetricDifference];
+	_outlineViewDelegate.openURLs = newOpenURLs;
+	[_outlineView reloadDataForRowIndexes:updateRows columnIndexes:[NSIndexSet indexSetWithIndex:0]];
+}
+
+- (NSArray*)modifiedURLs
+{
+	return _outlineViewDelegate.modifiedURLs;
+}
+
+- (void)setModifiedURLs:(NSArray*)newModifiedURLs
+{
+	if([_outlineViewDelegate.modifiedURLs isEqualToArray:newModifiedURLs])
+		return;
+
+	NSSet* symmetricDifference = SymmetricDifference([NSMutableSet setWithArray:_outlineViewDelegate.modifiedURLs], [NSMutableSet setWithArray:newModifiedURLs]);
+
+	// make a note of files in view, with changed modified state
+	NSIndexSet* updateRows = [self indexSetforURLs:symmetricDifference];
+	_outlineViewDelegate.modifiedURLs = newModifiedURLs;
+	[_outlineView reloadDataForRowIndexes:updateRows columnIndexes:[NSIndexSet indexSetWithIndex:0]];
+}
+
+- (NSIndexSet*)indexSetforURLs:(NSSet*)urls
+{
+	// make a note of files in view, with changed state
+	NSMutableIndexSet* updateRows = [NSMutableIndexSet indexSet];
+	NSInteger len = [_outlineView numberOfRows];
+	for(NSInteger rowIndex = 0; rowIndex < len; ++rowIndex)
+	{
+		NSURL* file = [[_outlineView itemAtRow:rowIndex] url];
+		if([urls containsObject:file])
+			[updateRows addIndex:rowIndex];
+	}
+	return updateRows;
+}
+
+// ===============================
+// = Wrappers for selected items =
+// ===============================
 
 - (NSArray*)selectedItems
 {
 	NSMutableArray* res = [NSMutableArray array];
-	citerate(index, [view.outlineView selectedRowIndexes])
-		[res addObject:[view.outlineView itemAtRow:*index]];
+	NSIndexSet* indexSet = [_outlineView selectedRowIndexes];
+	for(NSUInteger index = [indexSet firstIndex]; index != NSNotFound; index = [indexSet indexGreaterThanIndex:index])
+		[res addObject:[_outlineView itemAtRow:index]];
 	return res;
 }
 
@@ -128,183 +603,49 @@ static NSURL* ParentForURL (NSURL* url)
 	return res;
 }
 
-- (void)reload:(id)sender
+// ============
+// = Services =
+// ============
+
++ (void)initialize
 {
-	[historyController setCurrentURLScrollOffset:NSMinY([view.outlineView visibleRect])];
-	outlineViewDelegate.dataSource = DataSourceForURL(url, dataSourceOptions);
-	[outlineViewDelegate scrollToOffset:historyController.currentURLScrollOffset];
+	[[NSApplication sharedApplication] registerServicesMenuSendTypes:@[ NSFilenamesPboardType, NSURLPboardType ] returnTypes:nil];
 }
 
-- (void)setURL:(NSURL*)aURL
+- (id)validRequestorForSendType:(NSString*)sendType returnType:(NSString*)returnType
 {
-	if(outlineViewDelegate.dataSource && [self.url isEqualTo:aURL])
-		return;
-
-	[historyController setCurrentURLScrollOffset:NSMinY([view.outlineView visibleRect])];
-	self.url = aURL;
-	outlineViewDelegate.dataSource = DataSourceForURL(aURL, dataSourceOptions);
-	[self updateView];
+	if(returnType == nil && ([sendType isEqualToString:NSFilenamesPboardType] || [sendType isEqualToString:NSStringPboardType]))
+			return self;
+	else	return [super validRequestorForSendType:sendType returnType:returnType];
 }
 
-- (void)pushURL:(NSURL*)aURL
+- (BOOL)writeSelectionToPasteboard:(NSPasteboard*)pboard types:(NSArray*)types
 {
-	if(outlineViewDelegate.dataSource && [self.url isEqualTo:aURL])
-		return;
-
-	[self setURL:aURL];
-	[historyController addURLToHistory:aURL];
-	[self updateView];
+	return [_outlineView.dataSource outlineView:_outlineView writeItems:self.selectedItems toPasteboard:pboard];
 }
 
-- (void)showURL:(NSURL*)aURL
-{
-	D(DBF_FileBrowser_Controller, bug("url: %s\n", [[aURL absoluteString] UTF8String]););
-	if(![aURL isFileURL] || [[aURL path] isDirectory])
-	{
-		[self pushURL:aURL];
-	}
-	else
-	{
-		BOOL alreadyVisible = NO;
-		for(NSInteger row = 0; !alreadyVisible && row < [view.outlineView numberOfRows]; ++row)
-			alreadyVisible = [aURL isEqualTo:[[view.outlineView itemAtRow:row] url]];
-		if(!alreadyVisible)
-			[self pushURL:ParentForURL(aURL)];
+// ================
+// = Menu Actions =
+// ================
 
-		[outlineViewDelegate selectURLs:@[ aURL ]];
-	}
-}
-
-- (NSArray*)openURLs
-{
-	return outlineViewDelegate.openURLs;
-}
-
-- (void)setOpenURLs:(NSArray*)newOpenURLs
-{
-	outlineViewDelegate.openURLs = newOpenURLs;
-	[view.outlineView reloadData];
-}
-
-- (NSArray*)modifiedURLs
-{
-	return outlineViewDelegate.modifiedURLs;
-}
-
-- (void)setModifiedURLs:(NSArray*)newModifiedURLs
-{
-	outlineViewDelegate.modifiedURLs = newModifiedURLs;
-	[view.outlineView reloadData];
-}
-
-// ======================
-// = History Controller =
-// ======================
-
-- (NSDictionary*)sessionState
-{
-	if(view.outlineView)
-		[historyController setCurrentURLScrollOffset:NSMinY([view.outlineView visibleRect])];
-	return historyController.state;
-}
-
-// ====================
-// = Browsing Actions =
-// ====================
-
-- (IBAction)didDoubleClickOutlineView:(id)sender
-{
-	NSArray* items = view.outlineView.clickedRow != -1 ? @[ [view.outlineView itemAtRow:view.outlineView.clickedRow] ] : self.selectedItems;
-
-	NSMutableArray* urlsToOpen     = [NSMutableArray array];
-	NSMutableArray* itemsToAnimate = [NSMutableArray array];
-
-	for(FSItem* item in items)
-	{
-		NSURL* itemURL = item.target ?: item.url;
-
-		FSItemURLType type = item.urlType;
-		if(type == FSItemURLTypePackage && OakIsAlternateKeyOrMouseEvent())
-			type = FSItemURLTypeFolder;
-		else if(type == FSItemURLTypeFile && document::is_binary([itemURL.path fileSystemRepresentation]))
-			type = FSItemURLTypePackage;
-		else if(type == FSItemURLTypeAlias)
-		{
-			FSItem* tmp = [FSItem itemWithURL:[NSURL fileURLWithPath:[NSString stringWithCxxString:path::resolve([itemURL.path fileSystemRepresentation])]]];
-			type    = tmp.urlType;
-			itemURL = tmp.target ?: tmp.url;
-		}
-
-		switch(type)
-		{
-			case FSItemURLTypeFolder:
-			case FSItemURLTypeUnknown:
-				return [self pushURL:itemURL];
-			break;
-
-			case FSItemURLTypePackage:
-				[itemsToAnimate addObject:item];
-				[[NSWorkspace sharedWorkspace] openFile:itemURL.path];
-			break;
-
-			case FSItemURLTypeFile:
-				[itemsToAnimate addObject:item];
-				[urlsToOpen addObject:itemURL];
-			break;
-		}
-	}
-
-	for(FSItem* item in itemsToAnimate)
-		[OakZoomingIcon zoomIcon:[OakFileIconImage fileIconImageWithPath:item.path size:NSMakeSize(128, 128)] fromRect:[view iconFrameForEntry:item]];
-	if([urlsToOpen count])
-		[delegate fileBrowser:self openURLs:urlsToOpen];
-}
-
-- (IBAction)didSingleClickOutlineView:(id)sender
-{
-	NSInteger row = [view.outlineView clickedRow];
-	NSInteger col = [view.outlineView clickedColumn];
-	col = row != -1 && col == -1 ? 0 : col; // Clicking a row which participates in multi-row selection causes clickedColumn to return -1 <rdar://10382268>
-	OFBPathInfoCell* cell = (OFBPathInfoCell*)[view.outlineView preparedCellAtColumn:col row:row];
-	NSInteger hit = [cell hitTestForEvent:[NSApp currentEvent] inRect:[view.outlineView frameOfCellAtColumn:col row:row] ofView:view.outlineView];
-	if((hit & OakImageAndTextCellHitImage) && !([[NSApp currentEvent] modifierFlags] & NSCommandKeyMask))
-	{
-		[self didDoubleClickOutlineView:sender];
-	}
-	else if(hit & OFBPathInfoCellHitCloseButton)
-	{
-		FSItem* item = [view.outlineView itemAtRow:row];
-		[delegate fileBrowser:self closeURL:item.url];
-	}
-}
-
-// =================
-// = Menu Delegate =
-// =================
-
-- (BOOL)canUndo { return NO; }
-- (BOOL)canRedo { return NO; }
-
-- (void)editSelectedEntries:(id)sender { [view.outlineView performEditSelectedRow:self]; }
+- (void)editSelectedEntries:(id)sender { [_outlineView performEditSelectedRow:self]; }
 
 - (void)duplicateSelectedEntries:(id)sender
 {
 	NSMutableArray* duplicatedURLs = [NSMutableArray array];
-	for(NSString* aPath in self.selectedPaths)
+	for(NSURL* url in self.selectedURLs)
 	{
-		std::string const& dupPath = path::duplicate([aPath fileSystemRepresentation]);
-		if(dupPath != NULL_STR)
-				[duplicatedURLs addObject:[NSURL fileURLWithPath:[NSString stringWithCxxString:dupPath]]];
-		else	OakRunIOAlertPanel("Failed to duplicate the file at “%s”.", [aPath fileSystemRepresentation]);
+		if([url isFileURL])
+		{
+			if(NSURL* res = [[OakFileManager sharedInstance] createDuplicateOfURL:url window:_view.window])
+				[duplicatedURLs addObject:res];
+		}
 	}
 
-	if([duplicatedURLs count])
-	{
-		OakPlayUISound(OakSoundDidMoveItemUISound);
-		if([duplicatedURLs count] == 1)
-				[outlineViewDelegate editURL:[duplicatedURLs lastObject]];
-		else	[outlineViewDelegate selectURLs:duplicatedURLs];
-	}
+	if([duplicatedURLs count] == 1)
+		[_outlineViewDelegate editURL:[duplicatedURLs lastObject]];
+	else if([duplicatedURLs count] > 1)
+		[_outlineViewDelegate selectURLs:duplicatedURLs expandChildren:NO];
 }
 
 - (void)revealSelectedItem:(id)sender
@@ -313,8 +654,8 @@ static NSURL* ParentForURL (NSURL* url)
 	{
 		if([item.target isFileURL])
 		{
-			[self pushURL:ParentForURL(item.target)];
-			[outlineViewDelegate selectURLs:@[ item.target ]];
+			[self goToURL:ParentForURL(item.target)];
+			[_outlineViewDelegate selectURLs:@[ item.target ] expandChildren:NO];
 			return;
 		}
 	}
@@ -325,17 +666,32 @@ static NSURL* ParentForURL (NSURL* url)
 	for(FSItem* item in self.selectedItems)
 	{
 		if([item.target isFileURL])
-			return (void)[self showURL:item.target];
+			return (void)[self goToURL:item.target];
+	}
+
+	for(FSItem* item in self.selectedItems)
+	{
+		if([item.target path] && path::is_directory([[item.target path] fileSystemRepresentation]))
+			return (void)[self goToURL:[NSURL fileURLWithPath:[item.target path]]];
 	}
 }
 
 - (void)showSelectedEntriesInFinder:(id)sender
 {
-	for(NSString* aPath in self.selectedPaths)
-		[[NSWorkspace sharedWorkspace] selectFile:aPath inFileViewerRootedAtPath:[aPath stringByDeletingLastPathComponent]];
+	NSArray* urls = self.selectedURLs;
+	if(urls.count == 0 && [_url isFileURL])
+		urls = @[ _url ];
+	[[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:urls];
 }
 
-- (NSString*)parentForNewFolder
+- (void)toggleQuickLookPreview:(id)sender
+{
+	if([QLPreviewPanel sharedPreviewPanelExists] && [[QLPreviewPanel sharedPreviewPanel] isVisible])
+			[[QLPreviewPanel sharedPreviewPanel] orderOut:nil];
+	else	[[QLPreviewPanel sharedPreviewPanel] makeKeyAndOrderFront:nil];
+}
+
+- (NSString*)directoryForNewItems
 {
 	NSMutableSet* folders = [NSMutableSet set];
 	for(FSItem* item in self.selectedItems)
@@ -343,38 +699,51 @@ static NSURL* ParentForURL (NSURL* url)
 		if(![item.url isFileURL])
 			continue; // Perhaps we shouldn’t consider the selection if we encounter a non-file URL
 
-		if(!item.leaf && [view.outlineView isItemExpanded:item])
+		if(!item.leaf && [_outlineView isItemExpanded:item])
 			[folders addObject:item.path];
-		else if([url isFileURL]) // TODO Test if parent folder is actually shown by current data source
+		else if([_url isFileURL]) // TODO Test if parent folder is actually shown by current data source
 			[folders addObject:[item.path stringByDeletingLastPathComponent]];
 	}
-	return [folders count] == 1 ? [folders anyObject] : ([url isFileURL] ? [url path] : nil);
+	return [folders count] == 1 ? [folders anyObject] : [[_url filePathURL] path];
 }
 
-- (void)newFolderInSelectedFolder:(id)sender
+- (void)newFolder:(id)sender
 {
-	if(NSString* folder = [self parentForNewFolder])
+	if(NSString* folder = [self directoryForNewItems])
 	{
-		std::string const dst = path::unique(path::join([folder fileSystemRepresentation], "untitled folder"));
-		if(path::make_dir(dst))
-				[outlineViewDelegate editURL:[NSURL fileURLWithPath:[NSString stringWithCxxString:dst]]];
-		else	OakRunIOAlertPanel("Failed to create new folder in “%s”.", path::parent([folder fileSystemRepresentation]).c_str());
+		if(NSURL* res = [[OakFileManager sharedInstance] createUntitledDirectoryAtURL:[NSURL fileURLWithPath:folder] window:_view.window])
+			[self editURL:res];
 	}
+}
+
+- (BOOL)canSelectRow:(NSUInteger)row
+{
+	return ![[_outlineView delegate] respondsToSelector:@selector(outlineView:isGroupItem:)] || ![[_outlineView delegate] outlineView:_outlineView isGroupItem:[_outlineView itemAtRow:row]];
 }
 
 - (void)delete:(id)anArgument
 {
-	BOOL didTrashSomething = NO;
-	for(NSString* aPath in self.selectedPaths)
+	NSIndexSet* indexSet = [_outlineView selectedRowIndexes];
+	if([indexSet count] == 0)
+		return;
+
+	NSUInteger rowToSelect = [indexSet lastIndex];
+	while(rowToSelect < [_outlineView numberOfRows] && ([indexSet containsIndex:rowToSelect] || ![self canSelectRow:rowToSelect]))
+		++rowToSelect;
+
+	if(rowToSelect == [_outlineView numberOfRows])
+		do { --rowToSelect; } while(rowToSelect > 0 && ([indexSet containsIndex:rowToSelect]) || ![self canSelectRow:rowToSelect]);
+
+	FSItem* itemToSelect = [indexSet containsIndex:rowToSelect] ? nil : [_outlineView itemAtRow:rowToSelect];
+
+	for(NSURL* url in self.selectedURLs)
 	{
-		std::string const trashPath = path::move_to_trash([aPath fileSystemRepresentation]);
-		if(trashPath != NULL_STR)
-				didTrashSomething = YES;
-		else	OakRunIOAlertPanel("Failed to move the file at “%s” to the trash.", [aPath fileSystemRepresentation]);
+		if([url isFileURL])
+			[[OakFileManager sharedInstance] trashItemAtURL:url window:_view.window];
 	}
 
-	if(didTrashSomething)
-		OakPlayUISound(OakSoundDidTrashItemUISound);
+	if(itemToSelect)
+		[_outlineViewDelegate selectURLs:@[ itemToSelect.url ] expandChildren:NO];
 }
 
 - (void)changeColor:(OakFinderLabelChooser*)labelChooser
@@ -393,68 +762,18 @@ static NSURL* ParentForURL (NSURL* url)
 	if(!path::make_dir(favFolder))
 		return (void)OakRunIOAlertPanel("Failed to create Favorites folder.");
 
-	NSArray* paths = self.selectedPaths;
-	if(![paths count] && [url isFileURL])
-		paths = @[ [url path] ];
+	NSArray* urls = self.selectedURLs;
+	if(![urls count] && [_url isFileURL])
+		urls = @[ _url ];
 
-	for(NSString* aPath in paths)
+	for(NSURL* url in urls)
 	{
-		std::string const src = [aPath fileSystemRepresentation];
-		std::string const dst = path::join(favFolder, path::name(src));
-		path::link(src, dst);
+		std::string const dst = path::join(favFolder, path::name(to_s([url path])));
+		[[OakFileManager sharedInstance] createSymbolicLinkAtURL:[NSURL fileURLWithPath:[NSString stringWithCxxString:dst]] withDestinationURL:url window:_view.window];
 	}
 }
 
-- (void)updateVariables:(std::map<std::string, std::string>&)env
-{
-	std::vector<std::string> selection;
-	for(NSString* aPath in self.selectedPaths)
-		selection.push_back([aPath fileSystemRepresentation]);
-
-	if(!selection.empty())
-	{
-		std::vector<std::string> quoted;
-		iterate(path, selection)
-			quoted.push_back(format_string::replace(*path, "\\A(?m:.*)\\z", "'${0/'/'\\''/}'"));
-		env["TM_SELECTED_FILE"]  = selection.back();
-		env["TM_SELECTED_FILES"] = text::join(quoted, " ");
-	}
-
-	if(NSString* dir = self.location)
-		env["PWD"] = [dir fileSystemRepresentation];
-}
-
-- (void)executeBundleCommand:(id)sender
-{
-	std::map<std::string, std::string> map;
-	[self updateVariables:map];
-
-	if(bundles::item_ptr item = bundles::lookup(to_s((NSString*)[sender representedObject])))
-		document::run(parse_command(item), ng::buffer_t(), ng::ranges_t(), [self.selectedPaths count] == 1 ? document::create(map["TM_SELECTED_FILE"]) : document::document_ptr(), map);
-}
-
-- (NSRect)previewPanel:(NSPanel*)panel frameForURL:(NSURL*)aURL
-{
-	for(FSItem* item in self.selectedItems)
-	{
-		if([item.url isEqual:aURL])
-			return [view iconFrameForEntry:item];
-	}
-	return NSZeroRect;
-}
-
-- (void)quickLookSelectedEntries:(id)sender
-{
-	NSMutableArray* urls = [NSMutableArray array];
-	for(NSURL* aURL in self.selectedURLs)
-	{
-		if([aURL isFileURL])
-			[urls addObject:aURL];
-	}
-	OakShowPreviewForURLs(urls);
-}
-
-- (void)cut:(id)sender
+- (IBAction)cut:(id)sender
 {
 	NSPasteboard* pboard = [NSPasteboard generalPasteboard];
 	[self writeSelectionToPasteboard:pboard types:nil];
@@ -467,385 +786,354 @@ static NSURL* ParentForURL (NSURL* url)
 	}
 }
 
-- (void)copy:(id)sender
+- (IBAction)copy:(id)sender
 {
 	[self writeSelectionToPasteboard:[NSPasteboard generalPasteboard] types:nil];
 }
 
-- (void)paste:(id)sender
+- (BOOL)canPaste
+{
+	return [_url isFileURL] && [[[NSPasteboard generalPasteboard] availableTypeFromArray:@[ NSFilenamesPboardType ]] isEqualToString:NSFilenamesPboardType];
+}
+
+- (IBAction)paste:(id)sender
 {
 	NSMutableArray* created = [NSMutableArray array];
-	if(NSString* folder = [self parentForNewFolder])
+	if(NSString* folder = [self directoryForNewItems])
 	{
 		NSPasteboard* pboard = [NSPasteboard generalPasteboard];
 		BOOL cut = [[pboard availableTypeFromArray:@[ @"OakFileBrowserOperation" ]] isEqualToString:@"OakFileBrowserOperation"] && [[pboard stringForType:@"OakFileBrowserOperation"] isEqualToString:@"cut"];
-		for(NSString* path in [pboard availableTypeFromArray:@[ NSFilenamesPboardType ]] ? [pboard propertyListForType:NSFilenamesPboardType] : nil)
+		for(NSString* path in [pboard availableTypeFromArray:@[ NSFilenamesPboardType ]] ? [pboard propertyListForType:NSFilenamesPboardType] : @[ ])
 		{
-			std::string const src = [path fileSystemRepresentation];
-			std::string const dst = path::unique(path::join([folder fileSystemRepresentation], path::name(src)));
-			if(cut ? path::rename(src, dst) : path::copy(src, dst))
-				[created addObject:[NSURL fileURLWithPath:[NSString stringWithCxxString:dst]]];
+			std::string const dst = path::unique(path::join([folder fileSystemRepresentation], path::name([path fileSystemRepresentation])));
+			NSURL* dstURL = [NSURL fileURLWithPath:[NSString stringWithCxxString:dst]];
+			if(cut)
+					[[OakFileManager sharedInstance] moveItemAtURL:[NSURL fileURLWithPath:path] toURL:dstURL window:_view.window];
+			else	[[OakFileManager sharedInstance] copyItemAtURL:[NSURL fileURLWithPath:path] toURL:dstURL window:_view.window];
+			[created addObject:[NSURL fileURLWithPath:[dstURL path]]]; // recreate to set ‘isDirectory’
 		}
 	}
 
 	if([created count] > 0)
+		[_outlineViewDelegate selectURLs:created expandChildren:NO];
+}
+
+- (void)executeBundleCommand:(id)sender
+{
+	if(bundles::item_ptr item = bundles::lookup(to_s((NSString*)[sender representedObject])))
 	{
-		OakPlayUISound(OakSoundDidMoveItemUISound);
-		[outlineViewDelegate selectURLs:created];
+		std::map<std::string, std::string> map = oak::basic_environment();
+		map << [self variables] << item->bundle_variables();
+		map = bundles::scope_variables(map);
+		map = variables_for_path(map, to_s((NSString*)[self.selectedPaths firstObject]));
+		document::run(parse_command(item), ng::buffer_t(), ng::ranges_t(), [self.selectedPaths count] == 1 ? document::create(map["TM_SELECTED_FILE"]) : document::document_ptr(), map);
 	}
 }
 
-- (NSMenu*)menuForOutlineView:(NSOutlineView*)anOutlineView
-{
-	NSMenu* menu = [[NSMenu new] autorelease];
-	[menu setAutoenablesItems:NO];
+// ======================
+// = Create Action Menu =
+// ======================
 
-	NSInteger numberOfSelectedRows = [anOutlineView numberOfSelectedRows];
-	if(numberOfSelectedRows == 0)
+- (void)updateMenu:(NSMenu*)aMenu
+{
+	NSUInteger countOfExistingItems = [aMenu numberOfItems];
+	NSString* rootPath = [_url isFileURL] ? [_url path] : nil;
+
+	NSArray* selectedItems = self.selectedItems;
+	bool hasFileSelected = false;
+	for(FSItem* item in selectedItems)
+		hasFileSelected = hasFileSelected || [(item.url ?: item.target) isFileURL];
+
+	if(hasFileSelected)
 	{
-		if([url isFileURL])
+		FSItem* selectedItem   = [selectedItems count] == 1 ? [selectedItems lastObject] : nil;
+		NSString* selectedPath = [selectedItem.url isFileURL] ? selectedItem.path : nil;
+
+		uint32_t flags = path::info(to_s(selectedPath));
+		bool isSymlink     = (flags & (path::flag::symlink|path::flag::alias)) != 0;
+		bool isPackage     = (flags & path::flag::package) != 0;
+		bool isApplication = ((isSymlink && [selectedItem.target isFileURL] ? path::info(to_s(selectedItem.target.path)) : flags) & path::flag::application) != 0;
+
+		[aMenu addItemWithTitle:@"Open" action:@selector(didDoubleClickOutlineView:) keyEquivalent:@""];
+		if(!isApplication)
 		{
-			[menu addItemWithTitle:@"New Folder" action:@selector(newFolderInSelectedFolder:) keyEquivalent:@""];
-			[menu addItemWithTitle:@"Add to Favorites" action:@selector(addSelectedEntriesToFavorites:) keyEquivalent:@""];
+			NSMenuItem* openWithMenuItem = [aMenu addItemWithTitle:@"Open With" action:@selector(revealSelectedItem:) keyEquivalent:@""];
+			[OakOpenWithMenu addOpenWithMenuForPaths:[NSSet setWithArray:self.selectedPaths] toMenuItem:openWithMenuItem];
+		}
+
+		[aMenu addItem:[NSMenuItem separatorItem]];
+
+		if(isSymlink)
+		{
+			[aMenu addItemWithTitle:@"Show Original" action:@selector(revealSelectedItem:) keyEquivalent:@""];
+		}
+		else
+		{
+			if(isPackage)
+				[aMenu addItemWithTitle:@"Show Package Contents" action:@selector(showPackageContents:) keyEquivalent:@""];
+			if(!rootPath && selectedPath)
+				[aMenu addItemWithTitle:@"Show Enclosing Folder" action:@selector(revealSelectedItem:) keyEquivalent:@""];
 		}
 	}
-	else
+
+	if(rootPath || hasFileSelected)
+		[aMenu addItemWithTitle:@"Show in Finder" action:@selector(showSelectedEntriesInFinder:) keyEquivalent:@""];
+
+	if(rootPath)
 	{
-		BOOL pathsExist   = YES;
-		BOOL showOpenWith = YES;
-		for(FSItem* item in self.selectedItems)
+		[aMenu addItem:[NSMenuItem separatorItem]];
+		[[aMenu addItemWithTitle:@"New File"   action:@selector(newDocumentInDirectory:) keyEquivalent:@"n"] setKeyEquivalentModifierMask:NSCommandKeyMask|NSShiftKeyMask];
+		[[aMenu addItemWithTitle:@"New Folder" action:@selector(newFolder:)              keyEquivalent:@"n"] setKeyEquivalentModifierMask:NSCommandKeyMask|NSControlKeyMask];
+	}
+
+	if(rootPath || hasFileSelected)
+	{
+		[aMenu addItem:[NSMenuItem separatorItem]];
+
+		if(hasFileSelected)
 		{
-			pathsExist   = pathsExist   && !([item.url isFileURL] && !path::exists([[item.url path] fileSystemRepresentation]));
-			showOpenWith = showOpenWith && !([(item.target ?: item.url) isFileURL] && (path::info([[(item.target ?: item.url) path] fileSystemRepresentation]) & path::flag::application));
+			[aMenu addItemWithTitle:@"Rename"     action:@selector(editSelectedEntries:)      keyEquivalent:@""];
+			[aMenu addItemWithTitle:@"Duplicate"  action:@selector(duplicateSelectedEntries:) keyEquivalent:@""];
+			[aMenu addItemWithTitle:@"Quick Look" action:@selector(toggleQuickLookPreview:)   keyEquivalent:@""];
 		}
 
-		BOOL singleItem = [self.selectedItems count] == 1;
-		FSItem* item = singleItem ? [self.selectedItems lastObject] : nil;
+		[aMenu addItemWithTitle:@"Add to Favorites" action:@selector(addSelectedEntriesToFavorites:) keyEquivalent:@""];
+	}
 
-		BOOL showEnclosingFolder = item && [item.url isFileURL] && [@[ @"search", @"scm" ] containsObject:[url scheme]];
-		BOOL showPackageContents = item && [item.url isFileURL] && (path::info([item.path fileSystemRepresentation]) & path::flag::package);
-		BOOL showOriginal        = item && [item.url isFileURL] && (path::info([item.path fileSystemRepresentation]) & (path::flag::symlink|path::flag::alias));
-		BOOL canCreateFolder     = [self parentForNewFolder] ? YES : NO;
-
-		struct { NSString* label; SEL action; BOOL enable; BOOL include; } const menuLabels[] =
-		{
-			{ @"Open",                    @selector(didDoubleClickOutlineView:),                  pathsExist, YES },
-			{ @"Open With",               NULL,                                                   pathsExist, showOpenWith },
-			{ @"Show Preview",            @selector(quickLookSelectedEntries:),     singleItem && pathsExist, YES },
-			{ nil,                        NULL,                                                          YES, YES },
-			{ @"Open Enclosing Folder",   @selector(revealSelectedItem:),                                YES, showEnclosingFolder }, // scm://, search://
-			{ @"Show Package Contents",   @selector(showPackageContents:),                               YES, showPackageContents }, // .app, .tmBundle, …
-			{ @"Show Original",           @selector(revealSelectedItem:),                                YES, showOriginal        }, // symbolic links, aliases
-			{ @"Show in Finder",          @selector(showSelectedEntriesInFinder:),  singleItem && pathsExist, YES },
-			{ nil,                        NULL,                                                          YES, YES },
-			{ @"Rename",                  @selector(editSelectedEntries:),          singleItem && pathsExist, YES },
-			{ @"Duplicate",               @selector(duplicateSelectedEntries:),                   pathsExist, YES },
-			{ @"New Folder",              @selector(newFolderInSelectedFolder:),             canCreateFolder, YES },
-			{ nil,                        NULL,                                                          YES, YES },
-			{ @"Move to Trash",           @selector(delete:),                                     pathsExist, YES },
-			{ nil,                        NULL,                                                          YES, YES },
-			{ @"Copy",                    @selector(copy:),                                              YES, YES },
-			{ nil,                        NULL,                                                          YES, YES },
-			{ @"Color Label",             NULL,                                                   pathsExist, YES },
-			{ @"Add to Favorites",        @selector(addSelectedEntriesToFavorites:),              pathsExist, YES },
-		};
-
-		for(size_t i = 0; i < sizeofA(menuLabels); i++)
-		{
-			if(!menuLabels[i].include)
-				continue;
-
-			if(NSString* label = menuLabels[i].label)
-			{
-				NSMenuItem* menuItem = [menu addItemWithTitle:label action:menuLabels[i].action keyEquivalent:@""];
-				[menuItem setTarget:self];
-				if(!menuLabels[i].enable || menuLabels[i].action && ![self respondsToSelector:menuLabels[i].action])
-					[menuItem setEnabled:NO];
-			}
-			else
-			{
-				[menu addItem:[NSMenuItem separatorItem]];
-			}
-		}
+	if(hasFileSelected)
+	{
+		[aMenu addItem:[NSMenuItem separatorItem]];
+		[aMenu addItemWithTitle:@"Move to Trash" action:@selector(delete:) keyEquivalent:@""];
 
 		std::vector<bundles::item_ptr> const& items = bundles::query(bundles::kFieldSemanticClass, "callback.file-browser.action-menu");
 		if(!items.empty())
 		{
-			NSInteger i = [menu indexOfItemWithTitle:@"Move to Trash"];
-			[menu insertItem:[NSMenuItem separatorItem] atIndex:++i];
+			[aMenu addItem:[NSMenuItem separatorItem]];
 
 			std::multimap<std::string, bundles::item_ptr, text::less_t> sorted;
 			iterate(item, items)
 				sorted.insert(std::make_pair((*item)->name(), *item));
 
-			iterate(pair, sorted)
-			{
-				NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:[NSString stringWithCxxString:pair->first] action:@selector(executeBundleCommand:) keyEquivalent:@""];
-				item.representedObject = [NSString stringWithCxxString:pair->second->uuid()];
-				item.target            = self;
-				[menu insertItem:item atIndex:++i];
-			}
+			for(auto pair : sorted)
+				[[aMenu addItemWithTitle:[NSString stringWithCxxString:pair.first] action:@selector(executeBundleCommand:) keyEquivalent:@""] setRepresentedObject:[NSString stringWithCxxString:pair.second->uuid()]];
 		}
-
-		OakFinderLabelChooser* swatch = [[[OakFinderLabelChooser alloc] initWithFrame:NSMakeRect(0, 0, 166, 37)] autorelease];
-		swatch.selectedIndex          = numberOfSelectedRows == 1 ? [[self.selectedItems lastObject] labelIndex] : 0;
-		swatch.target                 = self;
-		swatch.action                 = @selector(changeColor:);
-		[[menu itemWithTitle:@"Color Label"] setView:swatch];
-
-		if(NSMenuItem* openWithMenuItem = [menu itemWithTitle:@"Open With"])
-			[OakOpenWithMenu addOpenWithMenuForPaths:[NSSet setWithArray:self.selectedPaths] toMenuItem:openWithMenuItem];
 	}
 
-	// [menu addItem:[NSMenuItem separatorItem]];
-	// if([self canUndo] || [self canRedo])
-	// 		[[menu addItemWithTitle:[NSString stringWithCxxString:title_for_operation(/**undoOperation*/)] action:([self canUndo] ? @selector(undo:) : @selector(redo:)) keyEquivalent:@""] setTarget:self];
-	// else	[[menu addItemWithTitle:@"Can’t Undo" action:@selector(nop:) keyEquivalent:@""] setEnabled:NO];
+	if([selectedItems count])
+	{
+		[aMenu addItem:[NSMenuItem separatorItem]];
+		[aMenu addItemWithTitle:@"Select None" action:@selector(deselectAll:) keyEquivalent:@"A"];
+	}
 
+	if(hasFileSelected || self.canPaste)
+	{
+		[aMenu addItem:[NSMenuItem separatorItem]];
+
+		if(hasFileSelected)
+		{
+			[aMenu addItemWithTitle:@"Cut"  action:@selector(cut:)  keyEquivalent:@""];
+			[aMenu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@""];
+		}
+
+		if(self.canPaste)
+			[aMenu addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@""];
+	}
+
+	if(hasFileSelected)
+	{
+		OakFinderLabelChooser* swatch = [[OakFinderLabelChooser alloc] initWithFrame:NSMakeRect(0, 0, 166, 37)];
+		swatch.selectedIndex = [[selectedItems lastObject] labelIndex];
+		swatch.action        = @selector(changeColor:);
+		swatch.target        = self;
+
+		[aMenu addItem:[NSMenuItem separatorItem]];
+		[aMenu addItemWithTitle:@"Label:" action:@selector(nop:) keyEquivalent:@""];
+		[[aMenu addItemWithTitle:@"Color Swatch" action:@selector(nop:) keyEquivalent:@""] setView:swatch];
+	}
+
+	for(NSUInteger i = countOfExistingItems; i < [aMenu numberOfItems]; ++i)
+	{
+		NSMenuItem* item = [aMenu itemAtIndex:i];
+		if(!item.target && [self respondsToSelector:item.action])
+			[item setTarget:self];
+	}
+
+	if([_view.window.undoManager canUndo] || [_view.window.undoManager canRedo])
+	{
+		if(countOfExistingItems != [aMenu numberOfItems])
+			[aMenu addItem:[NSMenuItem separatorItem]];
+
+		[[aMenu addItemWithTitle:@"Undo" action:@selector(undo:) keyEquivalent:@""] setTarget:_view.window];
+		[[aMenu addItemWithTitle:@"Redo" action:@selector(redo:) keyEquivalent:@""] setTarget:_view.window];
+	}
+
+	if(countOfExistingItems == [aMenu numberOfItems])
+		[aMenu addItemWithTitle:@"No available actions" action:@selector(nop:) keyEquivalent:@""];
+}
+
+- (NSMenu*)menuForOutlineView:(NSOutlineView*)anOutlineView
+{
+	NSMenu* menu = [NSMenu new];
+	[self updateMenu:menu];
 	return menu;
 }
 
-// ==================
-// = Setup/Teardown =
-// ==================
-
-- (id)init
+- (BOOL)menuHasKeyEquivalent:(NSMenu*)aMenu forEvent:(NSEvent*)anEvent target:(id*)anId action:(SEL*)aSEL
 {
-	if(self = [super init])
+	static std::string const keys[] = { "@N", "^@n", "@A" };
+	std::string const eventString = to_s(anEvent);
+	if(!oak::contains(std::begin(keys), std::end(keys), eventString))
+		return NO;
+
+	[self updateMenu:aMenu];
+	for(NSMenuItem* item in [aMenu itemArray])
 	{
-		NSString* urlString = [[NSUserDefaults standardUserDefaults] stringForKey:kUserDefaultsInitialFileBrowserURLKey];
-
-		self.url                = urlString ? [NSURL URLWithString:urlString] : kURLLocationHome;
-		self.historyController  = [[OakHistoryController new] autorelease];
-		[self loadFileBrowserOptions];
-
-		BOOL foldersOnTop   = [[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsFoldersOnTopKey];
-		BOOL showExtensions = [[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsShowFileExtensionsKey];
-
-		dataSourceOptions |= (foldersOnTop   ? kFSDataSourceOptionGroupsFirst   : 0);
-		dataSourceOptions |= (showExtensions ? kFSDataSourceOptionShowExtension : 0);
-
-		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(userDefaultsDidChange:) name:NSUserDefaultsDidChangeNotification object:[NSUserDefaults standardUserDefaults]];
-	}
-	return self;
-}
-
-- (void)userDefaultsDidChange:(NSNotification*)aNotification
-{
-	BOOL foldersOnTop   = [[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsFoldersOnTopKey];
-	BOOL showExtensions = [[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsShowFileExtensionsKey];
-
-	BOOL oldFoldersOnTop   = (dataSourceOptions & kFSDataSourceOptionGroupsFirst) == kFSDataSourceOptionGroupsFirst;
-	BOOL oldShowExtensions = (dataSourceOptions & kFSDataSourceOptionShowExtension) == kFSDataSourceOptionShowExtension;
-
-	if(foldersOnTop != oldFoldersOnTop || showExtensions != oldShowExtensions)
-	{
-		dataSourceOptions ^= (foldersOnTop != oldFoldersOnTop     ? kFSDataSourceOptionGroupsFirst   : 0);
-		dataSourceOptions ^= (showExtensions != oldShowExtensions ? kFSDataSourceOptionShowExtension : 0);
-
-		[self reload:self];
-	}
-}
-
-- (void)dealloc
-{
-	[[NSNotificationCenter defaultCenter] removeObserver:self];
-
-	self.view              = nil;
-	self.url               = nil;
-	self.historyController = nil;
-
-	[super dealloc];
-}
-
-- (void)setView:(OakFileBrowserView*)aView
-{
-	if(aView != view)
-	{
-		if(view)
+		if(eventString == ns::create_event_string(item.keyEquivalent, item.keyEquivalentModifierMask))
 		{
-			[outlineViewDelegate release];
-			outlineViewDelegate = nil;
-
-			if(view.delegate == self)
-				view.delegate = nil;
-			if(view.persistentNextResponder == self)
-				view.persistentNextResponder = nil;
-
-			[view release];
-		}
-
-		if(view = [aView retain])
-		{
-			view.delegate = self;
-			view.persistentNextResponder = self;
-
-			outlineViewDelegate = [FSOutlineViewDelegate new];
-			outlineViewDelegate.outlineView = view.outlineView;
-
-			view.outlineView.target       = self;
-			view.outlineView.action       = @selector(didSingleClickOutlineView:);
-			view.outlineView.doubleAction = @selector(didDoubleClickOutlineView:);
-			view.outlineView.menuDelegate = self;
-
-			[view.outlineView setDraggingSourceOperationMask:NSDragOperationCopy|NSDragOperationMove|NSDragOperationLink forLocal:YES];
-			[view.outlineView setDraggingSourceOperationMask:NSDragOperationEvery forLocal:NO];
-			[view.outlineView registerForDraggedTypes:@[ NSFilenamesPboardType ]];
-
-			[self updateView];
+			if(id target = [NSApp targetForAction:item.action])
+			{
+				*anId = target;
+				*aSEL = item.action;
+				return YES;
+			}
 		}
 	}
+
+	return NO;
 }
 
-- (void)setupViewWithSize:(NSSize)viewSize resizeIndicatorOnRight:(BOOL)flag state:(NSDictionary*)fileBrowserState
+- (void)menuNeedsUpdate:(NSMenu*)aMenu
 {
-	self.view = [[[OakFileBrowserView alloc] initWithFrame:(NSRect){ NSZeroPoint, viewSize }] autorelease];
-	view.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
-	[view setShowsResizeIndicator:YES onRight:flag];
-	historyController.state = fileBrowserState;
-	if(!historyController.currentURL)
-		[historyController addURLToHistory:url];
-	CGFloat scrollOffset = historyController.currentURLScrollOffset;
-	[self setURL:historyController.currentURL];
-	[historyController setCurrentURLScrollOffset:scrollOffset];
-	[outlineViewDelegate scrollToOffset:historyController.currentURLScrollOffset];
+	[aMenu removeAllItems];
+	[aMenu addItemWithTitle:@"Dummy" action:@selector(nop:) keyEquivalent:@""];
+	[self updateMenu:aMenu];
 }
 
-// ============
-// = Services =
-// ============
+// ==================
+// = Action methods =
+// ==================
 
-+ (void)initialize
+- (IBAction)didDoubleClickOutlineView:(id)sender
 {
-	[[NSApplication sharedApplication] registerServicesMenuSendTypes:@[ NSFilenamesPboardType, NSURLPboardType ] returnTypes:nil];
+	NSArray* items = _outlineView.clickedRow != -1 ? @[ [_outlineView itemAtRow:_outlineView.clickedRow] ] : self.selectedItems;
 
-	kURLLocationComputer  = [[NSURL alloc] initWithString:@"computer:///"];
-	kURLLocationHome      = [[NSURL alloc] initFileURLWithPath:NSHomeDirectory() isDirectory:YES];
-	kURLLocationDesktop   = [[NSURL alloc] initFileURLWithPath:[NSString stringWithCxxString:path::desktop()] isDirectory:YES];
-	kURLLocationFavorites = [[NSURL alloc] initFileURLWithPath:[NSString stringWithCxxString:oak::application_t::support("Favorites")] isDirectory:YES];
-	kURLLocationBundles   = [[NSURL alloc] initWithString:@"bundles:///"];
-}
+	NSMutableArray* urlsToOpen     = [NSMutableArray array];
+	NSMutableArray* itemsToAnimate = [NSMutableArray array];
 
-- (id)validRequestorForSendType:(NSString*)sendType returnType:(NSString*)returnType
-{
-	if(returnType == nil && ([sendType isEqualToString:NSFilenamesPboardType] || [sendType isEqualToString:NSStringPboardType]))
-			return self;
-	else	return [super validRequestorForSendType:sendType returnType:returnType];
-}
-
-- (BOOL)writeSelectionToPasteboard:(NSPasteboard*)pboard types:(NSArray*)types
-{
-	return [view.outlineView.dataSource outlineView:view.outlineView writeItems:self.selectedItems toPasteboard:pboard];
-}
-
-// ================
-// = View Options =
-// ================
-
-static struct data_source_options_map_t { NSString* const name; NSUInteger flag; } const DataSourceOptionsMap[] =
-{
-	{ @"Show Hidden Items",      kFSDataSourceOptionIncludeHidden },
-	{ @"Sort by File Extension", kFSDataSourceOptionSortByType    },
-};
-
-- (void)loadFileBrowserOptions
-{
-	NSArray* array = [[NSUserDefaults standardUserDefaults] arrayForKey:kUserDefaultsFileBrowserDataSourceOptions];
-	dataSourceOptions = 0;
-	iterate(it, DataSourceOptionsMap)
+	for(FSItem* item in items)
 	{
-		if([array containsObject:it->name])
-			dataSourceOptions |= it->flag;
+		NSURL* itemURL = item.target ?: item.url;
+
+		FSItemURLType type = item.urlType;
+		if(type == FSItemURLTypeAlias)
+		{
+			FSItem* tmp = [FSItem itemWithURL:[NSURL fileURLWithPath:[NSString stringWithCxxString:path::resolve([itemURL.path fileSystemRepresentation])]]];
+			type    = tmp.urlType;
+			itemURL = tmp.target ?: tmp.url;
+		}
+		
+		if(type == FSItemURLTypePackage && OakIsAlternateKeyOrMouseEvent())
+			type = FSItemURLTypeFolder;
+		else if(type == FSItemURLTypeFile && is_binary([itemURL.path fileSystemRepresentation]) && !OakIsAlternateKeyOrMouseEvent())
+			type = FSItemURLTypePackage;
+
+		switch(type)
+		{
+			case FSItemURLTypeFolder:
+			case FSItemURLTypeUnknown:
+				return [self goToURL:itemURL];
+			break;
+
+			case FSItemURLTypePackage:
+				[itemsToAnimate addObject:item];
+				[[NSWorkspace sharedWorkspace] openFile:itemURL.path];
+			break;
+
+			case FSItemURLTypeFile:
+				[itemsToAnimate addObject:item];
+				[urlsToOpen addObject:itemURL];
+			break;
+		}
+	}
+
+	for(FSItem* item in itemsToAnimate)
+		[OakZoomingIcon zoomIcon:item.icon fromRect:[self iconFrameForEntry:item]];
+	if([urlsToOpen count])
+		[_delegate fileBrowser:self openURLs:urlsToOpen];
+}
+
+- (IBAction)didSingleClickOutlineView:(id)sender
+{
+	NSInteger row = [_outlineView clickedRow];
+	NSInteger col = [_outlineView clickedColumn];
+	col = row != -1 && col == -1 ? 0 : col; // Clicking a row which participates in multi-row selection causes clickedColumn to return -1 <rdar://10382268>
+	OFBPathInfoCell* cell = (OFBPathInfoCell*)[_outlineView preparedCellAtColumn:col row:row];
+	NSInteger hit = [cell hitTestForEvent:[NSApp currentEvent] inRect:[_outlineView frameOfCellAtColumn:col row:row] ofView:_outlineView];
+	if(hit & OakImageAndTextCellHitImage)
+	{
+		NSURL* itemURL = ((FSItem*)[_outlineView itemAtRow:row]).url;
+		
+		if(([[NSApp currentEvent] modifierFlags] & NSCommandKeyMask) && [itemURL isFileURL])
+			[[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ itemURL ]];
+		else	[self didDoubleClickOutlineView:sender];
+	}
+	else if(hit & OFBPathInfoCellHitCloseButton)
+	{
+		FSItem* item = [_outlineView itemAtRow:row];
+		[_delegate fileBrowser:self closeURL:item.url];
 	}
 }
 
-- (void)saveFileBrowserOptions
+- (IBAction)reload:(id)sender
 {
-	NSMutableArray* array = [NSMutableArray array];	
-	iterate(it, DataSourceOptionsMap)
-	{
-		if((dataSourceOptions & it->flag) == it->flag)
-			[array addObject:it->name];
-	}
-
-	if([array count] == 0)
-			[[NSUserDefaults standardUserDefaults] removeObjectForKey:kUserDefaultsFileBrowserDataSourceOptions];
-	else	[[NSUserDefaults standardUserDefaults] setObject:array forKey:kUserDefaultsFileBrowserDataSourceOptions];
+	CGFloat scrollOffset = NSMinY([_outlineView visibleRect]);
+	_outlineViewDelegate.dataSource = DataSourceForURL(_url, _dataSourceOptions);
+	[_outlineViewDelegate scrollToOffset:scrollOffset];
 }
 
-- (IBAction)toggleViewOption:(id)sender
+- (IBAction)deselectAll:(id)sender
 {
-	ASSERT([sender respondsToSelector:@selector(tag)]);
-	dataSourceOptions ^= [sender tag];
-	[self saveFileBrowserOptions];
-	[self reload:self];
+	[_outlineView deselectAll:sender];
 }
 
-- (IBAction)showFolderSpecificPreferences:(id)sender
+- (IBAction)toggleShowInvisibles:(id)sender
 {
-	[delegate fileBrowser:self openURLs:@[ [NSURL fileURLWithPath:[[url path] stringByAppendingPathComponent:@".tm_properties"] isDirectory:NO]] ];
+	self.showExcludedItems = !self.showExcludedItems;
 }
 
-- (IBAction)showOptionsPopUpMenu:(id)sender
+- (IBAction)goToParentFolder:(id)sender   { [self selectURL:_url withParentURL:ParentForURL(_url)]; }
+- (IBAction)goToComputer:(id)sender       { [self goToURL:kURLLocationComputer];  }
+- (IBAction)goToHome:(id)sender           { [self goToURL:kURLLocationHome];      }
+- (IBAction)goToDesktop:(id)sender        { [self goToURL:kURLLocationDesktop];   }
+
+- (IBAction)goToFavorites:(id)sender
 {
-	NSMenu* menu = [[NSMenu new] autorelease];
-	iterate(it, DataSourceOptionsMap)
-	{
-		NSMenuItem* item = [menu addItemWithTitle:it->name action:@selector(toggleViewOption:) keyEquivalent:@""];
-		[item setState:(((dataSourceOptions & it->flag) == it->flag) ? NSOnState : NSOffState)];
-		[item setTarget:self];
-		[item setTag:it->flag];
-	}
-
-	[menu addItem:[NSMenuItem separatorItem]];
-	NSMenuItem* menuItem = [menu addItemWithTitle:@"Reload" action:@selector(reload:) keyEquivalent:@""];
-	[menuItem setTarget:self];
-
-	if([url isFileURL])
-	{
-		[menu addItem:[NSMenuItem separatorItem]];
-		NSMenuItem* menuItem = [menu addItemWithTitle:@"Preferences…" action:@selector(showFolderSpecificPreferences:) keyEquivalent:@""];
-		[menuItem setTarget:self];
-	}
-
-	[view displayMenu:menu fromHeaderColumn:fb::options selectedIndex:0 popup:NO];
+	if([_url isEqualTo:kURLLocationFavorites] && self.canGoBack)
+			[self goBack:sender];
+	else	[self goToURL:kURLLocationFavorites];
 }
-
-// =======================
-// = Header View Actions =
-// =======================
-
-- (void)updateView
-{
-	view.titleText          = outlineViewDelegate.dataSource.rootItem.name;
-	view.titleImage         = outlineViewDelegate.dataSource.rootItem.icon;
-	view.canGoBackward      = historyController.previousURL ? YES : NO;
-	view.canGoForward       = historyController.nextURL     ? YES : NO;
-	[view setNeedsDisplay:YES];
-}
-
-- (IBAction)goToComputer:(id)sender       { [self pushURL:kURLLocationComputer];  }
-- (IBAction)goToHome:(id)sender           { [self pushURL:kURLLocationHome];      }
-- (IBAction)goToDesktop:(id)sender        { [self pushURL:kURLLocationDesktop];   }
-- (IBAction)goToFavorites:(id)sender      { [self pushURL:kURLLocationFavorites]; }
 
 - (IBAction)goToSCMDataSource:(id)sender
 {
-	for(NSURL* selectedURL in self.selectedURLs)
+	if([_url.scheme isEqualToString:@"scm"])
 	{
-		if([selectedURL isFileURL] && path::is_directory([[selectedURL path] fileSystemRepresentation]))
-			return [self pushURL:[FSSCMDataSource scmURLWithPath:[selectedURL path]]];
+		if(self.canGoBack)
+				[self goBack:sender];
+		else	[self goToParentFolder:sender];
 	}
-	[self pushURL:[FSSCMDataSource scmURLWithPath:[url path]]];
+	else
+	{
+		for(NSURL* selectedURL in self.selectedURLs)
+		{
+			if([selectedURL isFileURL] && path::is_directory([[selectedURL path] fileSystemRepresentation]))
+				return [self goToURL:[FSSCMDataSource scmURLWithPath:[selectedURL path]]];
+		}
+		[self goToURL:[FSSCMDataSource scmURLWithPath:[_url path]]];
+	}
 }
 
-- (IBAction)goBack:(id)sender             { if(historyController.previousURL) { [self setURL:historyController.previousURL]; [historyController retreat:self]; [outlineViewDelegate scrollToOffset:historyController.currentURLScrollOffset]; [self updateView]; } }
-- (IBAction)goForward:(id)sender          { if(historyController.nextURL)     { [self setURL:historyController.nextURL];     [historyController advance:self]; [outlineViewDelegate scrollToOffset:historyController.currentURLScrollOffset]; [self updateView]; } }
-
-- (IBAction)goToParentFolder:(id)sender
-{
-	[self pushURL:ParentForURL(url)];
-}
+- (IBAction)goBack:(id)sender             { if(self.historyIndex > 0)                    self.historyIndex = self.historyIndex - 1; }
+- (IBAction)goForward:(id)sender          { if(self.historyIndex < self.history.count-1) self.historyIndex = self.historyIndex + 1; }
 
 - (IBAction)orderFrontGoToFolder:(id)sender
 {
@@ -853,167 +1141,54 @@ static struct data_source_options_map_t { NSString* const name; NSUInteger flag;
 	[panel setCanChooseFiles:NO];
 	[panel setCanChooseDirectories:YES];
 	[panel setAllowsMultipleSelection:NO];
-	[panel setDirectoryURL:[NSURL fileURLWithPath:self.location]];
-	[panel beginSheetModalForWindow:view.window completionHandler:^(NSInteger result) {
+	[panel setDirectoryURL:[_url isFileURL] ? _url : nil];
+	[panel beginSheetModalForWindow:_view.window completionHandler:^(NSInteger result) {
 		if(result == NSOKButton)
-			[self showURL:[[panel URLs] lastObject]];
+			[self goToURL:[[panel URLs] lastObject]];
 	}];
 }
 
 - (void)takeURLFrom:(id)sender
 {
-	if([sender representedObject])
-		[self pushURL:[sender representedObject]];
+	if(NSURL* url = [sender representedObject])
+		[self goToURL:url];
 }
 
-- (IBAction)showFolderPopUpMenu:(id)sender
+// =========
+// = Swipe =
+// =========
+
+- (BOOL)wantsScrollEventsForSwipeTrackingOnAxis:(NSEventGestureAxis)axis
 {
-	NSMenu* menu                   = [[NSMenu new] autorelease];
-	NSMutableSet* visibleLocations = [NSMutableSet setWithObjects:kURLLocationComputer, kURLLocationHome, kURLLocationFavorites, nil];
+	return axis == NSEventGestureAxisHorizontal;
+}
 
-	// Add path hierarchy
-	for(NSURL* currentURL = url; currentURL; currentURL = ParentForURL(currentURL))
-	{
-		NSMenuItem* menuItem = [menu addItemWithTitle:DisplayName(currentURL) action:@selector(takeURLFrom:) keyEquivalent:@""];
-		[menuItem setTarget:self];
-		[menuItem setRepresentedObject:currentURL];
-		[menuItem setImage:IconImage(currentURL)];
-		[visibleLocations addObject:currentURL];
-	}
+- (void)scrollWheel:(NSEvent*)anEvent
+{
+	if(![NSEvent isSwipeTrackingFromScrollEventsEnabled] || [anEvent phase] == NSEventPhaseNone || fabsf([anEvent scrollingDeltaX]) <= fabsf([anEvent scrollingDeltaY]))
+		return;
 
-	// Add recent locations
-	NSMutableArray* recentURLs = [NSMutableArray array];
-	for(NSUInteger index = 0; index < historyController.recentLocations.count && index < 10; ++index)
-	{
-		NSURL* recentURL = [historyController.recentLocations objectAtIndex:index];
-		if(![visibleLocations containsObject:recentURL])
-			[recentURLs addObject:recentURL];
-	}
-
-	if([recentURLs count])
-	{
-		[menu addItem:[NSMenuItem separatorItem]];
-		[[menu addItemWithTitle:@"Recent Places" action:@selector(dummy:) keyEquivalent:@""] setEnabled:NO];
-
-		// TODO Disambiguate paths
-		// std::vector<size_t> const& parents = path::disambiguate(recentPaths);
-		for(NSURL* recentURL in recentURLs)
+	[anEvent trackSwipeEventWithOptions:0 dampenAmountThresholdMin:(self.canGoForward ? -1 : 0) max:(self.canGoBack ? +1 : 0) usingHandler:^(CGFloat gestureAmount, NSEventPhase phase, BOOL isComplete, BOOL* stop) {
+		if(phase == NSEventPhaseBegan)
 		{
-			NSMenuItem* menuItem = [menu addItemWithTitle:DisplayName(recentURL/*, parents[index]*/) action:@selector(takeURLFrom:) keyEquivalent:@""];
-			[menuItem setTarget:self];
-			[menuItem setRepresentedObject:recentURL];
-			[menuItem setImage:IconImage(recentURL)];
+			// Setup animation overlay layers
 		}
-	}
 
-	[menu addItem:[NSMenuItem separatorItem]];
-	[[menu addItemWithTitle:@"Other…" action:@selector(orderFrontGoToFolder:) keyEquivalent:@""] setTarget:self];
+		// Update animation overlay to match gestureAmount
 
-	[view displayMenu:menu fromHeaderColumn:fb::title selectedIndex:0 popup:YES];
-}
-
-- (IBAction)didClickHeaderColumn:(id)sender
-{
-	switch([sender tag])
-	{
-		case fb::goBack:           return [self goBack:sender];
-		case fb::goForward:        return [self goForward:sender];
-		case fb::scmDataSource:    return [self goToSCMDataSource:sender];
-		case fb::favorites:        return [self goToFavorites:sender];
-		case fb::home:             return [self goToHome:sender];
-		case fb::computer:         return [self goToComputer:sender];
-		case fb::title:            return [self showFolderPopUpMenu:sender];
-		case fb::options:          return [self showOptionsPopUpMenu:sender];
-	}
-}
-
-- (IBAction)takeHistoryIndexFrom:(id)sender
-{
-	ASSERT([sender respondsToSelector:@selector(tag)]);
-	[self setURL:[historyController urlAtIndex:[sender tag]]];
-	historyController.historyIndex = [sender tag];
-	[outlineViewDelegate scrollToOffset:historyController.currentURLScrollOffset];
-	[self updateView];
-}
-
-- (void)showHistoryItems:(NSArray*)urls fromHeaderColumn:(fb::header_column)columnTag
-{
-	// TODO DisplayName paths
-	NSMutableSet* seenPaths = [NSMutableSet set];
-	NSMenu* menu = [[NSMenu new] autorelease];
-	for(NSURL* aURL in urls)
-	{
-		if([seenPaths containsObject:[aURL path]])
-			continue;
-		if([aURL isFileURL])
-			[seenPaths addObject:[aURL path]];
-
-		NSMenuItem* menuItem = [menu addItemWithTitle:DisplayName(aURL) action:@selector(takeHistoryIndexFrom:) keyEquivalent:@""];
-		[menuItem setTag:[[aURL fragment] intValue]];
-		[menuItem setTarget:self];
-		[menuItem setImage:IconImage(aURL)];
-	}
-	[view displayMenu:menu fromHeaderColumn:columnTag selectedIndex:0 popup:NO];
-}
-
-- (IBAction)showBackMenu:(id)sender
-{
-	NSMutableArray* urls = [NSMutableArray array];
-	for(NSInteger historyIndex = historyController.historyIndex - 1; historyIndex >= 0 && historyController.historyIndex - historyIndex <= 10; --historyIndex)
-		[urls addObject:[NSURL URLWithString:[[[historyController urlAtIndex:historyIndex] absoluteString] stringByAppendingFormat:@"#%ld", historyIndex]]];
-	[self showHistoryItems:urls fromHeaderColumn:fb::goBack];
-}
-
-- (IBAction)showForwardMenu:(id)sender
-{
-	NSMutableArray* urls = [NSMutableArray array];
-	for(NSInteger historyIndex = historyController.historyIndex + 1; historyIndex < historyController.historyCount && historyIndex - historyController.historyIndex <= 10; ++historyIndex)
-		[urls addObject:[NSURL URLWithString:[[[historyController urlAtIndex:historyIndex] absoluteString] stringByAppendingFormat:@"#%ld", historyIndex]]];
-	[self showHistoryItems:urls fromHeaderColumn:fb::goForward];
-}
-
-- (void)showFolderContents:(NSURL*)aURL inMenuFromCell:(fb::header_column)column
-{
-	std::multimap<std::string, NSURL*, text::less_t> urls;
-	if([[aURL scheme] isEqualToString:[kURLLocationComputer scheme]])
-	{
-		citerate(volume, path::volumes())
-			urls.insert(std::make_pair(path::display_name(*volume), [NSURL fileURLWithPath:[NSString stringWithCxxString:*volume] isDirectory:YES]));
-	}
-	else if([aURL isFileURL])
-	{
-		std::string const dir = [[aURL path] fileSystemRepresentation];
-		citerate(entry, path::entries(dir, "*"))
+		if(phase == NSEventPhaseEnded)
 		{
-			std::string const& path = path::join(dir, (*entry)->d_name);
-			uint32_t flags = path::info(path);
-			std::string const& resolved = (flags & path::flag::symlink) ? path::resolve(path) : path;
-			if((flags & path::flag::directory) || ((flags & path::flag::symlink) && (path::info(resolved) & path::flag::directory)))
-				urls.insert(std::make_pair(path::display_name(path), [NSURL fileURLWithPath:[NSString stringWithCxxString:resolved] isDirectory:YES]));
+			if(gestureAmount > 0 && self.canGoBack)
+				[self goBack:self];
+			else if(gestureAmount < 0 && self.canGoForward)
+				[self goForward:self];
 		}
-	}
 
-	NSMenu* menu = [[NSMenu new] autorelease];
-	iterate(pair, urls)
-	{
-		NSMenuItem* menuItem = [menu addItemWithTitle:[NSString stringWithCxxString:pair->first] action:@selector(takeURLFrom:) keyEquivalent:@""];
-		[menuItem setTarget:self];
-		[menuItem setRepresentedObject:pair->second];
-		[menuItem setImage:IconImage(pair->second)];
-	}
-	[view displayMenu:menu fromHeaderColumn:column selectedIndex:0 popup:NO];
-}
-
-- (IBAction)didTriggerMenuForHeaderColumn:(id)sender
-{
-	switch([sender tag])
-	{
-		case fb::goBack:      return [self showBackMenu:sender];
-		case fb::goForward:   return [self showForwardMenu:sender];
-		case fb::favorites:   return [self showFolderContents:kURLLocationFavorites inMenuFromCell:fb::header_column([sender tag])];
-		case fb::home:        return [self showFolderContents:kURLLocationHome      inMenuFromCell:fb::header_column([sender tag])];
-		case fb::computer:    return [self showFolderContents:kURLLocationComputer  inMenuFromCell:fb::header_column([sender tag])];
-	}
+		if(isComplete)
+		{
+			// Tear down animation overlay here
+		}
+	}];
 }
 
 // ===================
@@ -1022,18 +1197,59 @@ static struct data_source_options_map_t { NSString* const name; NSUInteger flag;
 
 - (BOOL)validateMenuItem:(NSMenuItem*)item
 {
+	BOOL res = YES;
+	static std::set<SEL> const requireSelection{ @selector(didDoubleClickOutlineView:), @selector(editSelectedEntries:), @selector(duplicateSelectedEntries:), @selector(cut:), @selector(copy:), @selector(delete:) };
+
+	NSUInteger selectedFiles = 0;
+	for(FSItem* item in self.selectedItems)
+		selectedFiles += [item.url isFileURL] && path::exists([[item.url path] fileSystemRepresentation]) ? 1 : 0;
+
 	if([item action] == @selector(goToParentFolder:))
-			return ParentForURL(url) != nil;
+		res = ParentForURL(_url) != nil;
 	else if([item action] == @selector(goBack:))
-			return historyController.previousURL ? YES : NO;
+		res = self.canGoBack;
 	else if([item action] == @selector(goForward:))
-			return historyController.nextURL ? YES : NO;
-	else if([item action] == @selector(delete:))
-			return [view.outlineView numberOfSelectedRows] > 0;
-	else if([item action] == @selector(undo:))
-			return [self canUndo];
-	else if([item action] == @selector(redo:))
-			return [self canRedo];
-	else	return YES;
+		res = self.canGoForward;
+	else if([item action] == @selector(newFolder:))
+		res = [self directoryForNewItems] != nil;
+	else if(selectedFiles == 0 && requireSelection.find([item action]) != requireSelection.end())
+		res = NO;
+	else if([item action] == @selector(paste:))
+		res = self.canPaste;
+	else if([item action] == @selector(editSelectedEntries:))
+		res = selectedFiles == 1;
+	else if([item action] == @selector(toggleShowInvisibles:))
+		[item setState:self.showExcludedItems ? NSOnState : NSOffState];
+
+	NSString* quickLookTitle = [QLPreviewPanel sharedPreviewPanelExists] && [[QLPreviewPanel sharedPreviewPanel] isVisible] ? @"Close Quick Look" : @"Quick Look%@";
+
+	struct { NSString* format; SEL action; } const menuTitles[] =
+	{
+		{ @"Cut%@",              @selector(cut:)                           },
+		{ @"Copy%@",             @selector(copy:)                          },
+		{ quickLookTitle,        @selector(toggleQuickLookPreview:)        },
+		{ @"Show%@ in Finder",   @selector(showSelectedEntriesInFinder:)   },
+		{ @"Add%@ to Favorites", @selector(addSelectedEntriesToFavorites:) },
+	};
+
+	for(auto info : menuTitles)
+	{
+		if(info.action == [item action])
+		{
+			NSString* items = @"";
+			if(res)
+			{
+				switch(selectedFiles)
+				{
+					case 0:  items = [NSString stringWithFormat:@" “%@”", DisplayName(_url)]; break;
+					case 1:  items = [NSString stringWithFormat:@" “%@”", ((FSItem*)[self.selectedItems lastObject]).name]; break;
+					default: items = [NSString stringWithFormat:@" %ld Items", selectedFiles]; break;
+				}
+			}
+			[item setTitle:[NSString stringWithFormat:info.format, items]];
+		}
+	}
+
+	return res;
 }
 @end

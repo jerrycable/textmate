@@ -2,21 +2,22 @@
 #import "PropertiesViewController.h"
 #import "OakRot13Transformer.h"
 #import "be_entry.h"
-#import <OakFoundation/OakFoundation.h>
 #import <OakFoundation/NSString Additions.h>
 #import <OakFoundation/OakStringListTransformer.h>
 #import <OakAppKit/NSAlert Additions.h>
 #import <OakAppKit/NSImage Additions.h>
+#import <OakAppKit/OakAppKit.h>
 #import <OakAppKit/OakSound.h>
 #import <OakAppKit/OakFileIconImage.h>
 #import <OakTextView/OakDocumentView.h>
+#import <BundlesManager/BundlesManager.h>
+#import <command/runner.h> // fix_shebang
 #import <plist/ascii.h>
 #import <plist/delta.h>
 #import <text/decode.h>
 #import <cf/cf.h>
 #import <ns/ns.h>
 #import <oak/debug.h>
-#import <oak/CocoaSTL.h>
 
 OAK_DEBUG_VAR(BundleEditor);
 
@@ -40,6 +41,12 @@ namespace
 {
 	static bundles::kind_t const PlistItemKinds[] = { bundles::kItemTypeSettings, bundles::kItemTypeMacro, bundles::kItemTypeTheme };
 
+	static std::vector<std::string> const& PlistKeySortOrder ()
+	{
+		static auto const res = new std::vector<std::string>{ "shellVariables", "disabled", "name", "value", "comment", "match", "begin", "while", "end", "applyEndPatternLast", "captures", "beginCaptures", "whileCaptures", "endCaptures", "contentName", "injections", "patterns", "repository", "include", "increaseIndentPattern", "decreaseIndentPattern", "indentNextLinePattern", "unIndentedLinePattern", "disableIndentCorrections", "indentOnPaste", "indentedSoftWrap", "format", "foldingStartMarker", "foldingStopMarker", "foldingIndentedBlockStart", "foldingIndentedBlockIgnore", "characterClass", "smartTypingPairs", "highlightPairs", "showInSymbolList", "symbolTransformation", "disableDefaultCompletion", "completions", "completionCommand", "spellChecking", "softWrap", "fontName", "fontStyle", "fontSize", "foreground", "background", "bold", "caret", "invisibles", "italic", "misspelled", "selection", "underline" };
+		return *res;
+	}
+
 	static struct item_info_t { bundles::kind_t kind; std::string plist_key; std::string grammar; std::string file_type; std::string kind_string; NSString* view_controller; NSString* file; } item_infos[] =
 	{
 		{ bundles::kItemTypeBundle,       "description", "text.html.basic",                "tmBundle",       "bundle",         @"BundleProperties",     @"Bundle"       },
@@ -49,8 +56,8 @@ namespace
 		{ bundles::kItemTypeSettings,     "settings",    "source.plist.textmate.settings", "tmPreferences",  "settings",       nil,                     @"Settings"     },
 		{ bundles::kItemTypeGrammar,      NULL_STR,      "source.plist.textmate.grammar",  "tmLanguage",     "grammar",        @"GrammarProperties",    @"Grammar"      },
 		{ bundles::kItemTypeProxy,        "content",     "text.plain",                     "tmProxy",        "proxy",          nil,                     @"Proxy"        },
-		{ bundles::kItemTypeTheme,        "settings",    "meta.plist",                     "tmTheme",        "theme",          @"ThemeProperties",      @"Theme"        },
-		{ bundles::kItemTypeMacro,        "commands",    "meta.plist",                     "tmMacro",        "macro",          @"MacroProperties",      @"Macro"        },
+		{ bundles::kItemTypeTheme,        NULL_STR,      "source.plist",                   "tmTheme",        "theme",          @"ThemeProperties",      @"Theme"        },
+		{ bundles::kItemTypeMacro,        "commands",    "source.plist",                   "tmMacro",        "macro",          @"MacroProperties",      @"Macro"        },
 	};
 
 	item_info_t const& info_for (bundles::kind_t kind)
@@ -77,8 +84,8 @@ static NSMutableArray* wrap_array (std::vector<std::string> const& array, NSStri
 static plist::array_t unwrap_array (NSArray* array, NSString* key)
 {
 	plist::array_t res;
-	iterate(dict, array)
-		res.push_back(to_s((NSString*)[*dict objectForKey:key]));
+	for(NSDictionary* dict in array)
+		res.push_back(to_s((NSString*)[dict objectForKey:key]));
 	return res;
 }
 
@@ -119,16 +126,15 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 
 + (BundleEditor*)sharedInstance
 {
-	return SharedInstance ?: [[self new] autorelease];
+	return SharedInstance ?: [self new];
 }
 
 - (id)init
 {
 	if(SharedInstance)
 	{
-		[self release];
 	}
-	else if(self = SharedInstance = [[super initWithWindowNibName:@"BundleEditor"] retain])
+	else if(self = SharedInstance = [super initWithWindowNibName:@"BundleEditor"])
 	{
 		D(DBF_BundleEditor, bug("\n"););
 
@@ -171,12 +177,6 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 	if(bundleItemContent)
 		bundleItemContent->remove_callback(documentCallback);
 	delete documentCallback;
-
-	[sharedPropertiesViewController release];
-	[extraPropertiesViewController release];
-	self.bundleItemProperties = nil;
-	[drawer release];
-	[super dealloc];
 }
 
 - (void)windowDidLoad
@@ -202,8 +202,7 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 
 	[browser setDelegate:self];
 	[browser loadColumnZero];
-	if([browser respondsToSelector:@selector(setAutohidesScroller:)])
-		[browser setAutohidesScroller:YES];
+	[browser setAutohidesScroller:YES];
 
 	[[self window] makeFirstResponder:browser];
 }
@@ -258,7 +257,7 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 	bundles::item_ptr bundle = row != -1 ? bundles->children()[row]->represented_item() : bundles::item_ptr();
 	if(aType == bundles::kItemTypeBundle || bundle)
 	{
-		std::map<std::string, std::string> environment = variables_for_path();
+		std::map<std::string, std::string> environment = variables_for_path(oak::basic_environment());
 		ABMutableMultiValue* value = [[[ABAddressBook sharedAddressBook] me] valueForProperty:kABEmailProperty];
 		if(NSString* email = [value valueAtIndex:[value indexForIdentifier:[value primaryIdentifier]]])
 			environment.insert(std::make_pair("TM_ROT13_EMAIL", decode::rot13(to_s(email))));
@@ -278,18 +277,11 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 	}
 }
 
-- (void)createItemSheetDidEnd:(NSAlert*)alert returnCode:(NSInteger)returnCode contextInfo:(void*)info
-{
-	if(returnCode == NSAlertDefaultReturn)
-		[self createItemOfType:(bundles::kind_t)[[(NSPopUpButton*)[alert accessoryView] selectedItem] tag]];
-	[alert release];
-}
-
 - (void)newDocument:(id)sender
 {
 	// kItemTypeMacro, kItemTypeMenu, kItemTypeMenuItemSeparator
 
-	NSMenu* menu = [[[NSMenu alloc] initWithTitle:@"Item Types"] autorelease];
+	NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Item Types"];
 	iterate(it, item_infos)
 	{
 		static int const types = bundles::kItemTypeBundle|bundles::kItemTypeCommand|bundles::kItemTypeDragCommand|bundles::kItemTypeSnippet|bundles::kItemTypeSettings|bundles::kItemTypeGrammar|bundles::kItemTypeProxy|bundles::kItemTypeTheme;
@@ -297,12 +289,15 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 			[[menu addItemWithTitle:it->file action:NULL keyEquivalent:@""] setTag:it->kind];
 	}
 
-	NSAlert* alert = [[NSAlert alertWithMessageText:@"Create New Item" defaultButton:@"Create" alternateButton:@"Cancel" otherButton:nil informativeTextWithFormat:@"Please choose what you want to create:"] retain];
-	NSPopUpButton* typeChooser = [[[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO] autorelease];
+	NSAlert* alert = [NSAlert alertWithMessageText:@"Create New Item" defaultButton:@"Create" alternateButton:@"Cancel" otherButton:nil informativeTextWithFormat:@"Please choose what you want to create:"];
+	NSPopUpButton* typeChooser = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
 	[typeChooser setMenu:menu];
 	[typeChooser sizeToFit];
 	[alert setAccessoryView:typeChooser];
-	[alert beginSheetModalForWindow:[self window] modalDelegate:self didEndSelector:@selector(createItemSheetDidEnd:returnCode:contextInfo:) contextInfo:NULL];
+	OakShowAlertForWindow(alert, self.window, ^(NSInteger returnCode){
+		if(returnCode == NSAlertDefaultReturn)
+			[self createItemOfType:(bundles::kind_t)[[(NSPopUpButton*)[alert accessoryView] selectedItem] tag]];
+	});
 	[[alert window] recalculateKeyViewLoop];
 	[[alert window] makeFirstResponder:typeChooser];
 }
@@ -336,6 +331,14 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 		changes.erase(trashedItem);
 		bundles::remove_item(trashedItem);
 		[self didChangeModifiedState];
+
+		if(!trashedItem->paths().empty())
+		{
+			std::string itemFolder = path::parent(trashedItem->paths().front());
+			if(trashedItem->kind() == bundles::kItemTypeBundle && trashedItem->paths().size() == 1)
+				itemFolder = path::parent(itemFolder);
+			[[BundlesManager sharedInstance] reloadPath:[NSString stringWithCxxString:itemFolder]];
+		}
 	}
 }
 
@@ -343,6 +346,12 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 {
 	[self showWindow:self];
 	[self setBundleItem:anItem];
+
+	if(anItem->paths().empty())
+	{
+		changes.insert(std::make_pair(anItem, anItem->plist()));
+		[self didChangeModifiedState];
+	}
 
 	std::vector<be::entry_ptr> const& allBundles = bundles->children();
 	iterate(bundle, allBundles)
@@ -373,7 +382,7 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 
 - (BOOL)commitEditing
 {
-	if(!bundleItem)
+	if(!bundleItem || !bundleItemContent)
 		return YES;
 
 	[sharedPropertiesViewController commitEditing];
@@ -382,28 +391,46 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 	if(!propertiesChanged && !bundleItemContent->is_modified())
 		return YES;
 
-	plist::dictionary_t plist = plist::convert((CFPropertyListRef)bundleItemProperties);
+	plist::dictionary_t plist = plist::convert((__bridge CFPropertyListRef)bundleItemProperties);
 
-	std::string const& content = bundleItemContent->buffer().substr(0, bundleItemContent->buffer().size());
+	std::string const& content = bundleItemContent->content();
 	item_info_t const& info = info_for(bundleItem->kind());
+
+	plist::any_t parsedContent;
+	if(info.plist_key == NULL_STR || oak::contains(std::begin(PlistItemKinds), std::end(PlistItemKinds), info.kind))
+	{
+		bool success = false;
+		parsedContent = plist::parse_ascii(content, &success);
+		if(!success)
+		{
+			NSAlert* alert = [NSAlert alertWithMessageText:@"Error Parsing Property List" defaultButton:@"OK" alternateButton:nil otherButton:nil informativeTextWithFormat:@"The property list is not valid.\n\nUnfortunately I am presently unable to point to where the parser failed."];
+			OakShowAlertForWindow(alert, self.window, ^(NSInteger returnCode){ });
+			return NO;
+		}
+	}
+
 	if(info.plist_key == NULL_STR)
 	{
-		plist::any_t any = plist::parse_ascii(content);
-		if(plist::dictionary_t const* grammarPlist = boost::get<plist::dictionary_t>(&any))
+		if(plist::dictionary_t const* plistSubset = boost::get<plist::dictionary_t>(&parsedContent))
 		{
-			static std::string const keys[] = { "comment", "patterns", "repository", "injections" };
+			std::vector<std::string> keys;
+			if(info.kind == bundles::kItemTypeGrammar)
+				keys = { "comment", "patterns", "repository", "injections" };
+			else if(info.kind == bundles::kItemTypeTheme)
+				keys = { "gutterSettings", "settings", "colorSpaceName" };
+
 			iterate(key, keys)
 			{
-				if(grammarPlist->find(*key) != grammarPlist->end())
-						plist[*key] = grammarPlist->find(*key)->second;
+				if(plistSubset->find(*key) != plistSubset->end())
+						plist[*key] = plistSubset->find(*key)->second;
 				else	plist.erase(*key);
 			}
 		}
 	}
 	else
 	{
-		if(oak::contains(beginof(PlistItemKinds), endof(PlistItemKinds), info.kind))
-				plist[info.plist_key] = plist::parse_ascii(content);
+		if(oak::contains(std::begin(PlistItemKinds), std::end(PlistItemKinds), info.kind))
+				plist[info.plist_key] = parsedContent;
 		else	plist[info.plist_key] = content;
 	}
 
@@ -432,12 +459,35 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 - (void)saveDocument:(id)sender
 {
 	[self commitEditing];
+	std::map<bundles::item_ptr, plist::dictionary_t> failedToSave;
 	iterate(pair, changes)
 	{
-		pair->first->set_plist(pair->second);
-		pair->first->save();
+		auto item = pair->first;
+
+		item->set_plist(pair->second);
+		if(item->save())
+		{
+			[[BundlesManager sharedInstance] reloadPath:[NSString stringWithCxxString:item->paths().front()]];
+		}
+		else
+		{
+			failedToSave.insert(*pair);
+		}
 	}
-	changes.clear();
+	changes.swap(failedToSave);
+
+	if(!changes.empty())
+	{
+		NSAlert* alert = [NSAlert alertWithMessageText:@"Error Saving Bundle Item" defaultButton:@"OK" alternateButton:nil otherButton:nil informativeTextWithFormat:@"Sorry, but something went wrong while trying to save your changes. More info may be available via the console."];
+		OakShowAlertForWindow(alert, self.window, ^(NSInteger returnCode){
+			if(returnCode == NSAlertSecondButtonReturn) // Discard Changes
+			{
+				changes.clear();
+				[self didChangeModifiedState];
+			}
+		});
+	}
+
 	[self didChangeModifiedState];
 }
 
@@ -455,10 +505,21 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 {
 	if(NSBrowserCell* cell = [aCell isKindOfClass:[NSBrowserCell class]] ? aCell : nil)
 	{
+		static NSMutableParagraphStyle* paragraphStyle = nil;
+		if(!paragraphStyle)
+		{
+			paragraphStyle = [[NSMutableParagraphStyle alloc] init];
+			[paragraphStyle setLineBreakMode:NSLineBreakByTruncatingTail];
+		}
+
 		be::entry_ptr entry = parent_for_column(aBrowser, aColumn, bundles)->children()[aRow];
-		[cell setStringValue:[NSString stringWithCxxString:entry->name()]];
+
+		NSDictionary* attrs = @{
+			NSForegroundColorAttributeName : entry->disabled() ? [NSColor grayColor] : [NSColor blackColor],
+			NSParagraphStyleAttributeName  : paragraphStyle
+		};
+		[cell setAttributedStringValue:[[NSAttributedString alloc] initWithString:[NSString stringWithCxxString:entry->name()] attributes:attrs]];
 		[cell setLeaf:!entry->has_children()];
-		[cell setEnabled:!entry->disabled()];
 		[cell setLoaded:YES];
 
 		if(bundles::item_ptr item = entry->represented_item())
@@ -507,14 +568,13 @@ static be::entry_ptr parent_for_column (NSBrowser* aBrowser, NSInteger aColumn, 
 	static std::string const BindingKeys[] = { bundles::kFieldIsDisabled, bundles::kFieldName, bundles::kFieldKeyEquivalent, bundles::kFieldTabTrigger, bundles::kFieldScopeSelector, bundles::kFieldSemanticClass, bundles::kFieldContentMatch, bundles::kFieldHideFromUser, bundles::kFieldDropExtension, bundles::kFieldGrammarExtension, bundles::kFieldGrammarFirstLineMatch, bundles::kFieldGrammarScope, bundles::kFieldGrammarInjectionSelector, "beforeRunningCommand", "input", "inputFormat", "outputLocation", "outputFormat", "outputCaret", "autoScrollOutput", "contactName", "contactEmailRot13", "description", "disableAutoIndent", "useGlobalClipboard", "author", "comment" };
 
 	NSMutableDictionary* oldProperties = bundleItemProperties;
-	bundleItemProperties = [someProperties retain];
+	bundleItemProperties = someProperties;
 	iterate(str, BindingKeys)
 	{
 		NSString* key = [NSString stringWithCxxString:*str];
 		[oldProperties removeObserver:self forKeyPath:key];
 		[someProperties addObserver:self forKeyPath:key options:0 context:NULL];
 	}
-	[oldProperties release];
 	propertiesChanged = NO;
 }
 
@@ -541,7 +601,7 @@ static NSMutableDictionary* DictionaryForBundleItem (bundles::item_ptr const& aB
 			[res removeObjectForKey:@"dontFollowNewOutput"];
 			[res setObject:@2 forKey:@"version"];
 			if(cmd.auto_scroll_output)
-				[res setObject:YES_obj forKey:@"autoScrollOutput"];
+				[res setObject:@YES forKey:@"autoScrollOutput"];
 			for(size_t i = 0; i != sizeofA(popups); ++i)
 				[res setObject:[popups[i].array objectAtIndex:popups[i].index] forKey:popups[i].key];
 		}
@@ -611,19 +671,24 @@ static NSMutableDictionary* DictionaryForPropertyList (plist::dictionary_t const
 	plist::dictionary_t const& plist = it != changes.end() ? it->second : bundleItem->plist();
 	if(info.plist_key == NULL_STR)
 	{
-		plist::dictionary_t grammarPlist;
-		static std::string const keys[] = { "comment", "patterns", "repository", "injections" };
+		std::vector<std::string> keys;
+		if(info.kind == bundles::kItemTypeGrammar)
+			keys = { "comment", "patterns", "repository", "injections" };
+		else if(info.kind == bundles::kItemTypeTheme)
+			keys = { "gutterSettings", "settings", "colorSpaceName" };
+
+		plist::dictionary_t plistSubset;
 		iterate(key, keys)
 		{
 			if(plist.find(*key) != plist.end())
-				grammarPlist[*key] = plist.find(*key)->second;
+				plistSubset[*key] = plist.find(*key)->second;
 		}
-		bundleItemContent = document::from_content(to_s(grammarPlist, plist::kPreferSingleQuotedStrings), info.grammar);
+		bundleItemContent = document::from_content(to_s(plistSubset, plist::kPreferSingleQuotedStrings, PlistKeySortOrder()), info.grammar);
 	}
-	else if(oak::contains(beginof(PlistItemKinds), endof(PlistItemKinds), info.kind))
+	else if(oak::contains(std::begin(PlistItemKinds), std::end(PlistItemKinds), info.kind))
 	{
 		if(plist.find(info.plist_key) != plist.end())
-			bundleItemContent = document::from_content(to_s(plist.find(info.plist_key)->second, plist::kPreferSingleQuotedStrings), info.grammar);
+			bundleItemContent = document::from_content(to_s(plist.find(info.plist_key)->second, plist::kPreferSingleQuotedStrings, PlistKeySortOrder()), info.grammar);
 	}
 	else
 	{
@@ -637,10 +702,11 @@ static NSMutableDictionary* DictionaryForPropertyList (plist::dictionary_t const
 	}
 
 	bundleItemContent = bundleItemContent ?: document::from_content("");
+	bundleItemContent->set_custom_name("«bundle item»");
 	bundleItemContent->add_callback(documentCallback);
 	[documentView setDocument:bundleItemContent];
 
-	self.sharedPropertiesViewController = [[[PropertiesViewController alloc] initWithName:@"SharedProperties"] autorelease];
+	self.sharedPropertiesViewController = [[PropertiesViewController alloc] initWithName:@"SharedProperties"];
 	self.extraPropertiesViewController  = nil;
 	[sharedPropertiesViewController setProperties:bundleItemProperties];
 
@@ -650,7 +716,7 @@ static NSMutableDictionary* DictionaryForPropertyList (plist::dictionary_t const
 	NSView* sharedView = [sharedPropertiesViewController view];
 	if(info.view_controller)
 	{
-		self.extraPropertiesViewController = [[[PropertiesViewController alloc] initWithName:info.view_controller] autorelease];
+		self.extraPropertiesViewController = [[PropertiesViewController alloc] initWithName:info.view_controller];
 		[extraPropertiesViewController setProperties:bundleItemProperties];
 		NSView* extraView = [extraPropertiesViewController view];
 
@@ -659,7 +725,7 @@ static NSMutableDictionary* DictionaryForPropertyList (plist::dictionary_t const
 				[sharedView setFrame:NSOffsetRect(sharedView.frame, delta, 0)];
 		else	[extraView setFrame:NSOffsetRect(extraView.frame, -delta, 0)];
 
-		NSView* contentView = [[[NSView alloc] initWithFrame:NSMakeRect(0, 0, std::max(NSMaxX(sharedView.frame) + 1, NSMaxX(extraView.frame) + 1), NSHeight(sharedView.frame) + NSHeight(extraView.frame))] autorelease];
+		NSView* contentView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, std::max(NSMaxX(sharedView.frame) + 1, NSMaxX(extraView.frame) + 1), NSHeight(sharedView.frame) + NSHeight(extraView.frame))];
 		[sharedView setAutoresizingMask:NSViewMinXMargin|NSViewMinYMargin];
 		[extraView setAutoresizingMask:NSViewMinXMargin|NSViewMinYMargin];
 
@@ -667,7 +733,7 @@ static NSMutableDictionary* DictionaryForPropertyList (plist::dictionary_t const
 		[contentView addSubview:sharedView];
 		[contentView addSubview:extraView];
 
-		[drawer setContentView:[[[NSView alloc] initWithFrame:NSZeroRect] autorelease]];
+		[drawer setContentView:[[NSView alloc] initWithFrame:NSZeroRect]];
 		[drawer setContentSize:contentView.frame.size];
 		[drawer setContentView:contentView];
 		[drawer open:self];
@@ -680,19 +746,6 @@ static NSMutableDictionary* DictionaryForPropertyList (plist::dictionary_t const
 		[drawer open:self];
 	}
 	[[[drawer contentView] window] recalculateKeyViewLoop];
-}
-
-- (void)closeWarningDidEnd:(NSAlert*)alert returnCode:(NSInteger)returnCode contextInfo:(void*)info
-{
-	if(returnCode != NSAlertSecondButtonReturn) // Not "Cancel"
-	{
-		if(returnCode == NSAlertFirstButtonReturn) // "Save"
-			[self saveDocument:self];
-		else if(returnCode == NSAlertThirdButtonReturn) // "Don’t Save"
-			changes.clear();
-		[self close];
-	}
-	[alert release];
 }
 
 static NSString* DescriptionForChanges (std::map<bundles::item_ptr, plist::dictionary_t> const& changes)
@@ -725,9 +778,18 @@ static NSString* DescriptionForChanges (std::map<bundles::item_ptr, plist::dicti
 	NSAlert* alert = [[NSAlert alloc] init];
 	[alert setAlertStyle:NSWarningAlertStyle];
 	[alert setMessageText:DescriptionForChanges(changes)];
-	[alert setInformativeText:@"Your changes will be lost if you don't save them."];
+	[alert setInformativeText:@"Your changes will be lost if you don’t save them."];
 	[alert addButtons:@"Save", @"Cancel", @"Don’t Save", nil];
-	[alert beginSheetModalForWindow:self.window modalDelegate:self didEndSelector:@selector(closeWarningDidEnd:returnCode:contextInfo:) contextInfo:NULL];
+	OakShowAlertForWindow(alert, self.window, ^(NSInteger returnCode){
+		if(returnCode != NSAlertSecondButtonReturn) // Not "Cancel"
+		{
+			if(returnCode == NSAlertFirstButtonReturn) // "Save"
+				[self saveDocument:self];
+			else if(returnCode == NSAlertThirdButtonReturn) // "Don’t Save"
+				changes.clear();
+			[self close];
+		}
+	});
 	return NO;
 }
 @end

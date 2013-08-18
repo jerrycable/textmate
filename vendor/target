@@ -1,2 +1,2 @@
-BUILD   = lib
-TARGETS = */target
+BUILD       = lib
+TARGETS     = */target

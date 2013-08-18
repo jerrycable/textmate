@@ -1,16 +1,18 @@
 #import <oak/debug.h>
 
-@protocol OFBOutlineViewMenuDelegate;
+@protocol OFBOutlineViewMenuDelegate
+- (NSMenu*)menuForOutlineView:(NSOutlineView*)anOutlineView;
+@end
 
 @interface OFBOutlineView : NSOutlineView
 {
 	OBJC_WATCH_LEAKS(OFBOutlineView);
 
-	id <OFBOutlineViewMenuDelegate> menuDelegate;
 	BOOL fieldEditorWasUp;
 	NSRect mouseHoverRect;
 	NSIndexSet* draggedRows;
 }
-@property (nonatomic, assign) id <OFBOutlineViewMenuDelegate> menuDelegate;
+@property (nonatomic, weak) id <OFBOutlineViewMenuDelegate> menuDelegate;
+@property (nonatomic) BOOL renderAsSourceList;
 - (void)performEditSelectedRow:(id)sender;
 @end

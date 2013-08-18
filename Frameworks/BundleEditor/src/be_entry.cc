@@ -7,6 +7,12 @@ namespace be
 {
 	std::vector<entry_ptr> entry_t::kNoChildren(1, entry_ptr());
 
+	std::vector<entry_ptr> const& entry_t::children () const
+	{
+		static std::vector<entry_ptr> const EmptyVector;
+		return setup_children() ? *_children : EmptyVector;
+	}
+
 	struct file_entry_t : entry_t
 	{
 		file_entry_t (std::string const& name, std::string const& path) : entry_t(name, path) { }
@@ -23,6 +29,10 @@ namespace be
 
 		std::vector<entry_ptr> entries () const
 		{
+			std::vector<entry_ptr> res;
+			if(_path == NULL_STR)
+				return res;
+
 			std::multimap<std::string, entry_ptr, text::less_t> directories, files;
 			citerate(entry, path::entries(_path))
 			{
@@ -34,7 +44,6 @@ namespace be
 					files.insert(std::make_pair(displayName, entry_ptr(new file_entry_t(displayName, path))));
 			}
 
-			std::vector<entry_ptr> res;
 			std::transform(directories.begin(), directories.end(), back_inserter(res), [](std::pair<std::string, entry_ptr> const& p){ return p.second; });
 			std::transform(files.begin(), files.end(), back_inserter(res), [](std::pair<std::string, entry_ptr> const& p){ return p.second; });
 			return res;
@@ -105,7 +114,6 @@ namespace be
 
 	private:
 		bundles::item_ptr _bundle;
-		bundles::kind_t _kind;
 	};
 
 	struct bundle_entry_t : entry_t

@@ -1,42 +1,14 @@
 #import "HOJSBridge.h"
-#import <OakFoundation/OakFoundation.h>
 #import <OakFoundation/NSString Additions.h>
 #import <oak/debug.h>
-#import <OakSystem/process.h>
-#import <OakSystem/reader.h>
-#import <cf/run_loop.h>
 #import <OakFoundation/NSArray Additions.h>
 #import <document/collection.h>
 #import <text/utf8.h>
 #import <ns/ns.h>
-#import <command/runner.h>
+#import <cf/run_loop.h>
 
 @interface HOJSShellCommand : NSObject
-{
-	OBJC_WATCH_LEAKS(HOJSShellCommand);
-
-	std::string command;
-	std::map<std::string, std::string> environment;
-
-	std::vector<char> outputData, errorData;
-	int status;
-
-	id outputHandler, errorHandler, exitHandler;
-
-	oak::process_t* process;
-	bool didCloseInput;
-	io::reader_t* outputReader;
-	io::reader_t* errorReader;
-
-	cf::run_loop_t runLoop;
-	size_t completeCounter;
-
-	// unused dummy keys to get them exposed to javascript
-	NSString* outputString;
-	NSString* errorString;
-	id onreadoutput, onreaderror;
-}
-+ (HOJSShellCommand*)runShellCommand:(NSString*)aCommand withEnvironment:(const std::map<std::string, std::string>&)someEnvironment andExitHandler:(id)aHandler;
+- (id)initShellCommand:(NSString*)aCommand withEnvironment:(const std::map<std::string, std::string>&)someEnvironment andExitHandler:(id)aHandler;
 @end
 
 /*
@@ -57,6 +29,14 @@
 OAK_DEBUG_VAR(HTMLOutput_JSBridge);
 
 @implementation HOJSBridge
+{
+	std::map<std::string, std::string> environment;
+
+	// unused dummy keys to get them exposed to javascript
+	BOOL isBusy;
+	float progress;
+}
+
 - (std::map<std::string, std::string> const&)environment;
 {
 	return environment;
@@ -95,22 +75,17 @@ OAK_DEBUG_VAR(HTMLOutput_JSBridge);
 
 - (void)setIsBusy:(BOOL)flag
 {
-	[delegate setIsBusy:flag];
+	[_delegate setIsBusy:flag];
 }
 
 - (void)setProgress:(id)newProgress;
 {
-	[delegate setProgress:[newProgress floatValue]];
+	[(id <HOJSBridgeDelegate>)_delegate setProgress:[newProgress floatValue]];
 }
 
 - (double)progress
 {
-	return [delegate progress];
-}
-
-- (void)setDelegate:(id)aDelegate
-{
-	delegate = aDelegate;
+	return [_delegate progress];
 }
 
 - (void)log:(NSString*)aMessage
@@ -125,12 +100,12 @@ OAK_DEBUG_VAR(HTMLOutput_JSBridge);
 		range = text::pos_t([options intValue]-1, 0);
 	else if([options isKindOfClass:[NSString class]])
 		range = to_s((NSString*)options);
-	document::show(document::create(to_s(path)), document::kCollectionCurrent, range);
+	document::show(document::create(to_s(path)), document::kCollectionAny, range);
 }
 
 - (id)system:(NSString*)aCommand handler:(id)aHandler
 {
-	return [HOJSShellCommand runShellCommand:aCommand withEnvironment:[self environment] andExitHandler:[aHandler isKindOfClass:[WebUndefined class]] ? nil : aHandler];
+	return [[HOJSShellCommand alloc] initShellCommand:aCommand withEnvironment:[self environment] andExitHandler:[aHandler isKindOfClass:[WebUndefined class]] ? nil : aHandler];
 }
 @end
 
@@ -139,7 +114,7 @@ OAK_DEBUG_VAR(HTMLOutput_JSBridge);
 
 	# Synchronous Operation
 
-	 Example: obj = TextMate.system("/usr/bin/id -un", null);
+	Example: obj = TextMate.system("/usr/bin/id -un", null);
 
 	Result is an object with following properties:
 
@@ -173,186 +148,152 @@ OAK_DEBUG_VAR(HTMLOutput_JSBridge);
 OAK_DEBUG_VAR(HTMLOutput_JSShellCommand);
 
 @interface HOJSShellCommand ()
-- (void)closeInput;
+{
+	OBJC_WATCH_LEAKS(HOJSShellCommand);
 
-@property (nonatomic, retain) id outputHandler;
-@property (nonatomic, retain) id errorHandler;
-@property (nonatomic, retain) id exitHandler;
+	io::process_t process;
+	std::string output, error;
+
+	// unused dummy keys to get them exposed to javascript
+	NSString* outputString;
+	NSString* errorString;
+}
+@property (nonatomic) id exitHandler;
+@property (nonatomic) id onreadoutput;
+@property (nonatomic) id onreaderror;
+@property (nonatomic) int status;
 @end
 
 @implementation HOJSShellCommand
-@synthesize outputHandler, errorHandler, exitHandler;
+// We need @synthesize to avoid the instance variables from being prefixed with an underscore, as they are mapped to JavaScript
+@synthesize onreadoutput, onreaderror, status;
 
-- (id)initWithCommand:(NSString*)aCommand andEnvironment:(const std::map<std::string, std::string>&)someEnvironment
+- (id)initShellCommand:(NSString*)aCommand withEnvironment:(const std::map<std::string, std::string>&)someEnvironment andExitHandler:(id)aHandler
 {
+	D(DBF_HTMLOutput_JSShellCommand, bug("run ‘%s’ with exit handler %s\n", to_s(aCommand).c_str(), BSTR(aHandler)););
 	if(self = [super init])
 	{
-		command     = [aCommand UTF8String];
-		environment = someEnvironment;
+		self.exitHandler = aHandler;
+		if(process = io::spawn(std::vector<std::string>{ "/bin/sh", "-c", to_s(aCommand) }, someEnvironment))
+		{
+			auto runLoop = std::shared_ptr<cf::run_loop_t>(new cf::run_loop_t(kCFRunLoopDefaultMode, 15));
+			auto weakRunLoop = std::weak_ptr<cf::run_loop_t>(runLoop);
+			auto group = dispatch_group_create();
+			auto queue = aHandler ? dispatch_get_main_queue() : dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
 
-		command::fix_shebang(&command);
+			dispatch_group_async(group, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+				std::vector<char> buf(1024);
+				while(ssize_t len = read(process.out, buf.data(), buf.size()))
+				{
+					if(len < 0)
+						break;
+
+					dispatch_sync(queue, ^{
+						if(self.onreadoutput)
+							output.erase(output.begin(), utf8::find_safe_end(output.begin(), output.end()));
+						output.insert(output.end(), buf.begin(), buf.begin() + len);
+						if(self.onreadoutput)
+							[self.onreadoutput callWebScriptMethod:@"call" withArguments:@[ self.onreadoutput, [self outputString] ]];
+					});
+				}
+			});
+
+			dispatch_group_async(group, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+				std::vector<char> buf(1024);
+				while(ssize_t len = read(process.err, buf.data(), buf.size()))
+				{
+					if(len < 0)
+						break;
+
+					dispatch_sync(queue, ^{
+						if(self.onreaderror)
+							error.erase(error.begin(), utf8::find_safe_end(error.begin(), error.end()));
+						error.insert(error.end(), buf.begin(), buf.begin() + len);
+						if(self.onreaderror)
+							[self.onreaderror callWebScriptMethod:@"call" withArguments:@[ self.onreaderror, [self errorString] ]];
+					});
+				}
+			});
+
+			dispatch_group_async(group, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+				int result = 0;
+				if(waitpid(process.pid, &result, 0) != process.pid)
+					perror("waitpid");
+				process.pid = -1;
+				dispatch_sync(queue, ^{
+					self.status = WIFEXITED(result) ? WEXITSTATUS(result) : -1;
+				});
+			});
+
+			dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+				close(process.out);
+				close(process.err);
+				if(self.exitHandler)
+					[self.exitHandler callWebScriptMethod:@"call" withArguments:@[ self.exitHandler, self ]];
+				else if(auto runLoop = weakRunLoop.lock())
+					runLoop->stop();
+			});
+
+			if(!self.exitHandler)
+			{
+				[self closeInput];
+
+				while(runLoop->start() == false) // timeout
+				{
+					NSInteger choice = NSRunAlertPanel(@"JavaScript Warning", @"The command ‘%@’ has been running for 15 seconds. Would you like to stop it?\n\nTo avoid this warning, the bundle command should use the asynchronous version of TextMate.system().", @"Stop Command", @"Cancel", nil, aCommand);
+					if(choice == NSAlertDefaultReturn) // "Stop Command"
+					{
+						runLoop.reset();
+						[self cancelCommand];
+						break;
+					}
+				}
+			}
+
+			dispatch_release(group);
+		}
 	}
 	return self;
 }
 
-- (void)increaseCompleteCounter
-{
-	if(++completeCounter == 3)
-	{
-		if(exitHandler)
-				[exitHandler callWebScriptMethod:@"call" withArguments:@[ exitHandler, self ]];
-		else	runLoop.stop();
-	}
-}
-
-- (void)outputDataReceived:(char const*)bytes length:(size_t)len
-{
-	D(DBF_HTMLOutput_JSShellCommand, bug("%zu bytes\n", len););
-	if(exitHandler)
-		outputData.erase(outputData.begin(), utf8::find_safe_end(outputData.begin(), outputData.end()));
-	outputData.insert(outputData.end(), bytes, bytes + len);
-
-	if(len == 0)
-		[self increaseCompleteCounter];
-	else if(outputHandler)
-		[outputHandler callWebScriptMethod:@"call" withArguments:@[ outputHandler, [self valueForKey:@"outputString"] ]];
-}
-
-- (void)errorDataReceived:(char const*)bytes length:(size_t)len
-{
-	D(DBF_HTMLOutput_JSShellCommand, bug("%zu bytes\n", len););
-	if(exitHandler)
-		errorData.erase(errorData.begin(), utf8::find_safe_end(errorData.begin(), errorData.end()));
-	errorData.insert(errorData.end(), bytes, bytes + len);
-
-	if(len == 0)
-		[self increaseCompleteCounter];
-	else if(errorHandler)
-		[errorHandler callWebScriptMethod:@"call" withArguments:@[ errorHandler, [self valueForKey:@"errorString"] ]];
-}
-
-- (void)processDidExit:(int)rc
-{
-	D(DBF_HTMLOutput_JSShellCommand, bug("rc: %d\n", rc););
-	status = rc;
-	[self increaseCompleteCounter];
-}
-
 - (void)cancelCommand
 {
-	D(DBF_HTMLOutput_JSShellCommand, bug("%p\n", process););
+	D(DBF_HTMLOutput_JSShellCommand, bug("%p\n", &process););
 
-	self.outputHandler = nil;
-	self.errorHandler  = nil;
-	self.exitHandler   = nil;
+	self.onreadoutput = nil;
+	self.onreaderror  = nil;
+	self.exitHandler  = nil;
+
+	[self closeInput];
 
 	if(process)
-	{
-		[self closeInput];
-
-		delete outputReader;
-		outputReader = NULL;
-		delete errorReader;
-		errorReader = NULL;
-
-		oak::kill_process_group_in_background(process->process_id);
-		delete process;
-		process = NULL;
-	}
+		kill(process.pid, SIGINT);
 }
 
 - (void)writeToInput:(NSString*)someData
 {
 	D(DBF_HTMLOutput_JSShellCommand, bug("%zu bytes\n", strlen([someData UTF8String])););
-	ASSERT(process);
-	char const* bytes = [someData UTF8String];
-	write(process->input_fd, bytes, strlen(bytes));
+	if(process.in != -1)
+	{
+		char const* bytes = [someData UTF8String];
+		write(process.in, bytes, strlen(bytes));
+	}
 }
 
 - (void)closeInput
 {
-	if(didCloseInput)
-		return;
 	D(DBF_HTMLOutput_JSShellCommand, bug("\n"););
-	ASSERT(process);
-	close(process->input_fd);
-	didCloseInput = true;
-}
-
-- (void)launchAndWait:(BOOL)shouldWait
-{
-	struct process_t : oak::process_t
+	if(process.in != -1)
 	{
-		WATCH_LEAKS(process_t);
-		HOJSShellCommand* self;
-		process_t (HOJSShellCommand* self) : self(self) { }
-
-		void did_exit (int rc)
-		{
-			oak::process_t::did_exit(rc);
-			[self processDidExit:rc];
-		}
-	};
-
-	struct reader_t : io::reader_t
-	{
-		WATCH_LEAKS(reader_t);
-		bool regularOutput;
-		HOJSShellCommand* self;
-
-		reader_t (int fd, bool regularOutput, HOJSShellCommand* self) : io::reader_t(fd), regularOutput(regularOutput), self(self) { }
-		void receive_data (char const* bytes, size_t len)
-		{
-			if(regularOutput)
-					[self outputDataReceived:bytes length:len];
-			else	[self errorDataReceived:bytes length:len];
-		}
-	};
-
-	process = new process_t(self);
-	process->command = command;
-	process->environment = environment;
-	process->launch();
-
-	outputReader = new reader_t(process->output_fd, true, self);
-	errorReader  = new reader_t(process->error_fd, false, self);
-
-	while(shouldWait)
-	{
-		[self closeInput];
-		runLoop.set_timeout(15);
-		if(runLoop.start())
-			break;
-
-		fprintf(stderr, "*** Shell command still running after 30 seconds: %s\n", command.c_str());
-		fprintf(stderr, "*** Completion counter %zu, running %s, %s %d\n", completeCounter, process->is_running ? "YES" : "NO", process->is_running ? "pid" : "rc", process->is_running ? process->process_id : status);
-		fprintf(stderr, "*** stdout (%d): %.*s\n", process->output_fd, (int)outputData.size(), &outputData[0]);
-		fprintf(stderr, "*** stderr (%d): %.*s\n", process->error_fd, (int)errorData.size(), &errorData[0]);
-
-		int choice = NSRunAlertPanel(@"JavaScript Warning", @"The command ‘%@’ has been running for 15 seconds. Would you like to stop it?", @"Stop Command", @"Cancel", nil, [NSString stringWithCxxString:command]);
-		if(choice == NSAlertDefaultReturn) // "Stop Command"
-		{
-			[self cancelCommand];
-			break;
-		}
+		close(process.in);
+		process.in = -1;
 	}
-}
-
-+ (HOJSShellCommand*)runShellCommand:(NSString*)aCommand withEnvironment:(const std::map<std::string, std::string>&)someEnvironment andExitHandler:(id)aHandler
-{
-	D(DBF_HTMLOutput_JSShellCommand, bug("%s (handler: %s)\n", [aCommand UTF8String], [[aHandler description] UTF8String]););
-	HOJSShellCommand* res = [[[self alloc] initWithCommand:aCommand andEnvironment:someEnvironment] autorelease];
-	res.exitHandler = aHandler;
-	[res launchAndWait:aHandler == nil];
-	return res;
 }
 
 - (void)dealloc
 {
 	D(DBF_HTMLOutput_JSShellCommand, bug("\n"););
-
 	[self cancelCommand];
-	[super dealloc];
 }
 
 // =========================
@@ -362,8 +303,8 @@ OAK_DEBUG_VAR(HTMLOutput_JSShellCommand);
 + (BOOL)isKeyExcludedFromWebScript:(char const*)name
 {
 	D(DBF_HTMLOutput_JSShellCommand, bug("%s\n", name););
-	static std::string const PublicProperties[] = { "outputString", "errorString", "onreadoutput", "onreaderror" };
-	return !oak::contains(beginof(PublicProperties), endof(PublicProperties), name);
+	static auto const PublicProperties = new std::set<std::string>{ "outputString", "errorString", "onreadoutput", "onreaderror" };
+	return PublicProperties->find(name) == PublicProperties->end();
 }
 
 + (NSString*)webScriptNameForKey:(char const*)name
@@ -373,9 +314,9 @@ OAK_DEBUG_VAR(HTMLOutput_JSShellCommand);
 
 + (BOOL)isSelectorExcludedFromWebScript:(SEL)aSelector
 {
-	D(DBF_HTMLOutput_JSShellCommand, bug("%s\n", (char const*)aSelector););
-	static std::string const PublicMethods[] = { "cancelCommand", "writeToInput:", "closeInput" };
-	return !oak::contains(beginof(PublicMethods), endof(PublicMethods), (char const*)aSelector);
+	D(DBF_HTMLOutput_JSShellCommand, bug("%s\n", sel_getName(aSelector)););
+	static auto const PublicMethods = new std::set<SEL>{ @selector(cancelCommand), @selector(writeToInput:), @selector(closeInput) };
+	return PublicMethods->find(aSelector) == PublicMethods->end();
 }
 
 + (NSString*)webScriptNameForSelector:(SEL)aSelector
@@ -391,26 +332,21 @@ OAK_DEBUG_VAR(HTMLOutput_JSShellCommand);
 	return @"undefined";
 }
 
-- (NSString*)outputString     { return outputData.empty() ? @"" : [NSString stringWithUTF8String:&outputData[0] length:utf8::find_safe_end(outputData.begin(), outputData.end()) - outputData.begin()]; }
-- (NSString*)errorString      { return errorData.empty()  ? @"" : [NSString stringWithUTF8String:&errorData[0]  length:utf8::find_safe_end(errorData.begin(),  errorData.end())  - errorData.begin()];  }
-- (void)setOutputString       { ASSERT(false); }
-- (void)setErrorString        { ASSERT(false); }
-
-- (id)onreadOutput            { return self.outputHandler; }
-- (id)onreadError             { return self.errorHandler; }
+- (NSString*)outputString     { return output.empty() ? @"" : [NSString stringWithUTF8String:output.data() length:utf8::find_safe_end(output.begin(), output.end()) - output.begin()]; }
+- (NSString*)errorString      { return error.empty()  ? @"" : [NSString stringWithUTF8String:error.data()  length:utf8::find_safe_end(error.begin(),  error.end())  - error.begin()];  }
 
 - (void)setOnreadoutput:(id)aHandler
 {
 	D(DBF_HTMLOutput_JSShellCommand, bug("%s\n", [[aHandler description] UTF8String]););
-	self.outputHandler = aHandler;
-	[outputHandler callWebScriptMethod:@"call" withArguments:@[ outputHandler, [self outputString] ]];
+	if(onreadoutput = aHandler)
+		[onreadoutput callWebScriptMethod:@"call" withArguments:@[ onreadoutput, [self outputString] ]];
 }
 
 - (void)setOnreaderror:(id)aHandler
 {
 	D(DBF_HTMLOutput_JSShellCommand, bug("%s\n", [[aHandler description] UTF8String]););
-	self.errorHandler = aHandler;
-	[errorHandler callWebScriptMethod:@"call" withArguments:@[ errorHandler, [self errorString] ]];
+	if(onreaderror = aHandler)
+		[onreaderror callWebScriptMethod:@"call" withArguments:@[ onreaderror, [self errorString] ]];
 }
 
 - (void)finalizeForWebScript

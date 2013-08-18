@@ -1,7 +1,7 @@
 #include "decode.h"
 #include <oak/oak.h>
 
-static struct name_map_t { std::string const key; std::string const value; } const NameMap[] =
+static std::map<std::string, std::string> const EntityNameMap =
 {
 	{ "AElig",    "Æ"      },
 	{ "Aacute",   "Á"      },
@@ -258,15 +258,10 @@ static struct name_map_t { std::string const key; std::string const value; } con
 	{ "zwnj",     "\u200C" }
 };
 
-static bool less (name_map_t const& lhs, name_map_t const& rhs)
-{
-	return lhs.key < rhs.key;
-}
-
 static std::string convert_entity (std::string const& str)
 {
-	name_map_t const* res = std::lower_bound(beginof(NameMap), endof(NameMap), (name_map_t){ str }, less);
-	return (res == endof(NameMap) || str != res->key) ? NULL_STR : res->value;
+	auto it = EntityNameMap.find(str);
+	return it != EntityNameMap.end() ? it->second : NULL_STR;
 }
 
 namespace decode
@@ -365,7 +360,7 @@ namespace decode
 		{
 			if(src[i] == '%' && i + 2 < src.size() && isxdigit(src[i+1]) && isxdigit(src[i+2]))
 			{
-				res.append(1, strtol(src.substr(i+1, 2).c_str(), NULL, 16));
+				res.append(1, std::stoi(src.substr(i+1, 2), NULL, 16));
 				i += 2;
 			}
 			else

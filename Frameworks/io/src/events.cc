@@ -1,5 +1,3 @@
-#if MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_5
-
 #include "events.h"
 #include "path.h"
 #include <cf/cf.h>
@@ -112,7 +110,7 @@ namespace
 				}
 			}
 
-			EXPLICIT operator bool () const    { return _stream; }
+			explicit operator bool () const    { return _stream; }
 			operator FSEventStreamRef () const { return _stream; }
 
 			std::string _mount_point;
@@ -124,13 +122,17 @@ namespace
 			bool _replay;
 		};
 
-		typedef std::tr1::shared_ptr<stream_t> stream_ptr;
+		typedef std::shared_ptr<stream_t> stream_ptr;
 		std::vector<stream_ptr> streams;
+		std::mutex streams_mutex;
 
 		void watch (std::string const& path, fs::event_callback_t* cb, uint64_t eventId, CFTimeInterval latency)
 		{
 			stream_ptr stream(new stream_t(path, cb, eventId, latency));
+
+			streams_mutex.lock();
 			streams.push_back(stream);
+			streams_mutex.unlock();
 
 			ASSERT(*stream);
 			if(*stream)
@@ -144,6 +146,7 @@ namespace
 
 		void unwatch (std::string const& path, fs::event_callback_t* cb)
 		{
+			std::lock_guard<std::mutex> lock(streams_mutex);
 			iterate(stream, streams)
 			{
 				if((*stream)->_requested.path() == path && (*stream)->_callback == cb)
@@ -245,5 +248,3 @@ namespace fs
 	}
 
 } /* fs */
-
-#endif /* MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_5 */

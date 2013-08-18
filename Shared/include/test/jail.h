@@ -9,13 +9,7 @@ namespace test
 	{
 		jail_t ()
 		{
-			root = path::resolve(path::temp("jail"));
-			path::make_dir(root);
-		}
-
-		~jail_t ()
-		{
-			path::remove(root);
+			helper.reset(new helper_t);
 		}
 
 		void mkdir (std::string const& relativeToRoot)
@@ -47,10 +41,26 @@ namespace test
 			path::remove(path(relativeToRoot));
 		}
 
-		std::string path (std::string const& path = "") const { return path::join(root, path); }
+		std::string path (std::string const& path = "") const { return path::join(helper->root, path); }
 
 	private:
-		std::string root;
+		struct helper_t
+		{
+			helper_t ()
+			{
+				root = path::resolve(path::temp("jail"));
+				path::make_dir(root);
+			}
+
+			~helper_t ()
+			{
+				path::remove(root);
+			}
+
+			std::string root;
+		};
+
+		std::shared_ptr<helper_t> helper;
 	};
 }
 

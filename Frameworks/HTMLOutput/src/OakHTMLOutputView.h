@@ -1,14 +1,6 @@
-#import <oak/debug.h>
 #import "browser/HOBrowserView.h"
+#import <oak/misc.h>
 
-@class HOAutoScroll;
-
-@interface OakHTMLOutputView : HOBrowserView
-{
-	HOAutoScroll* autoScrollHelper;
-	std::map<std::string, std::string> environment;
-	BOOL runningCommand;
-}
+PUBLIC @interface OakHTMLOutputView : HOBrowserView
 @property (nonatomic, readonly) BOOL runningCommand;
-@property (nonatomic, readonly) WebView* webView;
 @end

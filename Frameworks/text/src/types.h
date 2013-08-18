@@ -25,7 +25,7 @@ namespace text
 		pos_t strip_offset () const                  { return pos_t(line, column); }
 
 		bool operator== (pos_t const& rhs) const     { return line == rhs.line && column == rhs.column && offset == rhs.offset; }
-		bool operator< (pos_t const& rhs) const      { size_t left[] = { line, column, offset }, right[] = { rhs.line, rhs.column, rhs.offset }; return std::lexicographical_compare(beginof(left), endof(left), beginof(right), endof(right)); }
+		bool operator< (pos_t const& rhs) const      { return std::make_tuple(line, column, offset) < std::make_tuple(rhs.line, rhs.column, rhs.offset); }
 		bool operator!= (pos_t const& rhs) const     { return !(*this == rhs); }
 		bool operator> (pos_t const& rhs) const      { return !(*this < rhs || *this == rhs); }
 		bool operator>= (pos_t const& rhs) const     { return !(*this < rhs); }
@@ -34,8 +34,8 @@ namespace text
 		pos_t operator+ (ssize_t dist) const         { return pos_t(line, column + dist); }
 		pos_t operator- (ssize_t dist) const         { ASSERT(column >= dist); return pos_t(line, column - dist); }
 
-		operator std::string () const                { return text::format("%zu", line+1) + column_str() + offset_str(); }
-		EXPLICIT operator bool () const              { return *this != undefined; }
+		operator std::string () const                { return std::to_string(line+1) + column_str() + offset_str(); }
+		explicit operator bool () const              { return *this != undefined; }
 
 		static pos_t zero;
 		static pos_t undefined;

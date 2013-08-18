@@ -18,14 +18,39 @@ BOOL OakIsAlternateKeyOrMouseEvent (NSUInteger flags, NSEvent* anEvent)
 	return ([anEvent type] == NSLeftMouseUp || [anEvent type] == NSKeyDown) && (([anEvent modifierFlags] & flags) == flags);
 }
 
-#if !defined(MAC_OS_X_VERSION_10_7) || (MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7)
-@interface NSScrollView (Lion)
-- (void)setScrollerKnobStyle:(NSScrollerKnobStyle)newKnobStyle;
+@interface OakSheetCallbackDelegate : NSObject
+@property (nonatomic, copy) void(^callback)(NSInteger);
+@property (nonatomic)       id retainedSelf;
 @end
-#endif
 
-void SetLionScrollerKnobStyle (NSScrollView* scrollView, NSScrollerKnobStyle style)
+@implementation OakSheetCallbackDelegate
+- (id)initWithBlock:(void(^)(NSInteger))aBlock
 {
-	if([scrollView respondsToSelector:@selector(setScrollerKnobStyle:)])
-		[scrollView setScrollerKnobStyle:style];
+	if(self = [super init])
+	{
+		self.callback = aBlock;
+		self.retainedSelf = self;
+	}
+	return self;
+}
+
+- (void)sheetDidEnd:(id)sheetOrAlert returnCode:(NSInteger)returnCode contextInfo:(void*)unused
+{
+	self.callback(returnCode);
+	self.retainedSelf = nil;
+}
+@end
+
+void OakShowSheetForWindow (NSWindow* sheet, NSWindow* window, void(^callback)(NSInteger))
+{
+	OakSheetCallbackDelegate* delegate = [[OakSheetCallbackDelegate alloc] initWithBlock:callback];
+	[NSApp beginSheet:sheet modalForWindow:window modalDelegate:delegate didEndSelector:@selector(sheetDidEnd:returnCode:contextInfo:) contextInfo:NULL];
+}
+
+void OakShowAlertForWindow (NSAlert* alert, NSWindow* window, void(^callback)(NSInteger))
+{
+	OakSheetCallbackDelegate* delegate = [[OakSheetCallbackDelegate alloc] initWithBlock:callback];
+	if(window)
+			[alert beginSheetModalForWindow:window modalDelegate:delegate didEndSelector:@selector(sheetDidEnd:returnCode:contextInfo:) contextInfo:NULL];
+	else	[delegate sheetDidEnd:alert returnCode:[alert runModal] contextInfo:NULL];
 }

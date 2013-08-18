@@ -21,6 +21,10 @@ namespace path
 
 	PUBLIC std::string join (std::string const& base, std::string const& path); // this will normalize the (resulting) path
 
+	PUBLIC std::string join (std::initializer_list<std::string> const& components);
+
+	PUBLIC bool is_absolute (std::string const& path);
+	PUBLIC bool is_child (std::string const& nonNormalizedChild, std::string const& nonNormalizedParent);
 	PUBLIC std::string with_tilde (std::string const& path);        // /Users/me/foo.html.erb → ~/foo.html.erb
 	PUBLIC std::string relative_to (std::string const& path, std::string const& base); // /Users/me/foo.html.erb (arg: ~/Desktop) → ../foo.html.erb
 
@@ -28,25 +32,6 @@ namespace path
 	PUBLIC std::vector<size_t> disambiguate (std::vector<std::string> const& paths);
 
 	PUBLIC std::string unique (std::string const& requestedPath, std::string const& suffix = ""); // /foo/bar.txt → /foo/bar«suffix» 2.txt
-
-	struct PUBLIC identifier_t
-	{
-		identifier_t (bool exists, dev_t device, ino_t inode, std::string const& path);
-		identifier_t (std::string const& path = NULL_STR, bool resolve = false);
-		bool operator< (identifier_t const& rhs) const;
-		bool operator== (identifier_t const& rhs) const;
-		bool operator!= (identifier_t const& rhs) const;
-		EXPLICIT operator bool () const { return exists || path != NULL_STR; }
-	private:
-		bool exists;
-		dev_t device;
-		ino_t inode;
-		std::string path; // TODO we should only store the path for non-existing files (preferably use a union — this to make the size of an ‘identifier’ small since it may be used in std::set when walking a directory hierarchy)
-		friend std::string to_s (identifier_t const& identifier);
-	};
-
-	PUBLIC identifier_t identifier (std::string const& path);          // opaque type holding device + inode for resolved path (actual path for non-existing files), file_id_t supports operator< for ordering
-	PUBLIC std::string to_s (identifier_t const& identifier);
 
 	namespace flag
 	{
@@ -85,54 +70,6 @@ namespace path
 	// = Actions =
 	// ===========
 
-	struct walker_t;
-	typedef std::tr1::shared_ptr<walker_t>       walker_ptr;
-	typedef std::tr1::shared_ptr<walker_t const> walker_const_ptr;
-
-	struct PUBLIC walker_t : std::tr1::enable_shared_from_this<walker_t>
-	{
-		struct iterator_t
-		{
-			iterator_t (walker_const_ptr const& walker, size_t index) : walker(walker), index(index) { }
-
-			std::string const& operator* () const         { return walker->at(index); }
-			std::string const* operator-> () const        { return &walker->at(index); }
-			iterator_t& operator++ ()                     { index = walker->advance_from(index); return *this; }
-			bool operator== (iterator_t const& rhs) const { return walker->equal(index, rhs.index); }
-			bool operator!= (iterator_t const& rhs) const { return !walker->equal(index, rhs.index); }
-		private:
-			walker_const_ptr walker;
-			size_t index;
-		};
-
-		typedef iterator_t iterator;
-
-		walker_t (std::string const& path, std::string const& glob = "*") { push_back(path); }
-		void push_back (std::string const& dir); // add a directory to the queue of what will be scanned (can be called between begin/end)
-
-		iterator_t begin () const       { return iterator_t(shared_from_this(), 0); }
-		iterator_t end () const         { return iterator_t(shared_from_this(), SIZE_T_MAX); }
-
-	private:
-		mutable std::vector<std::string> paths;
-		mutable std::vector<std::string> files;
-
-		mutable std::set<identifier_t> seen;
-		void rebalance () const;
-
-		// not implemented/allowed
-		walker_t ();
-		walker_t (walker_t const& rhs);
-		walker_t& operator= (walker_t const& rhs);
-
-		friend struct walker_t::iterator_t;
-		bool equal (size_t lhs, size_t rhs) const;
-		std::string const& at (size_t index) const;
-		size_t advance_from (size_t index) const;
-	};
-
-	PUBLIC walker_ptr open_for_walk (std::string const& path, std::string const& glob = "*"); // TODO support glob argument
-
 	PUBLIC std::string content (std::string const& path);
 	PUBLIC bool set_content (std::string const& path, char const* first, char const* last);
 	inline bool set_content (std::string const& path, std::string const& content) { return set_content(path, content.data(), content.data() + content.size()); }
@@ -160,6 +97,7 @@ namespace path
 	PUBLIC std::string home ();
 	PUBLIC std::string trash (std::string const& forPath);
 	PUBLIC std::string temp (std::string const& file = NULL_STR);
+	PUBLIC std::string cache (std::string const& file = NULL_STR);
 	PUBLIC std::string desktop ();
 
 } /* path */ 

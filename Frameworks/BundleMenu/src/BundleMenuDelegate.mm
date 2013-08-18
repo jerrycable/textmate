@@ -1,26 +1,22 @@
-#import "BundleMenuDelegate.h"
+#import "Private.h"
 #import <OakAppKit/NSMenu Additions.h>
 #import <OakAppKit/NSMenuItem Additions.h>
 #import <OakFoundation/NSString Additions.h>
+#import <ns/ns.h>
 #import <oak/debug.h>
 
 OAK_DEBUG_VAR(BundleMenu);
 
-@implementation BundleMenuDelegate
-- (id)initWithBundleItem:(bundles::item_ptr const&)aBundleItem
-{
-	if(self = [super init])
-	{
-		umbrellaItem = aBundleItem;
-		subdelegates = [NSMutableArray new];
-	}
-	return self;
-}
+@interface NSObject (HasSelection)
+- (BOOL)hasSelection;
+- (scope::context_t)scopeContext;
+@end
 
-- (void)dealloc
+@implementation BundleMenuDelegate
++ (BundleMenuDelegate*)sharedInstance
 {
-	[subdelegates release];
-	[super dealloc];
+	static BundleMenuDelegate* instance = [BundleMenuDelegate new];
+	return instance;
 }
 
 - (BOOL)menuHasKeyEquivalent:(NSMenu*)aMenu forEvent:(NSEvent*)theEvent target:(id*)aTarget action:(SEL*)anAction
@@ -32,7 +28,14 @@ OAK_DEBUG_VAR(BundleMenu);
 {
 	D(DBF_BundleMenu, bug("\n"););
 	[aMenu removeAllItems];
-	[subdelegates removeAllObjects];
+
+	scope::context_t scope = "";
+	if(id textView = [NSApp targetForAction:@selector(scopeContext)])
+		scope = [textView scopeContext];
+
+	bundles::item_ptr umbrellaItem = bundles::lookup(to_s(aMenu.title));
+	if(!umbrellaItem)
+		return;
 
 	citerate(item, umbrellaItem->menu())
 	{
@@ -42,11 +45,8 @@ OAK_DEBUG_VAR(BundleMenu);
 			{
 				NSMenuItem* menuItem = [aMenu addItemWithTitle:[NSString stringWithCxxString:(*item)->name()] action:NULL keyEquivalent:@""];
 
-				menuItem.submenu = [[NSMenu new] autorelease];
-				menuItem.submenu.autoenablesItems = NO;
-				BundleMenuDelegate* delegate = [[[BundleMenuDelegate alloc] initWithBundleItem:*item] autorelease];
-				menuItem.submenu.delegate = delegate;
-				[subdelegates addObject:delegate];
+				menuItem.submenu = [[NSMenu alloc] initWithTitle:[NSString stringWithCxxString:(*item)->uuid()]];
+				menuItem.submenu.delegate = [BundleMenuDelegate sharedInstance];
 			}
 			break;
 
@@ -54,33 +54,29 @@ OAK_DEBUG_VAR(BundleMenu);
 				[aMenu addItem:[NSMenuItem separatorItem]];
 			break;
 
+			case bundles::kItemTypeProxy:
+			{
+				auto const items = bundles::items_for_proxy(*item, scope);
+				OakAddBundlesToMenu(items, true, aMenu, @selector(performBundleItemWithUUIDStringFrom:));
+
+				if(items.empty())
+				{
+					NSMenuItem* menuItem = [aMenu addItemWithTitle:[NSString stringWithCxxString:(*item)->name()] action:@selector(nop:) keyEquivalent:@""];
+					[menuItem setInactiveKeyEquivalentCxxString:key_equivalent(*item)];
+					[menuItem setTabTriggerCxxString:(*item)->value_for_field(bundles::kFieldTabTrigger)];
+				}
+			}
+			break;
+
 			default:
 			{
-				NSMenuItem* menuItem = [aMenu addItemWithTitle:[NSString stringWithCxxString:(*item)->name()] action:@selector(doBundleItem:) keyEquivalent:@""];
-				[menuItem setKeyEquivalentCxxString:(*item)->value_for_field(bundles::kFieldKeyEquivalent)];
+				NSMenuItem* menuItem = [aMenu addItemWithTitle:[NSString stringWithCxxString:(*item)->name()] action:@selector(performBundleItemWithUUIDStringFrom:) keyEquivalent:@""];
+				[menuItem setInactiveKeyEquivalentCxxString:key_equivalent(*item)];
 				[menuItem setTabTriggerCxxString:(*item)->value_for_field(bundles::kFieldTabTrigger)];
 				[menuItem setRepresentedObject:[NSString stringWithCxxString:(*item)->uuid()]];
 			}
 			break;
 		}
 	}
-}
-
-- (void)menuWillOpen:(NSMenu*)aMenu
-{
-	[aMenu enableTabTriggers];
-}
-
-- (void)menuDidClose:(NSMenu*)aMenu
-{
-	// We are not allowed to modify ‘aMenu’ here so we do it “afterDelay” — I really wish we didn’t have to do this at all…
-	[self performSelector:@selector(zapMenu:) withObject:aMenu afterDelay:0.0];
-}
-
-- (void)zapMenu:(NSMenu*)aMenu
-{
-	// After a menu has been up, the system will cache all its key equivalents. Even if we set all the key equivalents to the empty string, the system will still remember. The only workaround seems to be to delete all the entries in the menu.
-	[aMenu removeAllItems];
-	[subdelegates removeAllObjects];
 }
 @end

@@ -10,7 +10,7 @@ class SaveTests : public CxxTest::TestSuite
 {
 	struct stall_t : file::save_callback_t
 	{
-		stall_t (bool* success = NULL, std::string const& path = NULL_STR, std::string const& encoding = NULL_STR, bool bom = false) : _success(success), _path(path), _encoding(encoding), _bom(bom), _run_loop(CFSTR("OakThreadSignalsRunLoopMode")) { }
+		stall_t (bool* success = NULL, std::string const& path = NULL_STR, std::string const& encoding = NULL_STR) : _success(success), _path(path), _encoding(encoding), _run_loop(CFSTR("OakThreadSignalsRunLoopMode")) { }
 
 		void select_path (std::string const& path, io::bytes_ptr content, file::save_context_ptr context)
 		{
@@ -18,13 +18,13 @@ class SaveTests : public CxxTest::TestSuite
 				context->set_path(_path);
 		}
 
-		void select_encoding (std::string const& path, io::bytes_ptr content, std::string const& encoding, file::save_context_ptr context)
+		void select_charset (std::string const& path, io::bytes_ptr content, std::string const& charset, file::save_context_ptr context)
 		{
-			if(_encoding != NULL_STR)
-				context->set_encoding(_encoding, _bom);
+			if(_encoding != kCharsetNoEncoding)
+				context->set_charset(_encoding);
 		}
 
-		void did_save (std::string const& path, io::bytes_ptr content, std::string const& pathAttributes, std::string const& encoding, bool bom, std::string const& lineFeeds, bool success, std::string const& message, oak::uuid_t const& filter)
+		void did_save (std::string const& path, io::bytes_ptr content, encoding::type const& encoding, bool success, std::string const& message, oak::uuid_t const& filter)
 		{
 			if(_success)
 				*_success = success;
@@ -37,13 +37,12 @@ class SaveTests : public CxxTest::TestSuite
 		bool* _success;
 		std::string _path;
 		std::string _encoding;
-		bool _bom;
 		cf::run_loop_t _run_loop;
 	};
 
 	static std::string sha1 (std::string const& src)
 	{
-		char md[SHA_DIGEST_LENGTH];
+		char md[CC_SHA1_DIGEST_LENGTH];
 		CC_SHA1((unsigned char*)src.data(), src.size(), (unsigned char*)md);
 		return std::string(md, md + sizeof(md));
 	}
@@ -63,7 +62,7 @@ public:
 
 		stall_t* cb = new stall_t(&success);
 		file::save_callback_ptr sharedPtr((file::save_callback_t*)cb);
-		file::save(path, sharedPtr, osx::authorization_t(), io::bytes_ptr(new io::bytes_t(content)), std::map<std::string, std::string>(), NULL_STR /* file type */, "UTF-8", false /* byte order mark */, "\n", std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
+		file::save(path, sharedPtr, osx::authorization_t(), io::bytes_ptr(new io::bytes_t(content)), std::map<std::string, std::string>(), NULL_STR /* file type */, encoding::type("\n", "UTF-8"), std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
 		cb->wait();
 
 		TS_ASSERT_EQUALS(success, true);
@@ -80,7 +79,7 @@ public:
 
 		stall_t* cb = new stall_t(&success, path);
 		file::save_callback_ptr sharedPtr((file::save_callback_t*)cb);
-		file::save(NULL_STR, sharedPtr, osx::authorization_t(), io::bytes_ptr(new io::bytes_t(content)), std::map<std::string, std::string>(), NULL_STR /* file type */, "UTF-8", false /* byte order mark */, "\n", std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
+		file::save(NULL_STR, sharedPtr, osx::authorization_t(), io::bytes_ptr(new io::bytes_t(content)), std::map<std::string, std::string>(), NULL_STR /* file type */, encoding::type("\n", "UTF-8"), std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
 		cb->wait();
 
 		TS_ASSERT_EQUALS(success, true);
@@ -96,7 +95,7 @@ public:
 
 		stall_t* cb = new stall_t(&success);
 		file::save_callback_ptr sharedPtr((file::save_callback_t*)cb);
-		file::save(NULL_STR, sharedPtr, osx::authorization_t(), io::bytes_ptr(new io::bytes_t(content)), std::map<std::string, std::string>(), NULL_STR /* file type */, "UTF-8", false /* byte order mark */, "\n", std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
+		file::save(NULL_STR, sharedPtr, osx::authorization_t(), io::bytes_ptr(new io::bytes_t(content)), std::map<std::string, std::string>(), NULL_STR /* file type */, encoding::type("\n", "UTF-8"), std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
 		cb->wait();
 
 		TS_ASSERT_EQUALS(success, false);
@@ -112,7 +111,7 @@ public:
 
 		stall_t* cb = new stall_t(&success, path, "ASCII//TRANSLIT");
 		file::save_callback_ptr sharedPtr((file::save_callback_t*)cb);
-		file::save(path, sharedPtr, osx::authorization_t(), io::bytes_ptr(new io::bytes_t(content)), std::map<std::string, std::string>(), NULL_STR /* file type */, "ASCII", false /* byte order mark */, "\n", std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
+		file::save(path, sharedPtr, osx::authorization_t(), io::bytes_ptr(new io::bytes_t(content)), std::map<std::string, std::string>(), NULL_STR /* file type */, encoding::type("\n", "ASCII"), std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
 		cb->wait();
 
 		TS_ASSERT_EQUALS(success, true);
@@ -129,7 +128,7 @@ public:
 
 		stall_t* cb = new stall_t(&success, path);
 		file::save_callback_ptr sharedPtr((file::save_callback_t*)cb);
-		file::save(path, sharedPtr, osx::authorization_t(), io::bytes_ptr(new io::bytes_t(content)), std::map<std::string, std::string>(), NULL_STR /* file type */, "ASCII", false /* byte order mark */, "\n", std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
+		file::save(path, sharedPtr, osx::authorization_t(), io::bytes_ptr(new io::bytes_t(content)), std::map<std::string, std::string>(), NULL_STR /* file type */, encoding::type("\n", "ASCII"), std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
 		cb->wait();
 
 		TS_ASSERT_EQUALS(success, false);
@@ -143,7 +142,7 @@ public:
 		bool didSave = false;
 		stall_t* cb = new stall_t(&didSave);
 		file::save_callback_ptr sharedPtr((file::save_callback_t*)cb);
-		file::save(jail.path("file.sha1"), sharedPtr, osx::authorization_t(), io::bytes_ptr(new io::bytes_t(content)), std::map<std::string, std::string>(), NULL_STR /* file type */, "UTF-8", false /* byte order mark */, "\n", std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
+		file::save(jail.path("file.sha1"), sharedPtr, osx::authorization_t(), io::bytes_ptr(new io::bytes_t(content)), std::map<std::string, std::string>(), NULL_STR /* file type */, encoding::type("\n", "UTF-8"), std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
 		cb->wait();
 
 		TS_ASSERT(didSave);

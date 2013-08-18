@@ -7,10 +7,10 @@
 #import <file/type.h>
 #import <ns/ns.h>
 #import <network/network.h>
+#import <OakAppKit/OakAppKit.h>
 #import <OakFoundation/NSArray Additions.h>
 #import <OakFoundation/NSString Additions.h>
 #import <BundlesManager/BundlesManager.h>
-#import <oak/CocoaSTL.h>
 
 namespace
 {
@@ -46,11 +46,30 @@ static NSArray* wrap (std::set<grammar_info_t> const& array)
 	return res;
 }
 
+static bool is_installed (oak::uuid_t const& uuid)
+{
+	return bundles::lookup(uuid) ? true : false;
+}
+
+@interface FileTypeDialog ()
+@property (nonatomic, retain) NSString* path;
+
+@property (nonatomic, retain) NSArray* recommendedGrammars;
+@property (nonatomic, retain) NSArray* installedGrammars;
+@property (nonatomic, retain) NSArray* allGrammars;
+
+@property (nonatomic, retain) NSString* alertFormatString;
+@property (nonatomic, retain) NSString* infoFormatString;
+@property (nonatomic, retain) NSString* useForAllFormatString;
+
+@property (nonatomic, readonly) NSDictionary* grammar;
+@property (nonatomic, readonly) NSString* fileType;
+@end
+
 @implementation FileTypeDialog
-@synthesize path, enabledGrammars, persistentSetting, canOpenDocument;
-@synthesize recommendedGrammars, installedGrammars, allGrammars;
-@synthesize grammars, selectedGrammarIndexes;
-@synthesize alertFormatString, infoFormatString, useForAllFormatString;
+{
+	std::string firstLine;
+}
 
 - (id)initWithPath:(NSString*)aPath first:(char const*)firstPointer last:(char const*)lastPointer
 {
@@ -62,24 +81,6 @@ static NSArray* wrap (std::set<grammar_info_t> const& array)
 	return self;
 }
 
-- (void)dealloc
-{
-	self.path                   = nil;
-
-	self.recommendedGrammars    = nil;
-	self.installedGrammars      = nil;
-	self.allGrammars            = nil;
-
-	self.grammars               = nil;
-	self.selectedGrammarIndexes = nil;
-
-	self.alertFormatString      = nil;
-	self.infoFormatString       = nil;
-	self.useForAllFormatString  = nil;
-
-	[super dealloc];
-}
-
 - (void)setupGrammars
 {
 	std::set<grammar_info_t> recommended, installed, all;
@@ -89,7 +90,8 @@ static NSArray* wrap (std::set<grammar_info_t> const& array)
 
 	all = installed;
 
-	if(network::can_reach_host("updates.textmate.org"))
+	// Exclude uninstalled grammars when offline
+	if(network::can_reach_host(REST_API))
 	{
 		citerate(bundle, bundles_db::index())
 		{
@@ -98,7 +100,7 @@ static NSArray* wrap (std::set<grammar_info_t> const& array)
 				grammar_info_t info((*grammar)->name(), (*grammar)->scope(), (*grammar)->uuid(), (*bundle)->uuid());
 				all.insert(info);
 
-				if((*grammar)->mode_line() != NULL_STR && regexp::search((*grammar)->mode_line(), firstLine.data(), firstLine.data() + firstLine.size()))
+				if((*grammar)->mode_line() != NULL_STR && regexp::search((*grammar)->mode_line(), firstLine))
 				{
 					recommended.insert(info);
 				}
@@ -106,7 +108,7 @@ static NSArray* wrap (std::set<grammar_info_t> const& array)
 				{
 					iterate(ext, (*grammar)->file_types())
 					{
-						if(path::rank(to_s(path), *ext))
+						if(path::rank(to_s(self.path), *ext))
 							recommended.insert(info);
 					}
 				}
@@ -135,17 +137,18 @@ static NSArray* wrap (std::set<grammar_info_t> const& array)
 	self.useForAllFormatString = [useForAllCheckBox title];
 
 	std::map<std::string, std::string> variables;
-	variables["DisplayName"] = path::display_name(to_s(path));
-	std::string const ext = path::extensions(to_s(path));;
+	variables["DisplayName"] = path::display_name(to_s(self.path));
+	std::string const ext = path::extensions(to_s(self.path));;
 	if(ext != "")
 	{
-		variables["X"] = ext;
 		self.persistentSetting = YES;
+		if(ext != path::name(to_s(self.path)))
+			variables["X"] = ext;
 	}
 
-	std::string const alert  = format_string::expand(to_s(alertFormatString), variables);
-	std::string const info   = format_string::expand(to_s(infoFormatString), variables);
-	std::string const choice = format_string::expand(to_s(useForAllFormatString), variables);
+	std::string const alert  = format_string::expand(to_s(self.alertFormatString), variables);
+	std::string const info   = format_string::expand(to_s(self.infoFormatString), variables);
+	std::string const choice = format_string::expand(to_s(self.useForAllFormatString), variables);
 
 	[alertTextField setStringValue:[NSString stringWithCxxString:alert]];
 	[infoTextField setStringValue:[NSString stringWithCxxString:info]];
@@ -154,8 +157,8 @@ static NSArray* wrap (std::set<grammar_info_t> const& array)
 
 - (void)setEnabledGrammars:(NSInteger)newFilter
 {
-	enabledGrammars = newFilter;
-	switch(enabledGrammars)
+	_enabledGrammars = newFilter;
+	switch(_enabledGrammars)
 	{
 		case kEnabledGrammarsRecommended: self.grammars = self.recommendedGrammars; break;
 		case kEnabledGrammarsInstalled:   self.grammars = self.installedGrammars;   break;
@@ -166,7 +169,7 @@ static NSArray* wrap (std::set<grammar_info_t> const& array)
 
 - (NSDictionary*)grammar
 {
-	return [selectedGrammarIndexes count] == 0 ? nil : [grammars objectAtIndex:[selectedGrammarIndexes firstIndex]];
+	return [_selectedGrammarIndexes count] == 0 ? nil : [_grammars objectAtIndex:[_selectedGrammarIndexes firstIndex]];
 }
 
 - (NSString*)fileType
@@ -174,73 +177,57 @@ static NSArray* wrap (std::set<grammar_info_t> const& array)
 	return [self.grammar objectForKey:@"scope"];
 }
 
-- (void)beginSheetModalForWindow:(NSWindow*)aWindow modalDelegate:(id <FileTypeDialogDelegate>)aDelegate contextInfo:(void*)info
+- (void)beginSheetModalForWindow:(NSWindow*)aWindow completionHandler:(void(^)(NSString* fileType))aCompletionHandler
 {
 	[self setupGrammars];
 	self.grammars               = self.recommendedGrammars;
 	self.selectedGrammarIndexes = [self.grammars count] == 0 ? [NSIndexSet indexSet] : [NSIndexSet indexSetWithIndex:0];
 
 	self.canOpenDocument = YES;
-	mainWindow  = aWindow;
-	delegate    = aDelegate;
-	contextInfo = info;
-	[NSApp beginSheet:self.window modalForWindow:aWindow modalDelegate:self didEndSelector:@selector(sheetDidEnd:returnCode:contextInfo:) contextInfo:NULL];
-}
 
-static bool is_installed (oak::uuid_t const& uuid)
-{
-	return bundles::lookup(uuid);
-}
+	OakShowSheetForWindow(self.window, aWindow, ^(NSInteger returnCode){
+		self.canOpenDocument = NO;
+		if(returnCode == NSRunAbortedResponse)
+			return aCompletionHandler(nil);
 
-- (void)checkIfBundleIsInstalled:(NSTimer*)aTimer
-{
-	NSString* uuid = [aTimer userInfo];
-	if(is_installed(to_s(uuid)))
-	{
-		[aTimer invalidate];
+		NSDictionary* grammar = self.grammar;
+		std::string scope      = to_s((NSString*)[grammar objectForKey:@"scope"]);
+		oak::uuid_t uuid       = to_s((NSString*)[grammar objectForKey:@"uuid"]);
+		oak::uuid_t bundleUUID = to_s((NSString*)[grammar objectForKey:@"bundleUUID"]);
 
-		[installingBundleProgressIndicator stopAnimation:self];
-		[installingBundleProgressIndicator unbind:@"value"];
-		[installingBundleActivityTextField unbind:@"value"];
-		[NSApp endSheet:installingBundleWindow];
-		[installingBundleWindow orderOut:self];
-		[delegate fileTypeDialog:self didSelectFileType:self.fileType contextInfo:contextInfo];
-	}
-}
-
-- (void)sheetDidEnd:(NSWindow*)aSheet returnCode:(NSInteger)returnCode contextInfo:(void*)unused;
-{
-	self.canOpenDocument = NO;
-	if(returnCode == NSRunAbortedResponse)
-		return [delegate fileTypeDialog:self didSelectFileType:nil contextInfo:contextInfo];
-
-	NSDictionary* grammar = self.grammar;
-	std::string scope      = to_s((NSString*)[grammar objectForKey:@"scope"]);
-	oak::uuid_t uuid       = to_s((NSString*)[grammar objectForKey:@"uuid"]);
-	oak::uuid_t bundleUUID = to_s((NSString*)[grammar objectForKey:@"bundleUUID"]);
-
-	if(is_installed(uuid))
-	{
-		if(self.persistentSetting)
-			file::set_type(to_s(path), scope);
-		return [delegate fileTypeDialog:self didSelectFileType:self.fileType contextInfo:contextInfo];
-	}
-
-	citerate(bundle, bundles_db::index())
-	{
-		if(bundleUUID == (*bundle)->uuid())
+		if(is_installed(uuid))
 		{
-			[NSTimer scheduledTimerWithTimeInterval:0.1 target:self selector:@selector(checkIfBundleIsInstalled:) userInfo:[grammar objectForKey:@"uuid"] repeats:YES];
-			[[BundlesManager sharedInstance] installBundle:*bundle];
-			[installingBundleActivityTextField bind:@"value" toObject:[BundlesManager sharedInstance] withKeyPath:@"activityText" options:nil];
-			[installingBundleProgressIndicator bind:@"value" toObject:[BundlesManager sharedInstance] withKeyPath:@"progress" options:nil];
-			[installingBundleProgressIndicator startAnimation:self];
-			[NSApp beginSheet:installingBundleWindow modalForWindow:mainWindow modalDelegate:nil didEndSelector:NULL contextInfo:NULL];
-			return;
+			if(self.persistentSetting)
+				file::set_type(to_s(self.path), scope);
+			return aCompletionHandler(self.fileType);
 		}
-	}
 
-	return [delegate fileTypeDialog:self didSelectFileType:nil contextInfo:contextInfo];
+		citerate(bundle, bundles_db::index())
+		{
+			if(bundleUUID == (*bundle)->uuid())
+			{
+				[installingBundleActivityTextField bind:NSValueBinding toObject:[BundlesManager sharedInstance] withKeyPath:@"activityText" options:nil];
+				[installingBundleProgressIndicator bind:NSValueBinding toObject:[BundlesManager sharedInstance] withKeyPath:@"progress" options:nil];
+				[installingBundleProgressIndicator bind:NSIsIndeterminateBinding toObject:[BundlesManager sharedInstance] withKeyPath:@"determinateProgress" options:@{ NSValueTransformerNameBindingOption: @"NSNegateBoolean" }];
+				[installingBundleProgressIndicator startAnimation:self];
+
+				OakShowSheetForWindow(installingBundleWindow, aWindow, ^(NSInteger returnCode){ });
+
+				[[BundlesManager sharedInstance] installBundle:*bundle completionHandler:^(BOOL success){
+					[installingBundleProgressIndicator stopAnimation:self];
+					[installingBundleProgressIndicator unbind:NSValueBinding];
+					[installingBundleActivityTextField unbind:NSValueBinding];
+					[NSApp endSheet:installingBundleWindow];
+					[installingBundleWindow orderOut:self];
+
+					aCompletionHandler(is_installed(uuid) ? self.fileType : @"text.plain");
+				}];
+				return;
+			}
+		}
+
+		aCompletionHandler(nil);
+	});
 }
 
 - (IBAction)performOpenDocument:(id)sender

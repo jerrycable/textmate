@@ -1,7 +1,7 @@
 #import "NSColor Additions.h"
 #import <OakFoundation/OakFoundation.h>
 
-@implementation NSColor (Creation)
+@implementation NSColor (TMColorAdditions)
 + (NSColor*)colorWithString:(NSString*)aString
 {
 	if(NSIsEmptyString(aString))
@@ -17,20 +17,25 @@
 	return nil;
 }
 
-+ (NSColor*)colorWithCGColor:(CGColorRef)aColor
++ (NSColor*)tmColorWithCGColor:(CGColorRef)aColor
 {
-	return [NSColor colorWithColorSpace:[[[NSColorSpace alloc] initWithCGColorSpace:CGColorGetColorSpace(aColor)] autorelease] components:CGColorGetComponents(aColor) count:CGColorGetNumberOfComponents(aColor)];
+	if([self respondsToSelector:@selector(colorWithCGColor:)])
+		return [self colorWithCGColor:aColor];
+	return [NSColor colorWithColorSpace:[[NSColorSpace alloc] initWithCGColorSpace:CGColorGetColorSpace(aColor)] components:CGColorGetComponents(aColor) count:CGColorGetNumberOfComponents(aColor)];
 }
-@end
 
-@implementation NSColor (OakColor)
-- (BOOL)isDark
+- (CGColorRef)tmCGColor
 {
-	uint32_t r(lroundf(255 * [self redComponent]));
-	uint32_t g(lroundf(255 * [self greenComponent]));
-	uint32_t b(lroundf(255 * [self blueComponent])); 
+	if([self respondsToSelector:@selector(CGColor)])
+		return [self CGColor];
 
-	uint32_t intensity = r*r*30 + g*g*59 + b*b*11;
-	return intensity < 50*255*255;
+	NSColor* rgbColor = [self colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+	CGFloat rgba[4];
+	[rgbColor getRed:&rgba[0] green:&rgba[1] blue:&rgba[2] alpha:&rgba[3]];
+	CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceGenericRGB);
+	CGColorRef res = CGColorCreate(colorSpace, rgba);
+	CGColorSpaceRelease(colorSpace);
+	__autoreleasing __attribute__ ((unused)) id dummy = CFBridgingRelease(res);
+	return res;
 }
 @end

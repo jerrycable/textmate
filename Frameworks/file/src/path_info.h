@@ -6,7 +6,6 @@
 namespace file
 {
 	PUBLIC std::string path_attributes (std::string const& path);
-	std::map<std::string, std::string> variables (std::string const& path);
 
 } /* file */
 

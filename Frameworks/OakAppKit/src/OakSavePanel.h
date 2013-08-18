@@ -1,11 +1,6 @@
-@interface OakSavePanel : NSObject
-{
-	id delegate;
-	void* contextInfo;
-}
-+ (void)showWithPath:(NSString*)aPathSuggestion directory:(NSString*)aDirectorySuggestion fowWindow:(NSWindow*)aWindow delegate:(id)aDelegate contextInfo:(void*)info;
-@end
+#import <file/encoding.h>
+#import <oak/misc.h>
 
-@interface NSObject (OakSavePanelDelegate)
-- (void)savePanelDidEnd:(OakSavePanel*)sheet path:(NSString*)aPath contextInfo:(void*)info;
+PUBLIC @interface OakSavePanel : NSObject
++ (void)showWithPath:(NSString*)aPathSuggestion directory:(NSString*)aDirectorySuggestion fowWindow:(NSWindow*)aWindow encoding:(encoding::type const&)encoding completionHandler:(void(^)(NSString* path, encoding::type const& encoding))aCompletionHandler;
 @end

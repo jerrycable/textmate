@@ -18,16 +18,17 @@ namespace scope
 			virtual std::string to_s () const = 0;
 		};
 
-		typedef std::tr1::shared_ptr<any_t> any_ptr;
+		typedef std::shared_ptr<any_t> any_ptr;
 
 		typedef std::string atom_t;
 		extern atom_t const atom_any;
 
 		struct scope_t
 		{
-			scope_t () : anchor_to_previous(false) { }
+			scope_t () : anchor_to_previous(false), content_scope(true) { }
 			std::vector<atom_t> atoms;
 			bool anchor_to_previous;
+			bool content_scope;
 
 			bool operator== (scope_t const& rhs) const { return atoms == rhs.atoms; }
 			bool operator!= (scope_t const& rhs) const { return atoms != rhs.atoms; }

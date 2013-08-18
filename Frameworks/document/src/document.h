@@ -3,7 +3,6 @@
 
 #include <buffer/buffer.h>
 #include <undo/undo.h>
-#include <parse/grammar.h>
 #include <plist/uuid.h>
 #include <plist/date.h>
 #include <settings/settings.h>
@@ -12,43 +11,61 @@
 #include <file/bytes.h>
 #include <file/open.h>
 #include <file/save.h>
+#include <file/encoding.h>
 #include <scope/scope.h>
+#include <regexp/glob.h>
 #include <oak/debug.h>
 
 namespace document
 {
 	struct watch_t;
 	struct document_t;
-	typedef std::tr1::shared_ptr<watch_t>          watch_ptr;
-	typedef std::tr1::shared_ptr<document_t>       document_ptr;
-	typedef std::tr1::shared_ptr<document_t const> document_const_ptr;
-	typedef std::tr1::weak_ptr<document_t>         document_weak_ptr;
+	typedef std::shared_ptr<watch_t>          watch_ptr;
+	typedef std::shared_ptr<document_t>       document_ptr;
+	typedef std::shared_ptr<document_t const> document_const_ptr;
+	typedef std::weak_ptr<document_t>         document_weak_ptr;
 
 	struct PUBLIC open_callback_t : file::open_callback_t
 	{
 		virtual ~open_callback_t () { }
-		virtual void show_content (std::string const& path, io::bytes_ptr content, std::map<std::string, std::string> const& attributes, std::string const& pathAttributes, std::string const& fileType, std::string const& encoding, bool bom, std::string const& lineFeeds, std::vector<oak::uuid_t> const& binaryImportFilters, std::vector<oak::uuid_t> const& textImportFilters) { }
+		virtual void show_content (std::string const& path, io::bytes_ptr content, std::map<std::string, std::string> const& attributes, std::string const& fileType, encoding::type const& encoding, std::vector<oak::uuid_t> const& binaryImportFilters, std::vector<oak::uuid_t> const& textImportFilters) { }
 		virtual void show_document (std::string const& path, document_ptr document) = 0;
 		virtual void show_error (std::string const& path, document_ptr document, std::string const& message, oak::uuid_t const& filter) = 0;
 		virtual void show_error (std::string const& path, std::string const& message, oak::uuid_t const& filter) { }
 	};
 
-	typedef std::tr1::shared_ptr<open_callback_t> open_callback_ptr;
+	typedef std::shared_ptr<open_callback_t> open_callback_ptr;
 
 	struct PUBLIC save_callback_t : file::save_callback_t
 	{
 		virtual ~save_callback_t () { }
 		virtual void did_save_document (document_ptr document, std::string const& path, bool success, std::string const& message, oak::uuid_t const& filter) = 0;
-		virtual void did_save (std::string const& path, io::bytes_ptr content, std::string const& pathAttributes, std::string const& encoding, bool bom, std::string const& lineFeeds, bool success, std::string const& message, oak::uuid_t const& filter) { }
+		virtual void did_save (std::string const& path, io::bytes_ptr content, encoding::type const& encoding, bool success, std::string const& message, oak::uuid_t const& filter) { }
 	};
 
-	typedef std::tr1::shared_ptr<save_callback_t> save_callback_ptr;
+	typedef std::shared_ptr<save_callback_t> save_callback_ptr;
 
-	struct PUBLIC document_t : std::tr1::enable_shared_from_this<document_t>
+	struct inode_t
+	{
+		inode_t () { }
+		inode_t (dev_t device, ino_t inode, std::string const& path);
+		inode_t (std::string const& path);
+
+		operator bool () const { return valid; }
+		bool operator== (inode_t const& rhs) const { return valid == rhs.valid && inode == rhs.inode && device == rhs.device; }
+		bool operator!= (inode_t const& rhs) const { return valid != rhs.valid || inode != rhs.inode || device != rhs.device; }
+		bool operator< (inode_t const& rhs) const;
+
+		dev_t device = 0;
+		ino_t inode  = 0;
+		bool valid   = false;
+	};
+
+	struct PUBLIC document_t : std::enable_shared_from_this<document_t>
 	{
 		WATCH_LEAKS(document_t);
 
-		document_t () : _did_load_marks(false), _selection(NULL_STR), _folded(NULL_STR), _visible_rect(NULL_STR), _disable_callbacks(false), _revision(0), _disk_revision(0), _modified(false), _path(NULL_STR), _open_count(0), _has_lru(false), _is_on_disk(false), _recent_tracking(true), _backup_path(NULL_STR), _backup_revision(0), _virtual_path(NULL_STR), _custom_name(NULL_STR), _untitled_count(0), _grammar_callback(*this), _file_type(NULL_STR), _path_attributes(NULL_STR), /*_folder(NULL_STR),*/ _disk_encoding(NULL_STR), _disk_newlines(NULL_STR), _disk_bom(false) { }
+		document_t () : _did_load_marks(false), _selection(NULL_STR), _folded(NULL_STR), _disable_callbacks(false), _revision(0), _disk_revision(0), _modified(false), _path(NULL_STR), _open_count(0), _has_lru(false), _is_on_disk(false), _recent_tracking(true), _backup_path(NULL_STR), _backup_revision(0), _virtual_path(NULL_STR), _custom_name(NULL_STR), _untitled_count(0), _file_type(NULL_STR), /*_folder(NULL_STR),*/ _disk_encoding(NULL_STR), _disk_newlines(NULL_STR), _disk_bom(false) { }
 		~document_t ();
 
 		bool operator== (document_t const& rhs) const { return _identifier == rhs._identifier; }
@@ -59,14 +76,14 @@ namespace document
 		// ============================================================
 
 		struct reader_t { virtual io::bytes_ptr next () = 0; virtual ~reader_t () { } };
-		typedef std::tr1::shared_ptr<reader_t> reader_ptr;
+		typedef std::shared_ptr<reader_t> reader_ptr;
 		reader_ptr create_reader () const;
 
 		// ======================================================
 		// = Performing replacements (from outside a text view) =
 		// ======================================================
 
-		void replace (std::multimap<text::range_t, std::string> const& replacements);
+		void replace (std::multimap<std::pair<size_t, size_t>, std::string> const& replacements);
 
 		// ===================================================================
 		// = Controlling marks (bookmarks, warnings, errors, search matches) =
@@ -96,7 +113,7 @@ namespace document
 
 		std::string _selection;
 		std::string _folded;
-		std::string _visible_rect;
+		ng::index_t _visible_index;
 		io::bytes_ptr _content;
 
 		// ===============
@@ -155,24 +172,24 @@ namespace document
 		// = For OakTextView =
 		// ===================
 
-		void post_load (std::string const& path, io::bytes_ptr content, std::map<std::string, std::string> const& attributes, std::string const& fileType, std::string const& pathAttributes, std::string const& encoding, bool bom, std::string const& newlines);
+		void post_load (std::string const& path, io::bytes_ptr content, std::map<std::string, std::string> const& attributes, std::string const& fileType, encoding::type const& encoding);
 
 		struct open_callback_wrapper_t : file::open_callback_t
 		{
 			open_callback_wrapper_t (document::document_ptr doc, document::open_callback_ptr callback) : _document(doc), _callbacks(1, callback) { }
 
-			void select_encoding (std::string const& path, io::bytes_ptr content, file::open_context_ptr context)   { _callbacks[0]->select_encoding(path, content, context); }
+			void select_charset (std::string const& path, io::bytes_ptr content, file::open_context_ptr context)    { _callbacks[0]->select_charset(path, content, context); }
 			void select_line_feeds (std::string const& path, io::bytes_ptr content, file::open_context_ptr context) { _callbacks[0]->select_line_feeds(path, content, context); }
 			void select_file_type (std::string const& path, io::bytes_ptr content, file::open_context_ptr context)  { if(_document->file_type() == NULL_STR) _callbacks[0]->select_file_type(path, content, context); else context->set_file_type(_document->file_type()); }
 			void add_callback (document::open_callback_ptr callback)                                                { _callbacks.push_back(callback); }
 
-			void show_content (std::string const& path, io::bytes_ptr content, std::map<std::string, std::string> const& attributes, std::string const& fileType, std::string const& pathAttributes, std::string const& encoding, bool bom, std::string const& lineFeeds, std::vector<oak::uuid_t> const& binaryImportFilters, std::vector<oak::uuid_t> const& textImportFilters)
+			void show_content (std::string const& path, io::bytes_ptr content, std::map<std::string, std::string> const& attributes, std::string const& fileType, encoding::type const& encoding, std::vector<oak::uuid_t> const& binaryImportFilters, std::vector<oak::uuid_t> const& textImportFilters)
 			{
 				// we are deleted in post_load() so make a copy of relevant data
 				std::vector<document::open_callback_ptr> callbacks(_callbacks);
 				document::document_ptr doc = _document;
 
-				_document->post_load(path, content, attributes, fileType, pathAttributes, encoding, bom, lineFeeds);
+				_document->post_load(path, content, attributes, fileType, encoding);
 				iterate(cb, callbacks)
 					(*cb)->show_document(path, doc);
 			}
@@ -183,9 +200,9 @@ namespace document
 				std::vector<document::open_callback_ptr> callbacks(_callbacks);
 				document::document_ptr doc = _document;
 
-				_document->post_load(path, io::bytes_ptr(), std::map<std::string, std::string>(), NULL_STR, NULL_STR, NULL_STR, false, NULL_STR);
+				_document->post_load(path, io::bytes_ptr(), std::map<std::string, std::string>(), NULL_STR, encoding::type());
 				iterate(cb, callbacks)
-					(*cb)->show_error(path, doc, message, filter);				
+					(*cb)->show_error(path, doc, message, filter);
 			}
 
 		private:
@@ -193,10 +210,10 @@ namespace document
 			std::vector<document::open_callback_ptr> _callbacks;
 		};
 
-		typedef std::tr1::shared_ptr<open_callback_wrapper_t> open_callback_wrapper_ptr;
+		typedef std::shared_ptr<open_callback_wrapper_t> open_callback_wrapper_ptr;
 		open_callback_wrapper_ptr _open_callback;
 
-		void post_save (std::string const& path, io::bytes_ptr content, std::string const& pathAttributes, std::string const& encoding, bool bom, std::string const& lineFeeds, bool succes);
+		void post_save (std::string const& path, io::bytes_ptr content, encoding::type const& encoding, bool succes);
 
 	public:
 		bool try_open (document::open_callback_ptr callback);
@@ -210,6 +227,7 @@ namespace document
 		void try_save (document::save_callback_ptr callback);
 		bool save ();
 		bool backup ();
+		void detach_backup () { _backup_path = NULL_STR; }
 
 		void set_path (std::string const& newPath);
 		void set_virtual_path (std::string const& virtualPath)    { _virtual_path = virtualPath; }
@@ -218,17 +236,32 @@ namespace document
 
 		std::string path () const             { return _path; }
 		std::string virtual_path () const     { return _virtual_path == NULL_STR ? _path : _virtual_path; }
+		std::string custom_name () const      { return _custom_name; }
 		std::string backup_path () const;
 		std::string display_name () const;
 
+		void set_disk_encoding (encoding::type const& encoding) { _disk_newlines = encoding.newlines(); _disk_encoding = encoding.charset(); _disk_bom = encoding.byte_order_mark(); }
+		encoding::type disk_encoding () const                   { return encoding::type(_disk_newlines, _disk_encoding, _disk_bom); }
+
+		void set_indent (text::indent_t const& indent);
+		text::indent_t const& indent () const;
+
+		encoding::type encoding_for_save_as_path (std::string const& path);
+
 		bool recent_tracking () const         { return _recent_tracking && _path != NULL_STR; }
 		void set_recent_tracking (bool flag)  { _recent_tracking = flag; }
+
+		bool sticky () const                  { return _sticky; }
+		void set_sticky (bool flag)           { _sticky = flag; }
 
 		ng::buffer_t& buffer ()               { ASSERT(_buffer); return *_buffer; }
 		ng::buffer_t const& buffer () const   { ASSERT(_buffer); return *_buffer; }
 
 		ng::undo_manager_t& undo_manager ()               { ASSERT(_undo_manager); return *_undo_manager; }
 		ng::undo_manager_t const& undo_manager () const   { ASSERT(_undo_manager); return *_undo_manager; }
+
+		std::string content () const;
+		void set_content (std::string const& str);
 
 		// =============
 		// = Accessors =
@@ -240,31 +273,25 @@ namespace document
 		bool is_open () const                 { return _open_count != 0 && !_open_callback; }
 
 		std::string file_type () const;
-		std::string path_attributes () const  { return _path_attributes; }
-		scope::scope_t scope () const         { return file_type() + " " + path_attributes(); }
-		settings_t const settings () const    { return settings_for_path(virtual_path(), scope(), path::parent(_path), identifier(), variables(std::map<std::string, std::string>(), false)); }
 
-		std::map<std::string, std::string> variables (std::map<std::string, std::string> map, bool sourceFileSystem = true) const;
+		std::map<std::string, std::string> document_variables () const;
 
 		bool is_modified () const;
 		bool is_on_disk () const                            { return is_open() ? _is_on_disk : path::exists(path());                }
 		void set_disk_revision (ssize_t rev)                { check_modified(rev, _revision);                                       }
 		std::string const& selection () const               { return _selection;                                                    }
 		std::string const& folded () const                  { return _folded;                                                       }
-		std::string visible_rect () const                   { return _visible_rect;                                                 }
+		ng::index_t visible_index () const                  { return _visible_index;                                                }
 
-		void set_selection (std::string const& sel)         { _selection = sel; _visible_rect = NULL_STR;                           }
+		void set_selection (std::string const& sel)         { _selection = sel; _visible_index = ng::index_t();                     }
 		void set_folded (std::string const& folded)         { _folded = folded;                                                     }
-		void set_visible_rect (std::string const& rect)     { _visible_rect = rect;                                                 }
+		void set_visible_index (ng::index_t index)          { _visible_index = index;                                               }
 
 		void set_authorization (osx::authorization_t const& auth) { _authorization = auth; }
 
 	private:
 		void setup_buffer ();
 		void grammar_did_change ();
-
-		void set_content (io::bytes_ptr const& bytes);
-		std::string content () const                        { ASSERT(_buffer); return _buffer->substr(0, _buffer->size()); }
 
 		void set_modified (bool flag);
 
@@ -273,11 +300,11 @@ namespace document
 		// ==============
 
 		friend document_ptr create (std::string const& path);
-		friend document_ptr from_content (std::string const& content, std::string const& fileType);
+		friend document_ptr from_content (std::string const& content, std::string fileType);
 		friend document_ptr find (oak::uuid_t const& uuid, bool searchBackups);
 
 		oak::uuid_t _identifier;              // to identify this document when there is no path
-		path::identifier_t _key;
+		inode_t _inode;
 		ssize_t _revision;
 		ssize_t _disk_revision;
 		bool _modified;
@@ -288,6 +315,7 @@ namespace document
 		mutable bool _has_lru;
 		bool _is_on_disk;
 		bool _recent_tracking;
+		bool _sticky = false;
 
 		mutable std::string _backup_path;     // if there is a backup, this is set — we can have a backup even when there is no path
 		mutable ssize_t _backup_revision;
@@ -296,24 +324,12 @@ namespace document
 		std::string _custom_name;
 		mutable size_t _untitled_count;       // this is ≠ 0 if the document is untitled
 
-		struct grammar_callback_t : parse::grammar_t::callback_t
-		{
-			grammar_callback_t (document_t& doc) : _document(doc) { }
-			void grammar_did_change ()                            { _document.grammar_did_change(); }
-		private:
-			document_t& _document;
-		};
-
-		parse::grammar_ptr _grammar;
-		grammar_callback_t _grammar_callback;
-
 		mutable std::string _file_type;       // this may also be in the settings
-		mutable std::string _path_attributes;
 		// oak::uuid_t _grammar_uuid;
 
-		std::tr1::shared_ptr<ng::buffer_t> _buffer;
+		std::shared_ptr<ng::buffer_t> _buffer;
 		std::string _pristine_buffer = NULL_STR;
-		std::tr1::shared_ptr<ng::undo_manager_t> _undo_manager;
+		std::shared_ptr<ng::undo_manager_t> _undo_manager;
 		void mark_pristine ();
 
 		// std::string _folder;                   // when there is no path, this value is where the document will likely end up, i.e, used for retrieving settings and default save location
@@ -326,6 +342,8 @@ namespace document
 		std::string _disk_newlines;
 		bool _disk_bom;
 
+		text::indent_t _indent;
+
 	protected: // so that we can trigger the callback in unit tests
 		watch_ptr _file_watcher;
 		friend struct watch_t;
@@ -333,9 +351,8 @@ namespace document
 	};
 
 	PUBLIC document_ptr create (std::string const& path = NULL_STR);
-	PUBLIC document_ptr find (oak::uuid_t const& uuid, bool searchBackups = true);
-	PUBLIC document_ptr from_content (std::string const& content, std::string const& fileType = NULL_STR);
-	PUBLIC bool is_binary (std::string const& path);
+	PUBLIC document_ptr find (oak::uuid_t const& uuid, bool searchBackups = false);
+	PUBLIC document_ptr from_content (std::string const& content, std::string fileType = NULL_STR);
 
 	// ====================
 	// = Document scanner =
@@ -345,7 +362,7 @@ namespace document
 	{
 		WATCH_LEAKS(scanner_t);
 
-		scanner_t (std::string const& path, std::string const& glob = "*", std::string const& excludeGlob = "", bool follow_links = false, bool follow_hidden_folders = false, bool depth_first = false);
+		scanner_t (std::string const& path, path::glob_list_t const& glob, bool follow_links = false, bool depth_first = false, bool includeUntitled = true);
 		~scanner_t ();
 
 		bool is_running () const { return is_running_flag; }
@@ -358,8 +375,9 @@ namespace document
 		std::string get_current_path () const;
 
 	private:
-		std::string path, glob, exclude_glob;
-		bool follow_links, follow_hidden_folders, depth_first;
+		std::string path;
+		path::glob_list_t glob;
+		bool follow_links, depth_first;
 
 		pthread_t thread;
 		mutable pthread_mutex_t mutex;
@@ -373,7 +391,7 @@ namespace document
 		std::set< std::pair<dev_t, ino_t> > seen_paths;
 	};
 
-	typedef std::tr1::shared_ptr<scanner_t> scanner_ptr;
+	typedef std::shared_ptr<scanner_t> scanner_ptr;
 	
 } /* document */
 

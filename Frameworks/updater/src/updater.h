@@ -2,19 +2,20 @@
 #define UPDATER_H_D2910JR4
 
 #include <plist/plist.h>
+#include <network/key_chain.h>
 
 namespace bundles_db
 {
 	struct source_t;
 	struct bundle_t;
 	struct grammar_info_t;
-	typedef std::tr1::shared_ptr<source_t> source_ptr;
-	typedef std::tr1::shared_ptr<bundle_t> bundle_ptr;
-	typedef std::tr1::shared_ptr<grammar_info_t> grammar_info_ptr;
+	typedef std::shared_ptr<source_t> source_ptr;
+	typedef std::shared_ptr<bundle_t> bundle_ptr;
+	typedef std::shared_ptr<grammar_info_t> grammar_info_ptr;
 
 	// internal (private) type
 	struct dependency_info_t;
-	typedef std::tr1::shared_ptr<dependency_info_t> dependency_info_ptr;
+	typedef std::shared_ptr<dependency_info_t> dependency_info_ptr;
 
 	struct PUBLIC source_t
 	{
@@ -28,6 +29,7 @@ namespace bundles_db
 		void set_disabled (bool flag)   { _disabled = flag; }
 
 		std::string path () const;
+		key_chain_t key_chain () const;
 		bool needs_update (double pollInterval = 60*60) const;
 		oak::date_t last_check () const;
 
@@ -42,12 +44,13 @@ namespace bundles_db
 
 	struct PUBLIC bundle_t
 	{
-		bundle_t () : _name(NULL_STR), _category(NULL_STR), _origin(NULL_STR), _description(NULL_STR), _contact_name(NULL_STR), _contact_email(NULL_STR), _url(NULL_STR), _size(0), _path(NULL_STR) { }
+		bundle_t () : _name(NULL_STR), _category(NULL_STR), _html_url(NULL_STR), _origin(NULL_STR), _description(NULL_STR), _contact_name(NULL_STR), _contact_email(NULL_STR), _url(NULL_STR), _size(0), _path(NULL_STR) { }
 
 		oak::uuid_t uuid () const              { return _uuid; }
 		std::string origin () const            { return _origin; }
 		std::string name () const              { return _name; }
 		std::string category () const          { return _category; }
+		std::string html_url () const          { return _html_url; }
 		std::string description () const       { return _description; }
 		std::string contact_name () const      { return _contact_name; }
 		std::string contact_email () const     { return _contact_email; }
@@ -60,6 +63,7 @@ namespace bundles_db
 
 		bool installed () const                { return _path != NULL_STR; }
 		bool has_update () const               { return installed() && _path_updated < _url_updated; }
+		key_chain_t key_chain () const         { return _source ? _source->key_chain() : key_chain_t(); }
 
 		std::vector<grammar_info_ptr> const& grammars () const { return _grammars; }
 		std::vector<bundle_t const*> dependencies (std::vector<bundle_ptr> const& bundles, bool includeImplicitDependencies = true) const;
@@ -72,11 +76,13 @@ namespace bundles_db
 		friend std::vector<bundle_ptr> index (std::string const& installDir);
 		friend bool update (bundle_ptr bundle, std::string const& installDir, double* progress, double min, double max);
 		friend bool uninstall (bundle_ptr bundle, std::string const& installDir);
+		friend std::vector<std::string> release_notes (std::string const& installDir);
 
 		oak::uuid_t _uuid;
 
 		std::string _name;
 		std::string _category;
+		std::string _html_url;
 		std::string _origin;
 		std::string _description;
 		std::string _contact_name;
@@ -115,7 +121,6 @@ namespace bundles_db
 	};
 
 	PUBLIC bool update (source_ptr source, double* progress = NULL, double min = 0, double max = 1);
-	PUBLIC bool update_sources (std::string const& installDir = NULL_STR);
 	PUBLIC std::vector<source_ptr> sources (std::string const& installDir = NULL_STR);
 	PUBLIC bool save_sources (std::vector<source_ptr> const& sources, std::string const& installDir = NULL_STR);
 
@@ -131,6 +136,8 @@ namespace bundles_db
 	PUBLIC bool update (bundle_ptr bundle, std::string const& installDir = NULL_STR, double* progress = NULL, double min = 0, double max = 1);
 	PUBLIC bool install (bundle_ptr bundle, std::string const& installDir = NULL_STR, double* progress = NULL, double min = 0, double max = 1);
 	PUBLIC bool uninstall (bundle_ptr bundle, std::string const& installDir = NULL_STR);
+
+	PUBLIC std::vector<std::string> release_notes (std::string const& installDir = NULL_STR);
 
 } /* bundles_db */
 

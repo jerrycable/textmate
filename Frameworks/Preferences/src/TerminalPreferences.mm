@@ -1,9 +1,9 @@
 #import "TerminalPreferences.h"
 #import "Keys.h"
+#import <OakAppKit/OakAppKit.h>
 #import <OakAppKit/NSAlert Additions.h>
 #import <OakAppKit/NSImage Additions.h>
 #import <OakAppKit/NSMenu Additions.h>
-#import <OakAppKit/OakSavePanel.h>
 #import <OakFoundation/NSString Additions.h>
 #import <OakFoundation/OakStringListTransformer.h>
 #import <io/path.h>
@@ -11,6 +11,7 @@
 #import <ns/ns.h>
 #import <regexp/format_string.h>
 #import <bundles/bundles.h>
+#import <oak/compat.h>
 
 static void CreateHyperLink (NSTextField* textField, NSString* text, NSString* url)
 {
@@ -20,7 +21,7 @@ static void CreateHyperLink (NSTextField* textField, NSString* text, NSString* u
 	NSAttributedString* str = [textField attributedStringValue];
 	NSRange range = [[str string] rangeOfString:text];
 
-	NSMutableAttributedString* attrString = [[str mutableCopy] autorelease];
+	NSMutableAttributedString* attrString = [str mutableCopy];
 	[attrString beginEditing];
 	[attrString addAttribute:NSLinkAttributeName value:url range:range];
 	[attrString addAttribute:NSForegroundColorAttributeName value:[NSColor blueColor] range:range];
@@ -47,7 +48,7 @@ static bool run_auth_command (AuthorizationRef& auth, std::string const& cmd, ..
 	args.push_back(NULL);
 
 	bool res = false;
-	if(AuthorizationExecuteWithPrivileges(auth, cmd.c_str(), kAuthorizationFlagDefaults, &args[0], NULL) == errAuthorizationSuccess)
+	if(oak::execute_with_privileges(auth, cmd, kAuthorizationFlagDefaults, &args[0], NULL) == errAuthorizationSuccess)
 	{
 		int status;
 		int pid = wait(&status);
@@ -111,7 +112,7 @@ static bool rm_path (std::string const& path, AuthorizationRef& auth)
 
 static bool cp_path (std::string const& src, std::string const& dst, AuthorizationRef& auth)
 {
-	if(access(path::parent(dst).c_str(), W_OK) == 0)
+	if(access(dst.c_str(), W_OK) == 0 || access(dst.c_str(), X_OK) != 0 && access(path::parent(dst).c_str(), W_OK) == 0)
 	{
 		if(copyfile(src.c_str(), dst.c_str(), NULL, COPYFILE_ALL | COPYFILE_NOFOLLOW_SRC) == 0)
 			return true;
@@ -132,7 +133,7 @@ static bool install_mate (std::string const& src, std::string const& dst)
 	if(mk_dir(path::parent(dst), auth))
 	{
 		struct stat buf;
-		if(lstat(dst.c_str(), &buf) == 0 && !rm_path(dst, auth))
+		if(lstat(dst.c_str(), &buf) == 0 && !S_ISREG(buf.st_mode) && !rm_path(dst, auth))
 			return false;
 		return cp_path(src, dst, auth);
 	}
@@ -154,27 +155,26 @@ static bool uninstall_mate (std::string const& path)
 	{
 		[OakStringListTransformer createTransformerWithName:@"OakRMateInterfaceTransformer" andObjectsArray:@[ kRMateServerListenLocalhost, kRMateServerListenRemote ]];
 
-		self.defaultsProperties = [NSDictionary dictionaryWithObjectsAndKeys:
-			kUserDefaultsMateInstallPathKey,    @"path",
-			kUserDefaultsDisableRMateServerKey, @"disableRMate",
-			kUserDefaultsRMateServerListenKey,  @"interface",
-			kUserDefaultsRMateServerPortKey,    @"port",
-		nil];
+		self.defaultsProperties = @{
+			@"path"         : kUserDefaultsMateInstallPathKey,
+			@"disableRMate" : kUserDefaultsDisableRMateServerKey,
+			@"interface"    : kUserDefaultsRMateServerListenKey,
+			@"port"         : kUserDefaultsRMateServerPortKey,
+		};
 	}
 	return self;
 }
 
 - (void)selectInstallPath:(id)sender
 {
-	[OakSavePanel showWithPath:@"mate" directory:nil fowWindow:[self view].window delegate:self contextInfo:NULL];
-}
-
-- (void)savePanelDidEnd:(OakSavePanel*)sheet path:(NSString*)path contextInfo:(void*)info
-{
-	if(path)
-			[self updatePopUp:path];
-	else	[installPathPopUp selectItemAtIndex:0];
-	[self updateUI:self];
+	NSSavePanel* savePanel = [NSSavePanel savePanel];
+	[savePanel setNameFieldStringValue:@"mate"];
+	[savePanel beginSheetModalForWindow:[self view].window completionHandler:^(NSInteger result) {
+		if(result == NSOKButton)
+				[self updatePopUp:[[savePanel.URL filePathURL] path]];
+		else	[installPathPopUp selectItemAtIndex:0];
+		[self updateUI:self];
+	}];
 }
 
 - (void)updatePopUp:(NSString*)path
@@ -231,8 +231,8 @@ static bool uninstall_mate (std::string const& path)
 	[self updatePopUp:self.mateInstallPath];
 	[self updateUI:self];
 
-	CreateHyperLink(rmateSummaryText, @"rmate", [NSString stringWithFormat:@"txmt://open?url=%@", [[NSURL fileURLWithPath:[[NSBundle bundleForClass:[self class]] pathForResource:@"rmate" ofType:@""]] absoluteString]]);
-	LSSetDefaultHandlerForURLScheme(CFSTR("txmt"), (CFStringRef)[[NSBundle mainBundle] bundleIdentifier]);
+	CreateHyperLink(rmateSummaryText, @"rmate", @"https://github.com/textmate/rmate/");
+	LSSetDefaultHandlerForURLScheme(CFSTR("txmt"), CFBundleGetIdentifier(CFBundleGetMainBundle()));
 }
 
 - (NSString*)mateInstallPath
@@ -256,8 +256,8 @@ static bool uninstall_mate (std::string const& path)
 		{
 			[self setMateInstallPath:dstPath];
 			std::string res = io::exec(to_s(srcPath), "--version", NULL);
-			if(regexp::match_t const& m = regexp::search("\\Amate ([\\d.]+)", res.data(), res.data() + res.size()))
-				[[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithUTF8String:res.data() + m.begin(1) length:m.end(1) - m.begin(1)] forKey:kUserDefaultsMateInstallVersionKey];
+			if(regexp::match_t const& m = regexp::search("\\Amate ([\\d.]+)", res))
+				[[NSUserDefaults standardUserDefaults] setDouble:std::stod(m[1]) forKey:kUserDefaultsMateInstallVersionKey];
 		}
 	}
 	else
@@ -265,13 +265,6 @@ static bool uninstall_mate (std::string const& path)
 		NSRunAlertPanel(@"Unable to find ‘mate’", @"The ‘mate’ binary is missing from the application bundle. We recommend that you re-download the application.", @"OK", nil, nil);
 	}
 	[self updateUI:self];
-}
-
-- (void)replaceWarningDidEnd:(NSAlert*)alert returnCode:(NSInteger)returnCode contextInfo:(void*)stack
-{
-	if(returnCode == NSAlertFirstButtonReturn)
-		[self installMateAs:[[installPathPopUp titleOfSelectedItem] stringByExpandingTildeInPath]];
-	[alert release];
 }
 
 - (IBAction)performInstallMate:(id)sender
@@ -292,12 +285,15 @@ static bool uninstall_mate (std::string const& path)
 
 		std::string summary = text::format("%s with the name “mate” already exists in the folder %s. Do you want to replace it?", itemType, path::with_tilde(path::parent(dstPath)).c_str());
 
-		NSAlert* alert = [[NSAlert alloc] init]; // released in didEndSelector
+		NSAlert* alert = [[NSAlert alloc] init];
 		[alert setAlertStyle:NSWarningAlertStyle];
 		[alert setMessageText:@"File Already Exists"];
 		[alert setInformativeText:[NSString stringWithCxxString:summary]];
 		[alert addButtons:@"Replace", @"Cancel", nil];
-		[alert beginSheetModalForWindow:[self.view window] modalDelegate:self didEndSelector:@selector(replaceWarningDidEnd:returnCode:contextInfo:) contextInfo:NULL];
+		OakShowAlertForWindow(alert, [self.view window], ^(NSInteger returnCode){
+			if(returnCode == NSAlertFirstButtonReturn)
+				[self installMateAs:[[installPathPopUp titleOfSelectedItem] stringByExpandingTildeInPath]];
+		});
 	}
 	else
 	{
@@ -311,5 +307,28 @@ static bool uninstall_mate (std::string const& path)
 	if(uninstall_mate(to_s(self.mateInstallPath)))
 		[self setMateInstallPath:nil];
 	[self updateUI:self];
+}
+
++ (void)updateMateIfRequired
+{
+	NSString* oldMate = [[[NSUserDefaults standardUserDefaults] stringForKey:kUserDefaultsMateInstallPathKey] stringByExpandingTildeInPath];
+	double oldVersion = [[NSUserDefaults standardUserDefaults] doubleForKey:kUserDefaultsMateInstallVersionKey];
+	NSString* newMate = [[NSBundle mainBundle] pathForResource:@"mate" ofType:nil];
+
+	if(oldMate && newMate)
+	{
+		dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+			std::string res = io::exec(to_s(newMate), "--version", NULL);
+			if(regexp::match_t const& m = regexp::search("\\Amate ([\\d.]+)", res))
+			{
+				double newVersion = std::stod(m[1]);
+				if(oldVersion < newVersion)
+				{
+					if(install_mate(to_s(newMate), to_s(oldMate)))
+						[[NSUserDefaults standardUserDefaults] setDouble:newVersion forKey:kUserDefaultsMateInstallVersionKey];
+				}
+			}
+		});
+	}
 }
 @end

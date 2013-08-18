@@ -1,4 +1,5 @@
 #import "PropertiesViewController.h"
+#import <OakAppKit/OakKeyEquivalentView.h>
 
 @implementation PropertiesViewController
 @synthesize properties;
@@ -26,6 +27,6 @@
 - (void)loadView
 {
 	[super loadView];
-	[keyEquivalentView bind:@"value" toObject:objectController withKeyPath:@"selection.keyEquivalent" options:nil];
+	[keyEquivalentView bind:NSValueBinding toObject:objectController withKeyPath:@"selection.keyEquivalent" options:nil];
 }
 @end

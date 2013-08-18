@@ -36,11 +36,12 @@ namespace scope
 		return i == rhsScopes.size();
 	}
 
-	scope_t scope_t::append (std::string const& atom) const
+	scope_t scope_t::append (std::string const& atom, bool contentScope) const
 	{
 		scope_t res;
 		res.path.reset(new types::path_t(path ? *path : types::path_t()));
 		types::scope_t scope;
+		scope.content_scope = contentScope;
 		parse::scope(atom.data(), atom.data() + atom.size(), scope);
 		res.path->scopes.push_back(scope);
 		return res;
@@ -60,7 +61,7 @@ namespace scope
 	bool scope_t::operator== (scope_t const& rhs) const   { return (!path && !rhs.path) || (path && rhs.path && *path == *rhs.path); }
 	bool scope_t::operator!= (scope_t const& rhs) const   { return !(*this == rhs); }
 	bool scope_t::operator< (scope_t const& rhs) const    { return (!path && rhs.path) || (path && rhs.path && *path < *rhs.path); }
-	scope_t::operator bool () const                       { return path; }
+	scope_t::operator bool () const                       { return path ? true : false; }
 
 	scope_t shared_prefix (scope_t const& lhs, scope_t const& rhs)
 	{

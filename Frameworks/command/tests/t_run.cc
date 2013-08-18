@@ -27,6 +27,7 @@ struct delegate_t : command::delegate_t
 
 	text::range_t write_unit_to_fd (int fd, input::type unit, input::type fallbackUnit, input_format::type format, scope::selector_t const& scopeSelector, std::map<std::string, std::string>& variables, bool* inputWasSelection)
 	{
+		close(fd);
 		return text::range_t::undefined;
 	}
 
@@ -69,7 +70,7 @@ struct delegate_t : command::delegate_t
 	void done ()   { }
 };
 
-typedef std::tr1::shared_ptr<delegate_t> delegate_ptr;
+typedef std::shared_ptr<delegate_t> delegate_ptr;
 
 class run_tests : public CxxTest::TestSuite
 {
@@ -94,7 +95,7 @@ public:
 		plist["output"]  = output;
 
 		delegate_ptr delegate(new delegate_t);
-		command::runner_ptr runner = command::runner(parse_command(convert_command_from_v1(plist)), ng::buffer_t(), ng::ranges_t(), variables_for_path(), delegate);
+		command::runner_ptr runner = command::runner(parse_command(convert_command_from_v1(plist)), ng::buffer_t(), ng::ranges_t(), variables_for_path(oak::basic_environment()), delegate);
 		runner->launch();
 		runner->wait(true);
 		return delegate;

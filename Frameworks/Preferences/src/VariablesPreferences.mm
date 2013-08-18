@@ -1,9 +1,11 @@
 #import "VariablesPreferences.h"
 #import "Keys.h"
 #import <OakAppKit/NSImage Additions.h>
-#import <OakFoundation/OakFoundation.h>
-#import <plist/ascii.h>
 #import <ns/ns.h>
+
+@interface VariablesPreferences ()
+@property (nonatomic, retain) NSMutableArray* variables;
+@end
 
 @implementation VariablesPreferences
 @synthesize canRemove;
@@ -16,29 +18,24 @@
 {
 	if(self = [super initWithNibName:@"VariablesPreferences" bundle:[NSBundle bundleForClass:[self class]]])
 	{
-		variables = [[NSMutableArray alloc] initWithArray:[[NSUserDefaults standardUserDefaults] arrayForKey:kUserDefaultsEnvironmentVariablesKey]];
+		self.variables = [NSMutableArray arrayWithArray:[[NSUserDefaults standardUserDefaults] arrayForKey:kUserDefaultsEnvironmentVariablesKey]];
 	}
 	return self;
 }
 
-- (void)dealloc
-{
-	[variables release];
-	[super dealloc];
-}
-
 - (IBAction)addVariable:(id)sender
 {
-	NSDictionary* entry = [NSDictionary dictionaryWithObjectsAndKeys:
-		YES_obj,           @"enabled",
-		@"VARIABLE_NAME",  @"name",
-		@"variable value", @"value",
-		nil];
+	NSDictionary* entry = @{
+		@"enabled" : @YES,
+		@"name"    : @"VARIABLE_NAME",
+		@"value"   : @"variable value",
+	};
 
-	NSInteger pos = [variablesTableView selectedRow] != -1 ? [variablesTableView selectedRow] : [variables count];
-	[variables insertObject:entry atIndex:pos];
-	[[NSUserDefaults standardUserDefaults] setObject:[[variables copy] autorelease] forKey:kUserDefaultsEnvironmentVariablesKey];
+	NSInteger pos = [variablesTableView selectedRow] != -1 ? [variablesTableView selectedRow] : [_variables count];
+	[_variables insertObject:entry atIndex:pos];
+	[[NSUserDefaults standardUserDefaults] setObject:[_variables copy] forKey:kUserDefaultsEnvironmentVariablesKey];
 	[variablesTableView reloadData];
+	[variablesTableView selectRowIndexes:[NSIndexSet indexSetWithIndex:pos] byExtendingSelection:NO];
 	[variablesTableView editColumn:1 row:pos withEvent:nil select:YES];
 }
 
@@ -47,13 +44,13 @@
 	NSInteger row = [variablesTableView selectedRow];
 	if(row != -1)
 	{
-		[variables removeObjectAtIndex:row];
-		[[NSUserDefaults standardUserDefaults] setObject:[[variables copy] autorelease] forKey:kUserDefaultsEnvironmentVariablesKey];
+		[_variables removeObjectAtIndex:row];
+		[[NSUserDefaults standardUserDefaults] setObject:[_variables copy] forKey:kUserDefaultsEnvironmentVariablesKey];
 		[variablesTableView reloadData];
 		if(row > 0)
 			--row;
 
-		if(row < [variables count])
+		if(row < [_variables count])
 		{
 			[variablesTableView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
 			[variablesTableView scrollRowToVisible:row];
@@ -84,19 +81,19 @@
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView*)aTableView
 {
-	return [variables count];
+	return [_variables count];
 }
 
 - (id)tableView:(NSTableView*)aTableView objectValueForTableColumn:(NSTableColumn*)aTableColumn row:(NSInteger)rowIndex
 {
-	return [[variables objectAtIndex:rowIndex] objectForKey:[aTableColumn identifier]];
+	return [_variables[rowIndex] objectForKey:[aTableColumn identifier]];
 }
 
 - (void)tableView:(NSTableView*)aTableView setObjectValue:(id)anObject forTableColumn:(NSTableColumn*)aTableColumn row:(NSInteger)rowIndex
 {
-	NSMutableDictionary* newValue = [NSMutableDictionary dictionaryWithDictionary:[variables objectAtIndex:rowIndex]];
+	NSMutableDictionary* newValue = [NSMutableDictionary dictionaryWithDictionary:_variables[rowIndex]];
 	[newValue setObject:anObject forKey:[aTableColumn identifier]];
-	[variables replaceObjectAtIndex:rowIndex withObject:newValue];
-	[[NSUserDefaults standardUserDefaults] setObject:[[variables copy] autorelease] forKey:kUserDefaultsEnvironmentVariablesKey];
+	[_variables replaceObjectAtIndex:rowIndex withObject:newValue];
+	[[NSUserDefaults standardUserDefaults] setObject:[_variables copy] forKey:kUserDefaultsEnvironmentVariablesKey];
 }
 @end

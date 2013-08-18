@@ -1,13 +1,13 @@
 #ifndef ONIG_REGEXP_H_UMTUKY6I
 #define ONIG_REGEXP_H_UMTUKY6I
 
-#include "oniguruma.h"
+#include <Onigmo/oniguruma.h>
 #include <oak/debug.h>
 
 namespace regexp
 {
-	typedef std::tr1::shared_ptr<regex_t> regex_ptr;
-	typedef std::tr1::shared_ptr<OnigRegion> region_ptr;
+	typedef std::shared_ptr<regex_t> regex_ptr;
+	typedef std::shared_ptr<OnigRegion> region_ptr;
 
 	struct match_t;
 	struct pattern_t;
@@ -20,8 +20,8 @@ namespace regexp
 		regex_ptr compiled_pattern;
 		char const* buf;
 
-		mutable std::tr1::shared_ptr< std::map<std::string, std::string> > captured_variables;
-		mutable std::tr1::shared_ptr< std::multimap<std::string, std::pair<size_t, size_t> > > captured_indices;
+		mutable std::shared_ptr< std::map<std::string, std::string> > captured_variables;
+		mutable std::shared_ptr< std::multimap<std::string, std::pair<size_t, size_t> > > captured_indices;
 
 		friend match_t search (pattern_t const& ptrn, char const* first, char const* last, char const* from, char const* to, OnigOptionType options);
 		match_t (region_ptr const& region, regex_ptr const& compiled_pattern, char const* buf) : region(region), compiled_pattern(compiled_pattern), buf(buf) { }
@@ -34,7 +34,7 @@ namespace regexp
 
 		bool did_match (int i = 0) const	{ return i < size() && region->beg[i] != -1; }
 
-		EXPLICIT operator bool () const	{ return did_match(); }
+		explicit operator bool () const	{ return did_match(); }
 
 		char const* buffer () const		{ return buf; }
 
@@ -45,6 +45,7 @@ namespace regexp
 
 		std::map<std::string, std::string> const& captures () const;
 		std::multimap<std::string, std::pair<size_t, size_t> > const& capture_indices () const;
+		std::string operator[] (size_t i) const;
 	};
 
 	struct PUBLIC pattern_t
@@ -62,11 +63,10 @@ namespace regexp
 		pattern_t (char const* pattern, OnigOptionType options = ONIG_OPTION_NONE);
 		pattern_t (std::string const& pattern, OnigOptionType options = ONIG_OPTION_NONE);
 		pattern_t (std::string const& pattern, std::string const& str_options);
-		EXPLICIT operator bool () const { return compiled_pattern; }
+		explicit operator bool () const { return compiled_pattern ? true : false; }
 
 		bool operator== (pattern_t const& rhs) const { return pattern_string == rhs.pattern_string; }
 		bool operator!= (pattern_t const& rhs) const { return !(*this == rhs); }
-		size_t indices_for_group (char const* name, int** list) const;
 
 		friend std::string to_s (pattern_t const& ptrn);
 	};
@@ -75,6 +75,7 @@ namespace regexp
 
 	PUBLIC std::string validate (std::string const& ptrn);
 	PUBLIC match_t search (pattern_t const& ptrn, char const* first, char const* last, char const* from = NULL, char const* to = NULL, OnigOptionType options = ONIG_OPTION_NONE);
+	PUBLIC match_t search (pattern_t const& ptrn, std::string const& str);
 
 } /* regexp */
 

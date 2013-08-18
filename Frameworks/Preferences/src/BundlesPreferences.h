@@ -9,7 +9,6 @@
 	IBOutlet MGScopeBar* categoriesScopeBar;
 	IBOutlet NSTableView* bundlesTableView;
 	IBOutlet NSTextField* activityTextField;
-	BundlesManager* bundlesManager;
 
 	std::vector<std::string> categories;
 	std::set<std::string> enabledCategories;
@@ -18,4 +17,5 @@
 @property (nonatomic, readonly) NSString* identifier;
 @property (nonatomic, readonly) NSImage*  toolbarItemImage;
 @property (nonatomic, readonly) NSString* toolbarItemLabel;
+- (IBAction)didClickBundleLink:(id)sender;
 @end
