@@ -417,6 +417,9 @@ static std::string shell_quote (std::vector<std::string> paths)
 
 - (void)highlightRanges:(ng::ranges_t const&)ranges
 {
+	if(ranges.empty())
+		return;
+
 	iterate(range, ranges)
 		layout->remove_enclosing_folds(range->min().index, range->max().index);
 	[self ensureSelectionIsInVisibleArea:self];
@@ -3063,8 +3066,8 @@ static scope::context_t add_modifiers_to_scope (scope::context_t scope, NSUInteg
 	{
 		if(modifiers & map[i].modifier)
 		{
-			scope.left  = scope.left.append(map[i].scope);
-			scope.right = scope.right.append(map[i].scope);
+			scope.left.push_scope(map[i].scope);
+			scope.right.push_scope(map[i].scope);
 		}
 	}
 
