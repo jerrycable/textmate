@@ -12,6 +12,23 @@ void test_scope_append ()
 	OAK_ASSERT_EQ("foo", to_s(scope));
 }
 
+void test_empty_scope ()
+{
+	OAK_ASSERT(scope::scope_t().empty());
+	OAK_ASSERT(scope::scope_t("").empty());
+	OAK_ASSERT_EQ(scope::scope_t(""), scope::scope_t());
+}
+
+void test_has_prefix ()
+{
+	OAK_ASSERT( scope::scope_t("").has_prefix(""));
+	OAK_ASSERT(!scope::scope_t("").has_prefix("foo"));
+	OAK_ASSERT( scope::scope_t("foo").has_prefix(""));
+	OAK_ASSERT(!scope::scope_t("foo").has_prefix("foo bar"));
+	OAK_ASSERT( scope::scope_t("foo bar").has_prefix("foo bar"));
+	OAK_ASSERT( scope::scope_t("foo bar baz").has_prefix("foo bar"));
+}
+
 void test_operator_bool ()
 {
 	scope::scope_t scope("foo"), empty;

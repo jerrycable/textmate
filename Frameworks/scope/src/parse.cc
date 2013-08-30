@@ -46,11 +46,11 @@ namespace scope
 			if(parse_char("*"))
 				return res = scope::types::atom_any, true;
 
-			if(!isalnum(*it) && *it < 0x80)
+			if(it == last || (!isalnum(*it) && *it < 0x80))
 				return false;
 
 			char const* from = it;
-			while(isalnum(*it) || *it == '_' || *it == '-' || *it == '+' || *it > 0x7F)
+			while(it != last && (isalnum(*it) || *it == '_' || *it == '-' || *it == '+' || *it > 0x7F))
 				++it;
 			res.insert(res.end(), from, it);
 			return true;
@@ -80,13 +80,13 @@ namespace scope
 			res.anchor_to_bol = parse_char("^") && ws();
 
 			do {
-				res.scopes.push_back(scope::types::scope_t());
+				res.scopes.emplace_back();
 				if(!parse_scope(res.scopes.back()))
+				{
+					res.scopes.pop_back();
 					break;
+				}
 			} while(ws());
-
-			if(res.scopes.size() > 1)
-				res.scopes.pop_back();
 
 			res.anchor_to_eol = parse_char("$");
 			return true;

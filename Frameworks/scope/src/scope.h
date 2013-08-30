@@ -33,6 +33,8 @@ namespace scope
 		void push_scope (std::string const& atom, bool contentScope = false);
 		void pop_scope ();
 		std::string back () const;
+		size_t size () const;
+		bool empty () const;
 
 		bool operator== (scope_t const& rhs) const;
 		bool operator!= (scope_t const& rhs) const;
@@ -64,7 +66,7 @@ namespace scope
 
 	PUBLIC extern scope_t wildcard;
 
-	PUBLIC scope_t shared_prefix (scope_t const& lhs, scope_t const& rhs);
+	PUBLIC scope_t shared_prefix (scope_t lhs, scope_t rhs);
 	PUBLIC std::string xml_difference (scope_t const& from, scope_t const& to, std::string const& open = "<", std::string const& close = ">");
 	PUBLIC std::string to_s (scope_t const& s);
 	PUBLIC std::string to_s (context_t const& s);
