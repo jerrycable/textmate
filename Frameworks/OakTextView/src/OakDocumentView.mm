@@ -60,8 +60,7 @@ static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 @property (nonatomic) NSDictionary* gutterImages;
 @property (nonatomic) NSDictionary* gutterHoverImages;
 @property (nonatomic) NSDictionary* gutterPressedImages;
-@property (nonatomic) OakFilterWindowController* filterWindowController;
-@property (nonatomic) SymbolChooser*             symbolChooser;
+@property (nonatomic) SymbolChooser* symbolChooser;
 @property (nonatomic) NSArray* observedKeys;
 - (void)updateStyle;
 @end
@@ -181,7 +180,8 @@ private:
 	for(size_t i = 0; i < [stackedViews count]-1; ++i)
 		[self addConstraint:[NSLayoutConstraint constraintWithItem:stackedViews[i] attribute:NSLayoutAttributeBottom relatedBy:NSLayoutRelationEqual toItem:stackedViews[i+1] attribute:NSLayoutAttributeTop multiplier:1 constant:0]];
 
-	for(NSArray* views : { topAuxiliaryViews, bottomAuxiliaryViews })
+	NSArray* array[] = { topAuxiliaryViews, bottomAuxiliaryViews };
+	for(NSArray* views : array)
 	{
 		for(NSView* view in views)
 			[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[view]|" options:0 metrics:nil views:NSDictionaryOfVariableBindings(view)]];
@@ -293,8 +293,7 @@ private:
 	[self setDocument:document::document_ptr()];
 	delete callback;
 
-	self.filterWindowController = nil;
-	self.symbolChooser          = nil;
+	self.symbolChooser = nil;
 }
 
 - (document::document_ptr const&)document
@@ -327,7 +326,10 @@ private:
 	[self updateStyle];
 
 	if(_symbolChooser)
-		_symbolChooser.document = document;
+	{
+		_symbolChooser.document        = document;
+		_symbolChooser.selectionString = textView.selectionString;
+	}
 
 	if(oldDocument)
 	{
@@ -342,7 +344,7 @@ private:
 	{
 		auto theme = [textView theme];
 
-		[[self window] setOpaque:!theme->is_transparent()];
+		[[self window] setOpaque:!theme->is_transparent() && !theme->gutter_styles().is_transparent()];
 		[textScrollView setBackgroundColor:[NSColor tmColorWithCGColor:theme->background(document->file_type())]];
 
 		if(theme->is_dark())
@@ -474,44 +476,40 @@ private:
 // = Symbol Chooser =
 // ==================
 
-- (void)setFilterWindowController:(OakFilterWindowController*)controller
+- (void)setSymbolChooser:(SymbolChooser*)aSymbolChooser
 {
-	if(_filterWindowController == controller)
+	if(_symbolChooser == aSymbolChooser)
 		return;
 
-	if(_filterWindowController)
+	if(_symbolChooser)
 	{
-		[[NSNotificationCenter defaultCenter] removeObserver:self name:NSWindowWillCloseNotification object:_filterWindowController.window];
-		_filterWindowController.target = nil;
-		[_filterWindowController close];
+		[[NSNotificationCenter defaultCenter] removeObserver:self name:NSWindowWillCloseNotification object:_symbolChooser.window];
+
+		_symbolChooser.target   = nil;
+		_symbolChooser.document = document::document_ptr();
 	}
 
-	if(_filterWindowController = controller)
-		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(filterWindowWillClose:) name:NSWindowWillCloseNotification object:_filterWindowController.window];
+	if(_symbolChooser = aSymbolChooser)
+	{
+		_symbolChooser.target          = self;
+		_symbolChooser.action          = @selector(symbolChooserDidSelectItems:);
+		_symbolChooser.filterString    = @"";
+		_symbolChooser.document        = document;
+		_symbolChooser.selectionString = textView.selectionString;
+
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(symbolChooserWillClose:) name:NSWindowWillCloseNotification object:_symbolChooser.window];		
+	}
 }
 
-- (void)filterWindowWillClose:(NSNotification*)notification
+- (void)symbolChooserWillClose:(NSNotification*)aNotification
 {
-	self.filterWindowController = nil;
 	self.symbolChooser = nil;
 }
 
 - (IBAction)showSymbolChooser:(id)sender
 {
-	if(self.filterWindowController)
-	{
-		[self.filterWindowController.window makeKeyAndOrderFront:self];
-		return;
-	}
-
-	self.symbolChooser = [SymbolChooser symbolChooserForDocument:document];
-	self.symbolChooser.selectionString = textView.selectionString;
-
-	self.filterWindowController                         = [OakFilterWindowController new];
-	self.filterWindowController.dataSource              = self.symbolChooser;
-	self.filterWindowController.action                  = @selector(symbolChooserDidSelectItems:);
-	self.filterWindowController.sendActionOnSingleClick = YES;
-	[self.filterWindowController showWindowRelativeToWindow:self.window];
+	self.symbolChooser = [SymbolChooser sharedInstance];
+	[self.symbolChooser showWindowRelativeToFrame:[self.window convertRectToScreen:[textView convertRect:[textView visibleRect] toView:nil]]];
 }
 
 - (void)symbolChooserDidSelectItems:(id)sender
@@ -587,7 +585,7 @@ private:
 
 	std::multimap<std::string, bundles::item_ptr, text::less_t> ordered;
 	for(auto item : bundles::query(bundles::kFieldAny, NULL_STR, scope::wildcard, bundles::kItemTypeBundle))
-		ordered.insert(std::make_pair(item->name(), item));
+		ordered.emplace(item->name(), item);
 
 	NSMenuItem* selectedItem = nil;
 	for(auto pair : ordered)
@@ -678,25 +676,18 @@ private:
 
 enum bookmark_state_t { kBookmarkNoMark, kBookmarkRegularMark, kBookmarkSearchMark };
 
-static std::string const kBookmarkType = "bookmark";
+static std::string const kBookmarkType   = "bookmark";
+static std::string const kSearchmarkType = "search";
 
 - (NSUInteger)stateForColumnWithIdentifier:(id)columnIdentifier atLine:(NSUInteger)lineNumber
 {
 	if([columnIdentifier isEqualToString:kBookmarksColumnIdentifier])
 	{
 		ng::buffer_t const& buf = document->buffer();
-		std::map<size_t, std::string> const& marks = buf.get_marks(buf.begin(lineNumber), buf.eol(lineNumber));
-		iterate(pair, marks)
-		{
-			if(pair->second == kBookmarkType)
-				return kBookmarkRegularMark;
-		}
-
-		iterate(pair, marks)
-		{
-			if(pair->second == "search")
-				return kBookmarkSearchMark;
-		}
+		if(!buf.get_marks(buf.begin(lineNumber), buf.eol(lineNumber), kBookmarkType).empty())
+			return kBookmarkRegularMark;
+		if(!buf.get_marks(buf.begin(lineNumber), buf.eol(lineNumber), kSearchmarkType).empty())
+			return kBookmarkSearchMark;
 		return kBookmarkNoMark;
 	}
 	else if([columnIdentifier isEqualToString:kFoldingsColumnIdentifier])
@@ -955,7 +946,7 @@ static std::string const kBookmarkType = "bookmark";
 
 	theme_ptr theme = parse_theme(bundles::lookup(to_s(self.themeUUID)));
 	theme = theme->copy_with_font_name_and_size(to_s(fontName), fontSize * self.fontScale);
-	layout.reset(new ng::layout_t(document->buffer(), theme, /* softWrap: */ true));
+	layout = std::make_shared<ng::layout_t>(document->buffer(), theme, /* softWrap: */ true);
 	layout->set_viewport_size(CGSizeMake(self.pageWidth, self.pageHeight));
 	layout->update_metrics(CGRectMake(0, 0, CGFLOAT_MAX, CGFLOAT_MAX));
 
@@ -1011,7 +1002,7 @@ static std::string const kBookmarkType = "bookmark";
 
 		std::multimap<std::string, bundles::item_ptr, text::less_t> ordered;
 		for(auto item : bundles::query(bundles::kFieldAny, NULL_STR, scope::wildcard, bundles::kItemTypeTheme))
-			ordered.insert(std::make_pair(item->name(), item));
+			ordered.emplace(item->name(), item);
 
 		for(auto pair : ordered)
 		{

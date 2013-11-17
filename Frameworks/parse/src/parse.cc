@@ -39,7 +39,7 @@ namespace
 
 				if(pair.second.add)
 				{
-					scope.push_scope(pair.second.scope, true);
+					scope.push_scope(pair.second.scope);
 				}
 				else
 				{
@@ -52,14 +52,13 @@ namespace
 						std::vector<std::string> stack;
 						while(scope.back() != pair.second.scope)
 						{
-							ASSERT(scope.back() != NULL_STR);
 							D(DBF_Parser, bug("%s != %s\n", scope.back().c_str(), pair.second.scope.c_str()););
 							stack.emplace_back(scope.back());
 							scope.pop_scope();
 						}
 						scope.pop_scope();
 						for(auto it = stack.rbegin(); it != stack.rend(); ++it)
-							scope.push_scope(*it, true);
+							scope.push_scope(*it);
 					}
 				}
 				D(DBF_Parser, bug("→ %s\n", to_s(scope).c_str()););
@@ -170,8 +169,8 @@ namespace parse
 
 	struct ranked_match_t
 	{
-		ranked_match_t (rule_t const* rule, regexp::match_t const& match, size_t rank, bool is_end_pattern = false) : rule(rule), match(match), rank(rank), is_end_pattern(is_end_pattern) { }
-		rule_t const* rule;
+		ranked_match_t (rule_t* rule, regexp::match_t const& match, size_t rank, bool is_end_pattern = false) : rule(rule), match(match), rank(rank), is_end_pattern(is_end_pattern) { }
+		rule_t* rule;
 		regexp::match_t match;
 		size_t rank;
 		bool is_end_pattern;
@@ -203,7 +202,7 @@ namespace parse
 		while(ruleIter != captures->end() && indexIter != m.capture_indices().end())
 		{
 			if(ruleIter->first == indexIter->first && indexIter->second.first != indexIter->second.second)
-				rules.insert(std::make_pair(std::make_pair(indexIter->second.first, -(indexIter->second.second - indexIter->second.first)), ruleIter->second));
+				rules.emplace(std::make_pair(indexIter->second.first, -(indexIter->second.second - indexIter->second.first)), ruleIter->second);
 
 			if(ruleIter->first < indexIter->first)
 					++ruleIter;
@@ -226,7 +225,7 @@ namespace parse
 			if(!rule->children.empty())
 			{
 				D(DBF_Parser, bug("re-parse: ‘%.*s’ (range %zu-%zu)\n", (int)(to - from), m.buffer() + from, from, to););
-				parse::stack_ptr stack(new parse::stack_t(rule.get(), scope));
+				auto stack = std::make_shared<parse::stack_t>(rule.get(), scope);
 				stack->anchor = from;
 				parse(m.buffer(), m.buffer() + to, stack, scopes, firstLine, from);
 			}
@@ -275,6 +274,7 @@ namespace parse
 
 	static void collect_injections (stack_ptr const& stack, scope::context_t const& scope, std::vector<rule_t*> const& groups, std::vector<rule_t*>& res)
 	{
+		D(DBF_Parser_Flow, bug("%s\n", to_s(scope).c_str()););
 		for(stack_ptr node = stack; node; node = node->parent)
 		{
 			for(auto const& pair : node->rule->injections)
@@ -291,6 +291,7 @@ namespace parse
 
 			for(auto const& pair : rule->injections)
 			{
+				D(DBF_Parser_Flow, bug("selector: ‘%s’ → %s\n", to_s(pair.first).c_str(), BSTR(pair.first.does_match(scope))););
 				if(pair.first.does_match(scope))
 					collect_rule(pair.second.get(), res, nullptr);
 			}
@@ -391,7 +392,7 @@ namespace parse
 				if(rule->scope_string != NULL_STR)
 				{
 					std::string const scopeString = expand(rule->scope_string, m);
-					scope.push_scope(scopeString, true);
+					scope.push_scope(scopeString);
 					scopes.add(m.begin(), scopeString);
 				}
 
@@ -400,7 +401,7 @@ namespace parse
 				if(rule->content_scope_string != NULL_STR)
 				{
 					std::string const scopeString = expand(rule->content_scope_string, m);
-					scope.push_scope(scopeString, true);
+					scope.push_scope(scopeString);
 					scopes.add(m.end(), scopeString);
 				}
 
@@ -445,7 +446,7 @@ namespace parse
 			i = m.match.end();
 			D(DBF_Parser_Flow, bug("match %2zu-%2zu: %s\n", m.match.begin(), m.match.end(), m.rule->scope_string != NULL_STR ? m.rule->scope_string.c_str() : "(untitled)"););
 
-			rule_t const* rule = m.rule;
+			rule_t* rule = m.rule;
 			if(m.is_end_pattern)
 			{
 				if(stack->content_scope_string != NULL_STR)
@@ -474,12 +475,12 @@ namespace parse
 					break;
 				}
 
-				stack.reset(new stack_t(rule, scope::scope_t(), stack));
+				stack = std::make_shared<stack_t>(rule, scope::scope_t(), stack);
 
 				if(rule->scope_string != NULL_STR)
 				{
 					stack->scope_string = expand(rule->scope_string, m.match);
-					scope.push_scope(stack->scope_string, true);
+					scope.push_scope(stack->scope_string);
 					scopes.add(m.match.begin(), stack->scope_string);
 				}
 
@@ -488,7 +489,7 @@ namespace parse
 				if(rule->content_scope_string != NULL_STR)
 				{
 					stack->content_scope_string = expand(rule->content_scope_string, m.match);
-					scope.push_scope(stack->content_scope_string, true);
+					scope.push_scope(stack->content_scope_string);
 					scopes.add(m.match.end(), stack->content_scope_string);
 				}
 

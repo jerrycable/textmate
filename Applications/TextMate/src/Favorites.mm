@@ -1,166 +1,164 @@
 #import "Favorites.h"
+#import <OakFilterList/OakAbbreviations.h>
+#import <OakAppKit/OakUIConstructionFunctions.h>
 #import <OakFoundation/NSString Additions.h>
 #import <OakSystem/application.h>
 #import <text/ranker.h>
 #import <io/entries.h>
 #import <text/case.h>
+#import <text/ctype.h>
 #import <io/path.h>
 #import <ns/ns.h>
 
-// ===================
-// = View Controller =
-// ===================
-
-@interface FavoritesViewController : NSViewController
-@property (nonatomic, retain) NSSearchField* searchField;
-@property (nonatomic, retain) FavoritesDataSource* favoritesDataSource;
+@interface FavoriteChooser ()
+{
+	std::multimap<std::string, std::string, text::less_t> favorites;
+}
 @end
 
-@implementation FavoritesViewController
-- (id)initWithFavoritesDataSource:(FavoritesDataSource*)aDataSource
+@implementation FavoriteChooser
++ (instancetype)sharedInstance
 {
-	if(self = [super init])
+	static id sharedInstance = [self new];
+	return sharedInstance;
+}
+
+- (id)init
+{
+	if((self = [super init]))
 	{
-		self.favoritesDataSource          = aDataSource;
+		self.window.title = @"Open Favorite";
+		self.window.frameAutosaveName = @"Open Favorite";
+		self.tableView.allowsMultipleSelection = YES;
 
-		self.searchField                  = [[NSSearchField alloc] initWithFrame:NSMakeRect(10, 10, 180, 22)];
-		self.searchField.autoresizingMask = NSViewWidthSizable|NSViewMinYMargin;
-		self.searchField.target           = self.favoritesDataSource;
-		self.searchField.action           = @selector(search:);
-		[self.searchField.cell setScrollable:YES];
+		NSDictionary* views = @{
+			@"searchField"        : self.searchField,
+			@"topDivider"         : OakCreateHorizontalLine([NSColor grayColor], [NSColor lightGrayColor]),
+			@"scrollView"         : self.scrollView,
+			@"bottomDivider"      : OakCreateHorizontalLine([NSColor grayColor], [NSColor lightGrayColor]),
+			@"statusTextField"    : self.statusTextField,
+			@"itemCountTextField" : self.itemCountTextField,
+		};
 
-		self.view                  = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 200, NSMaxY(self.searchField.frame) + 8)];
-		self.view.autoresizingMask = NSViewWidthSizable|NSViewMinYMargin;
-		[self.view addSubview:self.searchField];
+		NSView* contentView = self.window.contentView;
+		for(NSView* view in [views allValues])
+		{
+			[view setTranslatesAutoresizingMaskIntoConstraints:NO];
+			[contentView addSubview:view];
+		}
+
+		[contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-(8)-[searchField(>=50)]-(8)-|"                      options:0 metrics:nil views:views]];
+		[contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[scrollView(==topDivider,==bottomDivider)]|"         options:0 metrics:nil views:views]];
+		[contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-[statusTextField]-[itemCountTextField]-|"      options:NSLayoutFormatAlignAllCenterY metrics:nil views:views]];
+		[contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|-(2)-[searchField]-(8)-[topDivider][scrollView(>=50)][bottomDivider]-(4)-[statusTextField]-(5)-|" options:0 metrics:nil views:views]];
 	}
 	return self;
 }
 
-- (void)dealloc
+- (void)scanFavoritesDirectory:(id)sender
 {
-	self.searchField.target = nil;
-	self.searchField.action = NULL;
-}
+	favorites.clear();
 
-- (void)setSearchFieldDelegate:(id)aDelegate
-{
-	self.searchField.delegate = aDelegate;
-}
-@end
-
-// ===============
-// = Data Source =
-// ===============
-
-@implementation FavoritesDataSource
-{
-	std::string favoritesPath;
-	std::multimap<std::string, std::string, text::less_t> favorites;
-	std::string filterString;
-	FavoritesViewController* viewController;
-}
-
-- (NSViewController*)viewController
-{
-	if(!viewController)
-		viewController = [[FavoritesViewController alloc] initWithFavoritesDataSource:self];
-	return viewController;
-}
-
-- (id)initWithCxxPath:(std::string const&)aPath
-{
-	if(self = [super init])
+	std::string const favoritesPath = oak::application_t::support("Favorites");
+	for(auto const& entry : path::entries(favoritesPath))
 	{
-		favoritesPath = aPath;
-		filterString  = "";
-
-		citerate(entry, path::entries(favoritesPath))
+		if(entry->d_type == DT_LNK)
 		{
-			if((*entry)->d_type == DT_LNK)
+			std::string const path = path::resolve(path::join(favoritesPath, entry->d_name));
+			if(strncmp("[DIR] ", entry->d_name, 6) == 0)
 			{
-				std::string const& path = path::resolve(path::join(favoritesPath, (*entry)->d_name));
-				if(strncmp("[DIR] ", (*entry)->d_name, 6) == 0)
+				for(auto const& subentry : path::entries(path))
 				{
-					citerate(subentry, path::entries(path))
-					{
-						if((*subentry)->d_type == DT_DIR)
-							favorites.insert(std::make_pair(text::format("%s — %s", (*subentry)->d_name, (*entry)->d_name + 6), path::join(path, (*subentry)->d_name)));
-					}
+					if(subentry->d_type == DT_DIR)
+						favorites.emplace(text::format("%s — %s", subentry->d_name, entry->d_name + 6), path::join(path, subentry->d_name));
 				}
-				else
-				{
-					favorites.insert(std::make_pair((*entry)->d_name, path));
-				}
+			}
+			else
+			{
+				favorites.emplace(entry->d_name, path);
 			}
 		}
 	}
-	return self;
+	[self updateItems:self];
 }
 
-+ (FavoritesDataSource*)favoritesDataSource
+- (void)showWindow:(id)sender
 {
-	return [[self alloc] initWithCxxPath:oak::application_t::support("Favorites")];
-}
-
-- (NSString*)title
-{
-	return @"Open Favorite";
-}
-
-- (NSString*)filterString
-{
-	return [NSString stringWithCxxString:filterString];
-}
-
-- (IBAction)search:(id)sender
-{
-	ASSERT([sender respondsToSelector:@selector(stringValue)]);
-	NSString* objCStr = [[sender stringValue] lowercaseString] ?: @"";
-	std::string const newFilterString = to_s(objCStr);
-	if(newFilterString != filterString)
+	if(![self.window isVisible])
 	{
-		filterString = newFilterString;
-		[[NSNotificationCenter defaultCenter] postNotificationName:FLDataSourceItemsDidChangeNotification object:self];
+		self.filterString = @"";
+		[self scanFavoritesDirectory:self];
+		if([self.tableView numberOfRows])
+			[self.tableView selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
 	}
+	[super showWindow:sender];
 }
 
-- (NSArray*)items
+- (void)updateItems:(id)sender
 {
-	std::multimap< double, std::pair<std::string, std::string> > ranked;
-	iterate(pair, favorites)
+	std::string const filter = to_s(self.filterString);
+
+	std::vector<std::string> bindings;
+	for(NSString* str in [[OakAbbreviations abbreviationsForName:@"OakFavoriteChooserBindings"] stringsForAbbreviation:self.filterString])
+		bindings.push_back(to_s(str));
+
+	std::multimap<double, NSDictionary*> ranked;
+	for(auto const& pair : favorites)
 	{
-		if(filterString == "")
+		if(filter == NULL_STR || filter == "")
 		{
-			ranked.insert(std::make_pair(ranked.size(), *pair));
+			ranked.emplace(ranked.size(), @{
+				@"name" : [NSString stringWithCxxString:pair.first],
+				@"info" : [NSString stringWithCxxString:path::with_tilde(pair.second)],
+				@"path" : [NSString stringWithCxxString:pair.second],
+			});
 		}
 		else
 		{
-			double rank = oak::rank(filterString, pair->first);
+			std::vector<std::pair<size_t, size_t>> ranges;
+			double rank = oak::rank(filter, pair.first, &ranges);
 			if(rank > 0)
-				ranked.insert(std::make_pair(-rank, *pair));
+			{
+				size_t bindingIndex = std::find(bindings.begin(), bindings.end(), pair.second) - bindings.begin();
+				if(bindingIndex != bindings.size())
+						rank = -1.0 * (bindings.size() - bindingIndex);
+				else	rank = -rank;
+
+				ranked.emplace(rank, @{
+					@"name" : CreateAttributedStringWithMarkedUpRanges(pair.first, ranges),
+					@"info" : [NSString stringWithCxxString:path::with_tilde(pair.second)],
+					@"path" : [NSString stringWithCxxString:pair.second],
+				});
+			}
 		}
 	}
 
-	NSMutableArray* items = [NSMutableArray array];
-	iterate(pair, ranked)
+	NSMutableArray* res = [NSMutableArray array];
+	for(auto const& pair : ranked)
+		[res addObject:pair.second];
+	self.items = res;
+}
+
+- (void)updateStatusText:(id)sender
+{
+	if(self.tableView.selectedRow != -1)
 	{
-		[items addObject:@{
-			@"title" : [NSString stringWithCxxString:pair->second.first],
-			@"path"  : [NSString stringWithCxxString:pair->second.second],
-		}];
+		NSDictionary* item = self.items[self.tableView.selectedRow];
+		self.statusTextField.stringValue = [item objectForKey:@"info"];
 	}
-	return items;
+	else
+	{
+		self.statusTextField.stringValue = @"";
+	}
 }
 
-- (NSAttributedString*)displayStringForItem:(id)anItem
+- (void)accept:(id)sender
 {
-	std::string str = to_s((NSString*)[anItem objectForKey:@"title"]);
-	return [[NSAttributedString alloc] initWithString:[NSString stringWithCxxString:str]];
-}
-
-- (NSAttributedString*)infoStringForItem:(id)anItem
-{
-	std::string str = path::with_tilde(to_s((NSString*)[anItem objectForKey:@"path"]));
-	return [[NSAttributedString alloc] initWithString:[NSString stringWithCxxString:str]];
+	if(self.filterString)
+	{
+		for(NSDictionary* item in self.selectedItems)
+			[[OakAbbreviations abbreviationsForName:@"OakFavoriteChooserBindings"] learnAbbreviation:self.filterString forString:[item objectForKey:@"path"]];
+	}
+	[super accept:sender];
 }
 @end

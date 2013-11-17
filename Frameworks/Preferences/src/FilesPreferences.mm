@@ -56,7 +56,7 @@
 	citerate(item, bundles::query(bundles::kFieldAny, NULL_STR, scope::wildcard, bundles::kItemTypeGrammar))
 	{
 		if(!(*item)->hidden_from_user())
-			grammars.insert(std::make_pair((*item)->name(), *item));
+			grammars.emplace((*item)->name(), *item);
 	}
 
 	if(!grammars.empty())
@@ -84,7 +84,6 @@
 		}
 	}
 
-	encodingPopUp.encoding = [self valueForKey:@"encoding"];
-	[self bind:@"encoding" toObject:encodingPopUp withKeyPath:@"encoding" options:nil];
+	[encodingPopUp bind:@"encoding" toObject:self withKeyPath:@"encoding" options:nil];
 }
 @end

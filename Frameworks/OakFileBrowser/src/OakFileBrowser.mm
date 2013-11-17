@@ -927,7 +927,7 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 
 			std::multimap<std::string, bundles::item_ptr, text::less_t> sorted;
 			iterate(item, items)
-				sorted.insert(std::make_pair((*item)->name(), *item));
+				sorted.emplace((*item)->name(), *item);
 
 			for(auto pair : sorted)
 				[[aMenu addItemWithTitle:[NSString stringWithCxxString:pair.first] action:@selector(executeBundleCommand:) keyEquivalent:@""] setRepresentedObject:[NSString stringWithCxxString:pair.second->uuid()]];
@@ -956,13 +956,13 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 
 	if(hasFileSelected)
 	{
-		OakFinderLabelChooser* swatch = [[OakFinderLabelChooser alloc] initWithFrame:NSMakeRect(0, 0, 166, 37)];
+		OakFinderLabelChooser* swatch = [[OakFinderLabelChooser alloc] initWithFrame:NSMakeRect(0, 0, 166, 55)];
 		swatch.selectedIndex = [[selectedItems lastObject] labelIndex];
 		swatch.action        = @selector(changeColor:);
 		swatch.target        = self;
+		swatch.font          = [aMenu font];
 
 		[aMenu addItem:[NSMenuItem separatorItem]];
-		[aMenu addItemWithTitle:@"Label:" action:@selector(nop:) keyEquivalent:@""];
 		[[aMenu addItemWithTitle:@"Color Swatch" action:@selector(nop:) keyEquivalent:@""] setView:swatch];
 	}
 
@@ -1071,8 +1071,12 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 		}
 	}
 
-	for(FSItem* item in itemsToAnimate)
-		[OakZoomingIcon zoomIcon:item.icon fromRect:[self iconFrameForEntry:item]];
+	if(![[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsFileBrowserOpenAnimationDisabled])
+	{
+		for(FSItem* item in itemsToAnimate)
+			[OakZoomingIcon zoomIcon:item.icon fromRect:[self iconFrameForEntry:item]];
+	}
+
 	if([urlsToOpen count])
 		[_delegate fileBrowser:self openURLs:urlsToOpen];
 }
@@ -1082,21 +1086,15 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 	NSInteger row = [_outlineView clickedRow];
 	NSInteger col = [_outlineView clickedColumn];
 	col = row != -1 && col == -1 ? 0 : col; // Clicking a row which participates in multi-row selection causes clickedColumn to return -1 <rdar://10382268>
-	OFBPathInfoCell* cell = (OFBPathInfoCell*)[_outlineView preparedCellAtColumn:col row:row];
-	NSInteger hit = [cell hitTestForEvent:[NSApp currentEvent] inRect:[_outlineView frameOfCellAtColumn:col row:row] ofView:_outlineView];
-	if(hit & OakImageAndTextCellHitImage)
-	{
-		NSURL* itemURL = ((FSItem*)[_outlineView itemAtRow:row]).url;
-		
-		if(([[NSApp currentEvent] modifierFlags] & NSCommandKeyMask) && [itemURL isFileURL])
-			[[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ itemURL ]];
-		else	[self didDoubleClickOutlineView:sender];
-	}
+	NSCell* cell = [_outlineView preparedCellAtColumn:col row:row];
+	NSUInteger hit = [cell hitTestForEvent:[NSApp currentEvent] inRect:[_outlineView frameOfCellAtColumn:col row:row] ofView:_outlineView];
+	FSItem* item = [_outlineView itemAtRow:row];
+	if((hit & OFBPathInfoCellHitRevealItem) && [item.url isFileURL])
+		[[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ item.url ]];
+	else if(hit & (OFBPathInfoCellHitOpenItem | OFBPathInfoCellHitRevealItem))
+		[self didDoubleClickOutlineView:sender];
 	else if(hit & OFBPathInfoCellHitCloseButton)
-	{
-		FSItem* item = [_outlineView itemAtRow:row];
 		[_delegate fileBrowser:self closeURL:item.url];
-	}
 }
 
 - (IBAction)reload:(id)sender

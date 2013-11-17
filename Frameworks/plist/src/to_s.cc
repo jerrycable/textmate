@@ -153,7 +153,7 @@ namespace
 		key_less_than_t (std::vector<std::string> const& order)
 		{
 			for(size_t i = 0; i < order.size(); ++i)
-				_key_ranks.insert(std::make_pair(order[i], i));
+				_key_ranks.emplace(order[i], i);
 		}
 
 		bool operator() (std::pair<std::string, plist::any_t> const& lhs, std::pair<std::string, plist::any_t> const& rhs) const
@@ -166,11 +166,18 @@ namespace
 				return true;
 			else if(rhsIter != _key_ranks.end())
 				return false;
+			else if(is_numeric(lhs.first) && is_numeric(rhs.first))
+				return std::stol(lhs.first) < std::stol(rhs.first);
 			else
 				return lhs.first < rhs.first;
 		}
 
 	private:
+		static bool is_numeric (std::string const& str)
+		{
+			return str.find_first_not_of("0123456789") == std::string::npos;
+		}
+
 		std::map<std::string, size_t> _key_ranks;
 	};
 

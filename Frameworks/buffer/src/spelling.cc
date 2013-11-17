@@ -16,6 +16,23 @@ namespace ng
 		return it != _misspellings.begin() ? (--it)->second : false;
 	}
 
+	std::pair<size_t, size_t> spelling_t::next_misspelling (size_t from) const
+	{
+		tree_t::iterator it = _misspellings.upper_bound(from);
+		if(it == _misspellings.end())
+			it = _misspellings.begin();
+		else if(!it->second && it != _misspellings.begin())
+			--it;
+
+		if(it != _misspellings.end() && it->second)
+		{
+			auto from = it;
+			if(++it != _misspellings.end() && !it->second)
+				return std::make_pair(from->first, it->first);
+		}
+		return std::make_pair(0, 0);
+	}
+
 	void spelling_t::did_parse (buffer_t const* buffer, size_t from, size_t to)
 	{
 		auto first = buffer->_scopes.lower_bound(from);
@@ -51,7 +68,11 @@ namespace ng
 		}
 
 		// TODO We should delay checking to the misspellings function. This way we won’t spell check entire document on load etc.
-		_misspellings.remove(_misspellings.lower_bound(from), _misspellings.upper_bound(to));
+		auto fromIter = _misspellings.lower_bound(from);
+		auto toIter   = _misspellings.upper_bound(to);
+		if(fromIter != toIter && fromIter->first >= to && fromIter->second)
+			fromIter = toIter;
+		_misspellings.remove(fromIter, toIter);
 		iterate(r, ranges)
 		{
 			std::string const& text = buffer->substr(r->first, r->second);

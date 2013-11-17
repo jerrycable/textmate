@@ -53,8 +53,14 @@ namespace ng
 			return boost::get<std::string>(value);
 		else if(text::is_word_char(buffer[index]))
 			return kCharacterClassWord;
-		else if(text::is_whitespace(buffer[index]))
-			return kCharacterClassSpace;
+		else
+		{
+			value = bundles::value_for_setting("wordCharacters", buffer.scope(index), &match);
+			if(match && boost::get<std::string>(value).find(buffer[index]) != std::string::npos)
+				return kCharacterClassWord;
+			else if(text::is_whitespace(buffer[index]))
+				return kCharacterClassSpace;
+		}
 		return kCharacterClassOther;
 	}
 
@@ -1225,7 +1231,7 @@ namespace ng
 				{
 					range_t r(total + offset + m.first, total + offset + m.second, false, false, true);
 					if(is_subset(r, ranges))
-						res.insert(std::make_pair(r, captures));
+						res.emplace(r, captures);
 				}
 				ASSERT_NE(m.second, 0); ASSERT_LE(m.second, len - offset);
 				offset += m.second;
@@ -1239,7 +1245,7 @@ namespace ng
 		{
 			range_t r(total + m.first, total + m.second, false, false, true);
 			if(is_subset(r, ranges))
-				res.insert(std::make_pair(r, captures));
+				res.emplace(r, captures);
 			captures.clear();
 			m = f.match(NULL, 0, &captures);
 		}
@@ -1277,7 +1283,7 @@ namespace ng
 			}
 
 			if(m && range.sorted() != ng::range_t(m.begin(), m.end()))
-				res.insert(std::make_pair(ng::range_t(m.begin(), m.end()), m.captures()));
+				res.emplace(ng::range_t(m.begin(), m.end()), m.captures());
 		}
 
 		return res;
@@ -1305,7 +1311,7 @@ namespace ng
 			iterate(range, selection)
 			{
 				anchor = options & find::backwards ? std::min(range->min(), anchor) : std::max(range->max(), anchor);
-				res.insert(std::make_pair(*range, std::map<std::string, std::string>()));
+				res.emplace(*range, std::map<std::string, std::string>());
 			}
 
 			if(options & find::backwards)

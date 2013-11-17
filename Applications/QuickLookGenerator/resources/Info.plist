@@ -42,6 +42,8 @@
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>public.source-code</string>
+				<string>public.plain-text</string>
+				<string>public.text</string>
 			</array>
 		</dict>
 	</array>

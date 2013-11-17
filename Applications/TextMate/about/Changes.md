@@ -1,5 +1,46 @@
 # Changes
 
+## 2013-11-03 ([v2.0-alpha.9495](https://github.com/textmate/textmate/compare/v2.0-alpha.9489...v2.0-alpha.9495))
+
+* If the _Go to File_ filter string contains an asterisk (`*`) it will be considered a file glob. Support for extension matching (by using a period in the filter string) has been removed. It did more harm than good, and the same can now be achieved by using an explicit glob string.
+* The zoom animation shown when opening items can now be disabled by running this in a terminal: `defaults write com.macromates.TextMate.preview fileBrowserOpenAnimationDisabled -bool YES`
+* You can now define word characters similar to 1.x by creating a new setting in the bundle editor with this content:
+
+		{ wordCharacters = «value»; }
+
+    The `«value»` is a string of which characters should be considered word characters. You can set the scope selector if you wish to limit the scope in which the characters should be considered a word character.
+
+    Units for word movement/selection, completion, etc. are defined using a different system, see [this FAQ item](https://github.com/textmate/textmate/wiki/FAQ#completion-considers-var-var-and-var-as-different).
+
+* Opening files in the file browser can be done by single-clicking the icon. If you think the click-target is too small, you can make it open by clicking the text instead, this is activated by running the following in a terminal:
+
+        defaults write com.macromates.TextMate.preview fileBrowserSingleClickToOpen -bool true
+
+    If you wish to select items you either need to click to the left of the text, or hold down command (⌘) when clicking the item’s text.
+
+* Fix missing transparent backgrounds on 10.9.
+
+## 2013-10-23 ([v2.0-alpha.9489](https://github.com/textmate/textmate/compare/v2.0-alpha.9487...v2.0-alpha.9489))
+
+* Using a “filtering” command with a column selection now has defined behavior: The command’s output will replace the subset selected on each line in the selection. The output is truncated if it has more lines than what’s selected and otherwise padded with blank lines. This isn’t identical to how TextMate 1.x dealt with this, but I find the new behavior slightly more useful, for example make a (zero-width) column selection and use _Text → Filter Through Command…_ (⌘|) to insert sequence numbers by running `seq 100` (no need to count how many lines are actually selected).
+* Add _Go → Go to Tab → Last Tab_ bound to ⌘0 (this is similar to iTerm and Chrome, although they use ⌘9, so perhaps TM should do the same).
+* Allow sorting by the “installed” state in Preferences → Bundles. *[Ryan Goulden]*
+* Show Invisibles will no longer treat space as an invisible (which was added in previous build) as it was causing issues with right-to-left rendering and combining marks used after spaces. The feature might be back, but needs to be implemented differently.
+
+## 2013-10-08 ([v2.0-alpha.9487](https://github.com/textmate/textmate/compare/v2.0-alpha.9479...v2.0-alpha.9487))
+
+* Add `invisiblesMap` option to the `.tm_properties` file. This can be set to a string which is used to control which glyphs are used for invisible characters. Add either `\n`, `\t`, or a space to the string, followed by the glyph that should be used to render the character, or prefix it with `~` to disable rendering of that character. For example to disable rendering of spaces and render tabs as `┊` add this to `.tm_properties`: `invisiblesMap = "~ \t┊"`. *[Steven Clukey]*
+
+## 2013-09-13 ([v2.0-alpha.9479](https://github.com/textmate/textmate/compare/v2.0-alpha.9477...v2.0-alpha.9479))
+
+* Support text attributes with VoiceOver. See [commit for details](https://github.com/textmate/textmate/commit/21088105a8646db664f5fcfccc18f3d612931694). *[Boris Dušek]*
+
+## 2013-09-06 ([v2.0-alpha.9477](https://github.com/textmate/textmate/compare/v2.0-alpha.9475...v2.0-alpha.9477))
+
+* Edit → Spelling → Check Spelling (⌘;) has been implemented. This will select the next misspelled word and, if the spelling panel is not showing, open a context menu with guesses, otherwise, it’ll update the spelling panel. *[Adam Strzelecki]*
+* When all of the open documents don’t fit in the tab bar, the last visible tab is used as a proxy tab with an attached menu to select between non-visible documents. *[Ronald Wampler]*
+* The format string syntax now supports `\x{HHHH}` for unicode code points and `\xHH` for raw byte values (normally you would only use the former syntax).
+
 ## 2013-08-26 ([v2.0-alpha.9475](https://github.com/textmate/textmate/compare/v2.0-alpha.9459...v2.0-alpha.9475))
 
 * Support `${var}` in regexp part of format string transformations. For example if you wish the file name in the window title to be relative to `$CWD` (current directory of the `.tm_properties` file) then you can now add:

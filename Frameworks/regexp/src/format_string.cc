@@ -23,6 +23,7 @@ struct expand_visitor : boost::static_visitor<void>
 	size_t rank_count;
 	std::map<size_t, snippet::field_ptr> fields;
 	std::multimap<size_t, snippet::field_ptr> mirrors;
+	std::multimap<size_t, snippet::field_ptr> ambiguous;
 
 	expand_visitor (std::map<std::string, std::string> const& variables, snippet::run_command_callback_t* callback) : variables(variables), callback(callback)
 	{
@@ -212,17 +213,20 @@ struct expand_visitor : boost::static_visitor<void>
 		if(fields.find(v.index) == fields.end())
 			traverse(v.content);
 		snippet::pos_t to(res.size(), rank_count += 2);
-		snippet::field_ptr field(new snippet::placeholder_t(v.index, from, to));
-		if(v.content.empty() || fields.find(v.index) != fields.end())
-				mirrors.insert(std::make_pair(v.index, field));
-		else	fields.insert(std::make_pair(v.index, field));
+		auto field = std::make_shared<snippet::placeholder_t>(v.index, from, to);
+		if(fields.find(v.index) != fields.end())
+			mirrors.emplace(v.index, field);
+		else if(v.content.empty())
+			ambiguous.emplace(v.index, field);
+		else
+			fields.emplace(v.index, field);
 	}
 
 	void operator() (parser::placeholder_transform_t const& v)
 	{
 		snippet::pos_t pos(res.size(), ++rank_count);
-		snippet::field_ptr field(new snippet::transform_t(v.index, pos, snippet::pos_t(res.size(), rank_count += 2), v.pattern, v.format, v.options & parser::regexp_options::g));
-		mirrors.insert(std::make_pair(v.index, field));
+		auto field = std::make_shared<snippet::transform_t>(v.index, pos, snippet::pos_t(res.size(), rank_count += 2), v.pattern, v.format, v.options & parser::regexp_options::g);
+		mirrors.emplace(v.index, field);
 	}
 
 	void operator() (parser::placeholder_choice_t const& v)
@@ -241,8 +245,8 @@ struct expand_visitor : boost::static_visitor<void>
 
 		snippet::pos_t pos(res.size(), ++rank_count);
 		res += all_choices[0];
-		snippet::field_ptr field(new snippet::choice_t(v.index, pos, snippet::pos_t(res.size(), rank_count += 2), all_choices));
-		fields.insert(std::make_pair(v.index, field));
+		auto field = std::make_shared<snippet::choice_t>(v.index, pos, snippet::pos_t(res.size(), rank_count += 2), all_choices);
+		fields.emplace(v.index, field);
 	}
 
 	void operator() (parser::code_t const& v)
@@ -263,14 +267,14 @@ namespace format_string
 	
 	format_string_t::format_string_t (parser::nodes_t const& n)
 	{
-		nodes.reset(new parser::nodes_t(n));
+		nodes = std::make_shared<parser::nodes_t>(n);
 	}
 
 	void format_string_t::init (std::string const& str, char const* stopChars)
 	{
 		D(DBF_FormatString, bug("%s\n", str.c_str()););
 		parser::nodes_t const& n = parser::parse_format_string(str, stopChars, &_length);
-		nodes.reset(new parser::nodes_t(n));
+		nodes = std::make_shared<parser::nodes_t>(n);
 	}
 	
 	std::string format_string_t::expand (std::map<std::string, std::string> const& variables) const
@@ -293,7 +297,6 @@ namespace format_string
 		v.replace(src, ptrn, *format.nodes, repeat);
 		v.handle_case_changes();
 		return v.res;
-		
 	}
 
 	std::string expand (std::string const& format, std::map<std::string, std::string> const& variables)
@@ -336,6 +339,14 @@ namespace snippet
 		expand_visitor v(variables, callback);
 		v.traverse(parser::parse_snippet(str));
 		v.handle_case_changes();
+
+		for(auto const& pair : v.ambiguous)
+		{
+			if(v.fields.find(pair.first) == v.fields.end())
+					v.fields.insert(pair);
+			else	v.mirrors.insert(pair);
+		}
+
 		return snippet_t(v.res, v.fields, v.mirrors, variables, indentString, indent);
 	}
 

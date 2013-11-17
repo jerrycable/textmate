@@ -3,7 +3,9 @@
 #import <bundles/bundles.h>
 #import <file/bytes.h>
 #import <file/type.h>
+#import <file/reader.h>
 #import <io/path.h>
+#import <cf/cf.h>
 #import <ns/ns.h>
 #import <oak/misc.h>
 #import <plist/fs_cache.h>
@@ -59,13 +61,19 @@ OSStatus TextMateQuickLookPlugIn_GeneratePreviewForURL (void* instance, QLPrevie
 
 	// Load file
 	ng::buffer_t buffer;
-	NSData* data = [NSData dataWithContentsOfURL:(__bridge NSURL*)url];
-	std::string fileContents((const char*)[data bytes], [data length]);
+
+	std::string filePath = NULL_STR;
+	if(CFStringRef path = CFURLCopyFileSystemPath(url, kCFURLPOSIXPathStyle))
+	{
+		filePath = cf::to_s(path);
+		CFRelease(path);
+	}
+
+	std::string fileContents = file::read_utf8(filePath);
 	buffer.insert(0, fileContents);
 
 	// Apply appropriate grammar
-	std::string filePath = to_s([[(__bridge NSURL*)url filePathURL] path]);
-	std::string fileType = file::type(filePath, io::bytes_ptr(new io::bytes_t(fileContents.data(), fileContents.size(), false)));
+	std::string fileType = file::type(filePath, std::make_shared<io::bytes_t>(fileContents.data(), fileContents.size(), false));
 	if(fileType != NULL_STR)
 	{
 		for(auto item : bundles::query(bundles::kFieldGrammarScope, fileType, scope::wildcard, bundles::kItemTypeGrammar))
@@ -84,6 +92,7 @@ OSStatus TextMateQuickLookPlugIn_GeneratePreviewForURL (void* instance, QLPrevie
 
 	if(!theme)
 	{
+		NSData* data = [NSData dataWithContentsOfURL:(__bridge NSURL*)url];
 		QLPreviewRequestSetDataRepresentation(request, (__bridge CFDataRef)data, kUTTypePlainText, nil);
 		return noErr;
 	}

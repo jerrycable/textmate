@@ -16,6 +16,7 @@
 #import <OakFoundation/OakTimer.h>
 #import <OakSystem/application.h>
 #import <crash/info.h>
+#import <buffer/indexed_map.h>
 #import <BundleMenu/BundleMenu.h>
 #import <BundlesManager/BundlesManager.h>
 #import <bundles/bundles.h>
@@ -54,7 +55,172 @@ NSString* const kUserDefaultsScrollPastEndKey      = @"scrollPastEnd";
 
 struct buffer_refresh_callback_t;
 
-@interface OakTextView ()
+@interface OakAccessibleLink : NSObject
+- (id)initWithTextView:(OakTextView*)textView range:(ng::range_t)range title:(NSString*)title URL:(NSString*)URL frame:(NSRect)frame;
+@property (nonatomic, weak) OakTextView* textView;
+@property (nonatomic) ng::range_t range;
+@property (nonatomic) NSString* title;
+@property (nonatomic) NSString* URL;
+@property (nonatomic) NSRect frame;
+@end
+
+@implementation OakAccessibleLink
+- (id)initWithTextView:(OakTextView*)textView range:(ng::range_t)range title:(NSString*)title URL:(NSString*)URL frame:(NSRect)frame
+{
+	if((self = [super init]))
+	{
+		_textView = textView;
+		_range = range;
+		_title = title;
+		_URL = URL;
+		_frame = frame;
+	}
+	return self;
+}
+
+- (NSString*)description
+{
+	return [NSString stringWithFormat:@"[%@](%@), range = %@, frame = %@", self.title, self.URL, [NSString stringWithCxxString:to_s(self.range)], NSStringFromRect(self.frame)];
+}
+
+- (BOOL)isEqual:(id)object
+{
+	if([object isKindOfClass:[OakAccessibleLink class]])
+	{
+		OakAccessibleLink* link = (OakAccessibleLink*)object;
+		return self.range == link.range && [self.textView isEqual:link.textView];
+	}
+	return NO;
+}
+
+- (NSUInteger)hash
+{
+	return [self.textView hash] + _range.min().index + _range.max().index;
+}
+
+- (BOOL)accessibilityIsIgnored
+{
+	return NO;
+}
+
+- (NSArray*)accessibilityAttributeNames
+{
+	static NSArray* attributes = nil;
+	if(!attributes)
+	{
+		attributes = @[
+			NSAccessibilityRoleAttribute,
+			NSAccessibilityRoleDescriptionAttribute,
+			NSAccessibilitySubroleAttribute,
+			NSAccessibilityParentAttribute,
+			NSAccessibilityWindowAttribute,
+			NSAccessibilityTopLevelUIElementAttribute,
+			NSAccessibilityPositionAttribute,
+			NSAccessibilitySizeAttribute,
+			NSAccessibilityTitleAttribute,
+			NSAccessibilityURLAttribute,
+		];
+	}
+	return attributes;
+}
+
+- (id)accessibilityAttributeValue:(NSString*)attribute
+{
+	id value = nil;
+
+	if([attribute isEqualToString:NSAccessibilityRoleAttribute]) {
+		value = NSAccessibilityLinkRole;
+	} else if([attribute isEqualToString:NSAccessibilitySubroleAttribute]) {
+		value = NSAccessibilityTextLinkSubrole;
+	} else if([attribute isEqualToString:NSAccessibilityRoleDescriptionAttribute]) {
+		value = NSAccessibilityRoleDescriptionForUIElement(self);
+	} else if([attribute isEqualToString:NSAccessibilityParentAttribute]) {
+		value = self.textView;
+	} else if([attribute isEqualToString:NSAccessibilityWindowAttribute] || [attribute isEqualToString:NSAccessibilityTopLevelUIElementAttribute]) {
+		value = [self.textView accessibilityAttributeValue:attribute];
+	} else if([attribute isEqualToString:NSAccessibilityPositionAttribute] || [attribute isEqualToString:NSAccessibilitySizeAttribute]) {
+		NSRect frame = self.frame;
+		frame = [self.textView convertRect:frame toView:nil];
+		frame = [self.textView.window convertRectToScreen:frame];
+		if([attribute isEqualToString:NSAccessibilityPositionAttribute])
+			value = [NSValue valueWithPoint:frame.origin];
+		else
+			value = [NSValue valueWithSize:frame.size];
+	} else if([attribute isEqualToString:NSAccessibilityTitleAttribute]) {
+		value = self.title;
+	} else if([attribute isEqualToString:NSAccessibilityURLAttribute]) {
+		value = self.URL;
+	} else {
+		@throw [NSException exceptionWithName:NSAccessibilityException reason:[NSString stringWithFormat:@"Getting accessibility attribute not supported: %@", attribute] userInfo:nil];
+	}
+
+	return value;
+}
+
+- (BOOL)accessibilityIsAttributeSettable:(NSString*)attribute
+{
+	return NO;
+}
+
+- (void)accessibilitySetValue:(id)value forAttribute:(NSString*)attribute
+{
+	@throw [NSException exceptionWithName:NSAccessibilityException reason:[NSString stringWithFormat:@"Setting accessibility attribute not supported: %@", attribute] userInfo:nil];
+}
+
+- (NSArray*)accessibilityParameterizedAttributeNames
+{
+	return @[];
+}
+
+- (id)accessibilityAttributeValue:(NSString*)attribute forParameter:(id)parameter
+{
+	@throw [NSException exceptionWithName:NSAccessibilityException reason:[NSString stringWithFormat:@"Accessibility parameterized attribute not supported: %@", attribute] userInfo:nil];
+}
+
+- (NSArray*)accessibilityActionNames
+{
+	static NSArray* actions = nil;
+	if(!actions)
+	{
+		actions = @[
+			NSAccessibilityPressAction,
+		];
+	}
+	return actions;
+}
+
+- (NSString*)accessibilityActionDescription:(NSString*)action
+{
+	return NSAccessibilityActionDescription(action);
+}
+
+- (void)accessibilityPerformAction:(NSString*)action
+{
+	if([action isEqualToString:NSAccessibilityPressAction])
+	{
+		// TODO
+	}
+	else
+	{
+		@throw [NSException exceptionWithName:NSAccessibilityException reason:[NSString stringWithFormat:@"Accessibility action not supported: %@", action] userInfo:nil];
+	}
+}
+
+- (id)accessibilityHitTest:(NSPoint)point
+{
+	return self;
+}
+
+- (id)accessibilityFocusedUIElement
+{
+	return NSAccessibilityUnignoredAncestor(self.textView);
+}
+@end
+
+typedef indexed_map_t<OakAccessibleLink*> links_t;
+typedef std::shared_ptr<links_t> links_ptr;
+
+@interface OakTextView () <NSIgnoreMisspelledWords, NSChangeSpelling>
 {
 	OBJC_WATCH_LEAKS(OakTextView);
 
@@ -119,6 +285,12 @@ struct buffer_refresh_callback_t;
 
 	OakChoiceMenu* choiceMenu;
 	std::vector<std::string> choiceVector;
+
+	// =================
+	// = Accessibility =
+	// =================
+
+	links_ptr _links;
 }
 + (NSArray*)dropTypes;
 - (void)ensureSelectionIsInVisibleArea:(id)sender;
@@ -147,6 +319,7 @@ struct buffer_refresh_callback_t;
 @property (nonatomic) LiveSearchView* liveSearchView;
 @property (nonatomic, copy) NSString* liveSearchString;
 @property (nonatomic) ng::ranges_t const& liveSearchRanges;
+@property (nonatomic, readonly) links_ptr links;
 @end
 
 static std::vector<bundles::item_ptr> items_for_tab_expansion (ng::buffer_t const& buffer, ng::ranges_t const& ranges, std::string const& scopeAttributes, ng::range_t* range)
@@ -165,7 +338,7 @@ static std::vector<bundles::item_ptr> items_for_tab_expansion (ng::buffer_t cons
 		bool isWordChar = CFCharacterSetIsLongCharacterMember(CFCharacterSetGetPredefined(kCFCharacterSetAlphaNumeric), utf8::to_ch(buffer[i]));
 		std::string characterClass = character_class(buffer, i);
 
-		if(i == bol || lastWasWordChar != isWordChar || lastCharacterClass != characterClass)
+		if(i == bol || lastWasWordChar != isWordChar || lastCharacterClass != characterClass || !isWordChar)
 		{
 			std::vector<bundles::item_ptr> const& items = bundles::query(bundles::kFieldTabTrigger, buffer.substr(i, caret), scope::context_t(ng::scope(buffer, ng::ranges_t(i), scopeAttributes).left, rightScope));
 			if(!items.empty())
@@ -380,7 +553,7 @@ static std::string shell_quote (std::vector<std::string> paths)
 {
 	if([self.delegate respondsToSelector:@selector(scopeAttributes)])
 		return [self.delegate scopeAttributes];
-	return nil;
+	return @"";
 }
 
 // =================================
@@ -495,7 +668,8 @@ static std::string shell_quote (std::vector<std::string> paths)
 
 		editor = ng::editor_for_document(document);
 		wrapColumn = settings.get(kSettingsWrapColumnKey, wrapColumn);
-		layout.reset(new ng::layout_t(document->buffer(), theme, settings.get(kSettingsSoftWrapKey, false), self.scrollPastEnd, wrapColumn, document->folded()));
+		layout = std::make_shared<ng::layout_t>(document->buffer(), theme, settings.get(kSettingsSoftWrapKey, false), self.scrollPastEnd, wrapColumn, document->folded());
+		layout->set_character_mapping(settings.get(kSettingsInvisiblesMapKey, ""));
 		if(settings.get(kSettingsShowWrapColumnKey, false))
 			layout->set_draw_wrap_column(true);
 
@@ -542,6 +716,7 @@ static std::string shell_quote (std::vector<std::string> paths)
 
 		[self resetBlinkCaretTimer];
 		[self setNeedsDisplay:YES];
+		_links.reset();
 		NSAccessibilityPostNotification(self, NSAccessibilityValueChangedNotification);
 	}
 }
@@ -737,6 +912,11 @@ doScroll:
 // = Generic view stuff =
 // ======================
 
++ (BOOL)isCompatibleWithResponsiveScrolling
+{
+	return NO;
+}
+
 - (BOOL)acceptsFirstResponder       { return YES; }
 - (BOOL)isFlipped                   { return YES; }
 - (BOOL)isOpaque                    { return YES; }
@@ -745,11 +925,18 @@ doScroll:
 {
 	AUTO_REFRESH;
 	layout->did_update_scopes(from, to);
+	_links.reset();
 }
 
 - (void)drawRect:(NSRect)aRect
 {
-	if(theme && theme->is_transparent())
+	if(!editor || !theme || !layout)
+	{
+		NSEraseRect(aRect);
+		return;
+	}
+
+	if(theme->is_transparent())
 	{
 		[[NSColor clearColor] set];
 		NSRectFill(aRect);
@@ -993,7 +1180,8 @@ doScroll:
 			ATTR(SelectedText),
 			ATTR(SelectedTextRange),
 			ATTR(SelectedTextRanges),
-			// ATTR(VisibleCharacterRange),
+			ATTR(VisibleCharacterRange),
+			ATTR(Children),
 		]];
 
 		attributes = [[set setByAddingObjectsFromArray:[super accessibilityAttributeNames]] allObjects];
@@ -1013,7 +1201,7 @@ doScroll:
 	} HANDLE_ATTR(Value) {
 		ret = [NSString stringWithCxxString:editor->as_string()];
 	} HANDLE_ATTR(InsertionPointLineNumber) {
-		ret = [NSNumber numberWithUnsignedLong:buffer.convert(editor->ranges().last().min().index).line];
+		ret = [NSNumber numberWithUnsignedLong:layout->softline_for_index(editor->ranges().last().min())];
 	} HANDLE_ATTR(NumberOfCharacters) {
 		ret = [NSNumber numberWithUnsignedInteger:[self nsRangeForRange:ng::range_t(0, buffer.size())].length];
 	} HANDLE_ATTR(SelectedText) {
@@ -1028,7 +1216,20 @@ doScroll:
 		iterate(range, ranges)
 			[nsRanges addObject:[NSValue valueWithRange:[self nsRangeForRange:(*range)]]];
 		ret = nsRanges;
-	// } HANDLE_ATTR(VisibleCharacterRange) { //TODO
+	} HANDLE_ATTR(VisibleCharacterRange) {
+		NSRect visibleRect = [self visibleRect];
+		CGPoint startPoint = NSPointToCGPoint(NSMakePoint(NSMinX(visibleRect), NSMaxY(visibleRect)));
+		CGPoint   endPoint = NSPointToCGPoint(NSMakePoint(NSMinX(visibleRect), NSMinY(visibleRect)));
+		ng::range_t visibleRange(layout->index_at_point(startPoint), layout->index_at_point(endPoint));
+		visibleRange = visibleRange.sorted();
+		visibleRange.last = layout->index_below(visibleRange.last);
+		return [NSValue valueWithRange:[self nsRangeForRange:visibleRange]];
+	} HANDLE_ATTR(Children) {
+		NSMutableArray* links = [NSMutableArray array];
+		std::shared_ptr<links_t> links_ = self.links;
+		for(auto const& pair : *links_)
+			[links addObject:pair.second];
+		return links;
 	} else {
 		ret = [super accessibilityAttributeValue:attribute];
 	}
@@ -1067,6 +1268,52 @@ doScroll:
 	}
 }
 
+- (NSUInteger)accessibilityArrayAttributeCount:(NSString* )attribute
+{
+	if([attribute isEqualToString:NSAccessibilityChildrenAttribute])
+	{
+		return self.links->size();
+	}
+	else
+	{
+		return [super accessibilityArrayAttributeCount:attribute];
+	}
+}
+
+- (NSArray*)accessibilityArrayAttributeValues:(NSString*)attribute index:(NSUInteger)index maxCount:(NSUInteger)maxCount
+{
+	if([attribute isEqualToString:NSAccessibilityChildrenAttribute])
+	{
+		links_ptr const links = self.links;
+		NSMutableArray* values = [NSMutableArray arrayWithCapacity:maxCount];
+		for(auto it = links->nth(index); maxCount && it != links->end(); ++it, --maxCount)
+			[values addObject:it->second];
+		return values;
+	}
+	else
+	{
+		return [super accessibilityArrayAttributeValues:attribute index:index maxCount:maxCount];
+	}
+}
+
+- (NSUInteger)accessibilityIndexOfChild:(id)child
+{
+	if([child isKindOfClass:[OakAccessibleLink class]])
+	{
+		OakAccessibleLink* link = (OakAccessibleLink* )child;
+		links_ptr const links = self.links;
+		auto it = links->find(link.range.max().index);
+		if(it != links->end())
+			return it.index();
+		else
+			return NSNotFound;
+	}
+	else
+	{
+		return [super accessibilityIndexOfChild:child];
+	}
+}
+
 - (NSArray*)accessibilityParameterizedAttributeNames
 {
 	static NSArray* attributes = nil;
@@ -1081,7 +1328,7 @@ doScroll:
 			PATTR(BoundsForRange),
 			// PATTR(RTFForRange),
 			// PATTR(StyleRangeForIndex),
-			// PATTR(AttributedStringForRange),
+			PATTR(AttributedStringForRange),
 		]];
 
 		attributes = [[set setByAddingObjectsFromArray:[super accessibilityParameterizedAttributeNames]] allObjects];
@@ -1097,12 +1344,11 @@ doScroll:
 	} HANDLE_PATTR(LineForIndex) {
 		size_t index = [((NSNumber*)parameter) unsignedLongValue];
 		index = [self rangeForNSRange:NSMakeRange(index, 0)].min().index;
-		text::pos_t pos = document->buffer().convert(index);
-		ret = [NSNumber numberWithUnsignedLong:pos.line];
+		size_t line = layout->softline_for_index(index);
+		ret = [NSNumber numberWithUnsignedLong:line];
 	} HANDLE_PATTR(RangeForLine) {
 		size_t line = [((NSNumber*)parameter) unsignedLongValue];
-		size_t begin = document->buffer().begin(line), end = document->buffer().end(line);
-		ng::range_t const range(begin, end);
+		ng::range_t const range = layout->range_for_softline(line);
 		ret = [NSValue valueWithRange:[self nsRangeForRange:range]];
 	} HANDLE_PATTR(StringForRange) {
 		ng::range_t range = [self rangeForNSRange:[((NSValue*)parameter) rangeValue]];
@@ -1123,23 +1369,158 @@ doScroll:
 		ret = [NSValue valueWithRange:[self nsRangeForRange:ng::range_t(index, index + length)]];
 	} HANDLE_PATTR(BoundsForRange) {
 		ng::range_t range = [self rangeForNSRange:[((NSValue*)parameter) rangeValue]];
-		if(!range.empty()) // TODO ask accessibility-dev@lists.apple.com if there is a better approach for dealing with newlines
-		{
-			size_t const max = range.max().index;
-			if(editor->as_string(max - 1, max) == "\n")
-				range.max().index -= 1;
-		}
-		NSRect rect = layout->rect_for_range(range.min().index, range.max().index);
+		NSRect rect = layout->rect_for_range(range.min().index, range.max().index, true);
 		rect = [self convertRect:rect toView:nil];
 		rect = [[self window] convertRectToScreen:rect];
 		ret = [NSValue valueWithRect:rect];
 	// } HANDLE_PATTR(RTFForRange) { // TODO
 	// } HANDLE_PATTR(StyleRangeForIndex) { // TODO
-	// } HANDLE_PATTR(AttributedStringForRange) { // TODO
+	} HANDLE_PATTR(AttributedStringForRange) {
+#define TATTR(attr) NSAccessibility##attr##TextAttribute
+#define TKEY(key) NSAccessibility##key##Key
+		NSRange aRange = [((NSValue *)parameter) rangeValue];
+		ng::range_t const range = [self rangeForNSRange:aRange];
+		size_t const from = range.min().index, to = range.max().index;
+		std::string const text = editor->as_string(from, to);
+		NSMutableAttributedString* res = [[NSMutableAttributedString alloc] initWithString:[NSString stringWithCxxString:text]];
+
+		// Add style
+		std::map<size_t, scope::scope_t> scopes = document->buffer().scopes(from, to);
+		NSRange runRange = NSMakeRange(0, 0);
+		for(auto pair = scopes.begin(); pair != scopes.end(); )
+		{
+			styles_t const& styles = theme->styles_for_scope(pair->second);
+
+			size_t i = pair->first;
+			size_t j = ++pair != scopes.end() ? pair->first : to - from;
+
+			runRange.location += runRange.length;
+			runRange.length = utf16::distance(text.data() + i, text.data() + j);
+			NSFont* font = (__bridge NSFont *)styles.font();
+			NSMutableDictionary* attributes = [NSMutableDictionary dictionaryWithCapacity:4];
+			[attributes addEntriesFromDictionary:@{
+				TATTR(Font): @{
+					TKEY(FontName): [font fontName],
+					TKEY(FontFamily): [font familyName],
+					TKEY(VisibleName): [font displayName],
+					TKEY(FontSize): @([font pointSize]),
+				},
+				TATTR(ForegroundColor): (__bridge id)styles.foreground(),
+				TATTR(BackgroundColor): (__bridge id)styles.background(),
+			}];
+			if(styles.underlined())
+				attributes[TATTR(Underline)] = @(NSUnderlineStyleSingle | NSUnderlinePatternSolid); // TODO is this always so?
+
+			[res setAttributes:attributes range:runRange];
+		}
+
+		// Add links
+		const links_ptr links = self.links;
+		auto lbegin = links->upper_bound(from);
+		auto lend   = links->lower_bound(to);
+		if(lend != links->end() && to >= lend->second.range.min().index)
+			++lend;
+
+		std::for_each(lbegin, lend, [=](links_t::iterator::value_type const& pair){
+			ng::range_t range = pair.second.range;
+			range.first = oak::cap(ng::index_t(from), range.min(), ng::index_t(to));
+			range.last  = oak::cap(ng::index_t(from), range.max(), ng::index_t(to));
+			if(!range.empty())
+			{
+				range.first.index -= from;
+				range.last.index  -= from;
+				NSRange linkRange;
+				linkRange.location = utf16::distance(text.data(), text.data() + range.first.index);
+				linkRange.length   = utf16::distance(text.data() + range.first.index, text.data() + range.last.index);
+				[res addAttribute:TATTR(Link) value:pair.second range:linkRange];
+			}
+		});
+
+		// Add misspellings
+		std::map<size_t, bool> misspellings = document->buffer().misspellings(from, to);
+		auto pair = misspellings.begin();
+		auto const end = misspellings.end();
+		ASSERT((pair == end) || pair->second);
+		runRange = NSMakeRange(0, 0);
+		if(pair != end)
+			runRange.length = utf16::distance(text.data(), text.data() + pair->first);
+		while(pair != end)
+		{
+			ASSERT(pair != end);
+			ASSERT(pair->second);
+			// assert(runRange.location + runRange.length ~ pair->first)
+			size_t const i = pair->first;
+			size_t const j = (++pair != end) ? pair->first : to - from;
+			ASSERT((pair == end) || (!pair->second));
+			runRange.location += runRange.length;
+			runRange.length = utf16::distance(text.data() + i, text.data() + j);
+
+			[res addAttribute:TATTR(Misspelled) value:@(true) range:runRange];
+			[res addAttribute:@"AXMarkedMisspelled" value:@(true) range:runRange];
+
+			if((pair != end) && (++pair != end))
+			{
+				ASSERT(pair->second);
+				size_t const k = pair->first;
+				runRange.location += runRange.length;
+				runRange.length = utf16::distance(text.data() + j, text.data() + k);
+			}
+		}
+
+		// Add text language
+		NSString* lang = [NSString stringWithCxxString:document->buffer().spelling_language()];
+		[res addAttribute:@"AXNaturalLanguageText" value:lang range:NSMakeRange(0, [res length])];
+
+		return res;
+#undef TATTR
+#undef TKEY
 	} else {
 		ret = [super accessibilityAttributeValue:attribute forParameter:parameter];
 	}
 	return ret;
+}
+
+- (id)accessibilityHitTest:(NSPoint)screenPoint
+{
+	NSPoint point = [self convertRect:[self.window convertRectFromScreen:NSMakeRect(screenPoint.x, screenPoint.y, 0, 0)] fromView:nil].origin;
+	ng::index_t index = layout->index_at_point(NSPointToCGPoint(point));
+	const links_ptr links = self.links;
+	auto it = links->lower_bound(index.index);
+	if(it != links->end() && it->second.range.min() <= index)
+	{
+		OakAccessibleLink* link = it->second;
+		if(NSMouseInRect(point, link.frame, YES))
+			return [link accessibilityHitTest:screenPoint];
+	}
+	return self;
+}
+
+- (links_ptr)links
+{
+	if(!_links)
+	{
+		links_ptr links(new links_t());
+		scope::selector_t linkSelector = "markup.underline.link";
+		ng::buffer_t const& buffer = document->buffer();
+		std::map<size_t, scope::scope_t> scopes = buffer.scopes(0, buffer.size());
+		for(auto pair = scopes.begin(); pair != scopes.end(); )
+		{
+			if(!linkSelector.does_match(pair->second))
+			{
+				++pair;
+				continue;
+			}
+			size_t i = pair->first;
+			size_t j = ++pair != scopes.end() ? pair->first : buffer.size();
+			NSString* title = [NSString stringWithCxxString:buffer.substr(i, j)];
+			NSRect frame = NSRectFromCGRect(layout->rect_for_range(i, j));
+			ng::range_t range(i, j);
+			OakAccessibleLink* link = [[OakAccessibleLink alloc] initWithTextView:self range:range title:title URL:nil frame:frame];
+			links->set(j, link);
+		}
+		_links = links;
+	}
+	return _links;
 }
 
 #undef ATTR
@@ -1256,7 +1637,7 @@ static plist::any_t normalize_potential_dictionary (plist::any_t const& action)
 	{
 		plist::dictionary_t res;
 		citerate(pair, *dict)
-			res.insert(std::make_pair(ns::normalize_event_string(pair->first), normalize_potential_dictionary(pair->second)));
+			res.emplace(ns::normalize_event_string(pair->first), normalize_potential_dictionary(pair->second));
 		return res;
 	}
 	return action;
@@ -1296,14 +1677,14 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 		iterate(path, KeyBindingLocations)
 		{
 			citerate(pair, plist::load(*path))
-				KeyBindings.insert(std::make_pair(ns::normalize_event_string(pair->first), normalize_potential_dictionary(pair->second)));
+				KeyBindings.emplace(ns::normalize_event_string(pair->first), normalize_potential_dictionary(pair->second));
 		}
 
 		action_to_key_t actionToKey;
 		iterate(pair, KeyBindings)
 		{
 			if(std::string const* selector = boost::get<std::string>(&pair->second))
-				actionToKey.insert(std::make_pair(*selector, pair->first));
+				actionToKey.emplace(*selector, pair->first);
 		}
 
 		update_menu_key_equivalents([NSApp mainMenu], actionToKey);
@@ -1637,7 +2018,7 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 	CGRect r1 = layout->rect_at_index(editor->ranges().last().first);
 	CGRect r2 = layout->rect_at_index(editor->ranges().last().last);
 	CGRect r = r1.origin.y == r2.origin.y && r1.origin.x < r2.origin.x ? r1 : r2;
-	NSPoint p = NSMakePoint(CGRectGetMinX(r), CGRectGetMaxY(r)-1);
+	NSPoint p = NSMakePoint(CGRectGetMinX(r), CGRectGetMaxY(r)+4);
 	if(NSPointInRect(p, [self visibleRect]))
 			{ p = [[self window] convertBaseToScreen:[self convertPoint:p toView:nil]]; }
 	else	{ p = [NSEvent mouseLocation]; p.y -= 16; }
@@ -1672,7 +2053,7 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 	return word;
 }
 
-- (NSMenu*)contextMenuWithMisspelledWord:(NSString*)aWord
+- (NSMenu*)contextMenuWithMisspelledWord:(NSString*)aWord andOtherActions:(BOOL)otherActions
 {
 	NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
 	NSMenuItem* item = nil;
@@ -1692,11 +2073,19 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 			[menu addItemWithTitle:@"No Guesses Found" action:nil keyEquivalent:@""];
 
 		[menu addItem:[NSMenuItem separatorItem]];
-		item = [menu addItemWithTitle:@"Ignore Spelling" action:@selector(contextMenuPerformIgnoreSpelling:) keyEquivalent:@""];
+		item = [menu addItemWithTitle:@"Ignore Spelling" action:@selector(contextMenuPerformIgnoreSpelling:) keyEquivalent:@"-"];
+		[item setKeyEquivalentModifierMask:0];
 		[item setRepresentedObject:aWord];
-		item = [menu addItemWithTitle:@"Learn Spelling" action:@selector(contextMenuPerformLearnSpelling:) keyEquivalent:@""];
+		item = [menu addItemWithTitle:@"Learn Spelling" action:@selector(contextMenuPerformLearnSpelling:) keyEquivalent:@"="];
+		[item setKeyEquivalentModifierMask:0];
 		[item setRepresentedObject:aWord];
 		[menu addItem:[NSMenuItem separatorItem]];
+
+		if(!otherActions)
+		{
+			[menu addItemWithTitle:@"Find Next" action:@selector(checkSpelling:) keyEquivalent:@";"];
+			return menu;
+		}
 	}
 
 	static struct { NSString* title; SEL action; } const items[] =
@@ -1705,8 +2094,8 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 		{ @"Copy",                    @selector(copy:)                          },
 		{ @"Paste",                   @selector(paste:)                         },
 		{ nil,                        nil                                       },
-		{ @"Fold/Unfold",             @selector(toggleFolding:)                 },
-		{ @"Filter Through Command…", @selector(orderFrontExecuteCommandPanel:) },
+		{ @"Fold/Unfold",             @selector(toggleCurrentFolding:)          },
+		{ @"Filter Through Command…", @selector(orderFrontRunCommandWindow:)    },
 	};
 
 	for(size_t i = 0; i < sizeofA(items); i++)
@@ -1722,14 +2111,11 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 {
 	NSPoint point = [self convertPoint:[anEvent locationInWindow] fromView:nil];
 	ng::index_t const& click = layout->index_at_point(point);
-	return [self contextMenuWithMisspelledWord:[self selectAndReturnMisspelledWordAtIndex:click.index]];
+	return [self contextMenuWithMisspelledWord:[self selectAndReturnMisspelledWordAtIndex:click.index] andOtherActions:YES];
 }
 
-- (void)showContextMenu:(id)sender
+- (void)showMenu:(NSMenu*)aMenu
 {
-	NSString* word = [self selectAndReturnMisspelledWordAtIndex:editor->ranges().last().last.index];
-	NSMenu* menu = [self contextMenuWithMisspelledWord:word];
-
 	NSWindow* win = [self window];
 	NSEvent* anEvent = [NSApp currentEvent];
 	NSEvent* fakeEvent = [NSEvent
@@ -1743,8 +2129,14 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 		clickCount:1
 		pressure:1];
 
-	[NSMenu popUpContextMenu:menu withEvent:fakeEvent forView:self];
+	[NSMenu popUpContextMenu:aMenu withEvent:fakeEvent forView:self];
 	[win performSelector:@selector(invalidateCursorRectsForView:) withObject:self afterDelay:0.0]; // with option used as modifier, the cross-hair cursor will stick
+}
+
+- (void)showContextMenu:(id)sender
+{
+	NSString* word = [self selectAndReturnMisspelledWordAtIndex:editor->ranges().last().last.index];
+	[self showMenu:[self contextMenuWithMisspelledWord:word andOtherActions:YES]];
 }
 
 - (void)contextMenuPerformCorrectWord:(NSMenuItem*)menuItem
@@ -1759,13 +2151,43 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 - (void)contextMenuPerformIgnoreSpelling:(id)sender
 {
 	D(DBF_OakTextView_Spelling, bug("%s\n", [[sender representedObject] UTF8String]););
-	[[NSSpellChecker sharedSpellChecker] ignoreWord:[sender representedObject] inSpellDocumentWithTag:document->buffer().spelling_tag()];
+	[self ignoreSpelling:[sender representedObject]];
 }
 
 - (void)contextMenuPerformLearnSpelling:(id)sender
 {
 	D(DBF_OakTextView_Spelling, bug("%s\n", [[sender representedObject] UTF8String]););
 	[[NSSpellChecker sharedSpellChecker] learnWord:[sender representedObject]];
+
+	document->buffer().recheck_spelling(0, document->buffer().size());
+	[self setNeedsDisplay:YES];
+}
+
+- (void)ignoreSpelling:(id)sender
+{
+	NSString* word = nil;
+	if([sender respondsToSelector:@selector(selectedCell)])
+		word = [[sender selectedCell] stringValue];
+	else if([sender isKindOfClass:[NSString class]])
+		word = sender;
+
+	D(DBF_OakTextView_Spelling, bug("%s → %s\n", [[sender description] UTF8String], [word UTF8String]););
+	if(word)
+	{
+		[[NSSpellChecker sharedSpellChecker] ignoreWord:word inSpellDocumentWithTag:document->buffer().spelling_tag()];
+		document->buffer().recheck_spelling(0, document->buffer().size());
+		[self setNeedsDisplay:YES];
+	}
+}
+
+- (void)changeSpelling:(id)sender
+{
+	D(DBF_OakTextView_Spelling, bug("%s\n", [[sender description] UTF8String]););
+	if([sender respondsToSelector:@selector(selectedCell)])
+	{
+		AUTO_REFRESH;
+		editor->insert(to_s((NSString*)[[sender selectedCell] stringValue]));
+	}
 }
 
 // =========================
@@ -1832,7 +2254,7 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 		{
 			std::map<std::string, std::string> variables;
 			for(NSString* key in [captures allKeys])
-				variables.insert(std::make_pair(to_s(key), to_s((NSString*)captures[key])));
+				variables.emplace(to_s(key), to_s((NSString*)captures[key]));
 			replacement = format_string::expand(replacement, variables);
 		}
 		editor->insert(replacement, true);
@@ -2416,6 +2838,51 @@ static char const* kOakMenuItemTitle = "OakMenuItemTitle";
 	}
 }
 
+- (void)checkSpelling:(id)sender
+{
+	NSSpellChecker* speller = [NSSpellChecker sharedSpellChecker];
+	ng::buffer_t& buf = document->buffer();
+
+	NSString* lang = [NSString stringWithCxxString:buf.spelling_language()];
+	if([[speller spellingPanel] isVisible])
+	{
+		if(![[speller language] isEqualToString:lang])
+		{
+			buf.set_spelling_language(to_s([speller language]));
+			[self setNeedsDisplay:YES];
+		}
+	}
+	else
+	{
+		[speller setLanguage:lang];
+	}
+
+	if(!buf.live_spelling())
+	{
+		buf.set_live_spelling(true);
+		[self setNeedsDisplay:YES];
+	}
+
+	auto nextMisspelling = buf.next_misspelling(editor->ranges().last().last.index);
+	if(nextMisspelling.first != nextMisspelling.second)
+	{
+		{
+			AUTO_REFRESH;
+			editor->set_selections(ng::range_t(nextMisspelling.first, nextMisspelling.second));
+		}
+
+		NSString* word = [NSString stringWithCxxString:buf.substr(nextMisspelling.first, nextMisspelling.second)];
+		[speller updateSpellingPanelWithMisspelledWord:word];
+
+		if(![[speller spellingPanel] isVisible])
+			[self showMenu:[self contextMenuWithMisspelledWord:word andOtherActions:NO]];
+	}
+	else
+	{
+		[speller updateSpellingPanelWithMisspelledWord:@""];
+	}
+}
+
 - (void)toggleContinuousSpellChecking:(id)sender
 {
 	bool flag = !document->buffer().live_spelling();
@@ -2541,7 +3008,7 @@ static char const* kOakMenuItemTitle = "OakMenuItemTitle";
 	if(io::process_t process = io::spawn(std::vector<std::string>{ "/bin/sh", "-c", to_s(commandString) }, environment))
 	{
 		bool inputWasSelection = false;
-		text::range_t inputRange = ng::write_unit_to_fd(document->buffer(), editor->ranges().last(), document->buffer().indent().tab_size(), process.in, inputUnit, input::entire_document, input_format::text, scope::selector_t(), environment, &inputWasSelection);
+		ng::range_t inputRange = ng::write_unit_to_fd(document->buffer(), editor->ranges().last(), document->buffer().indent().tab_size(), process.in, inputUnit, input::entire_document, input_format::text, scope::selector_t(), environment, &inputWasSelection);
 
 		__block int status = 0;
 		__block std::string output, error;
@@ -2635,7 +3102,7 @@ static char const* kOakMenuItemTitle = "OakMenuItemTitle";
 			plist[bundles::kFieldUUID] = to_s(uuid);
 			plist[bundles::kFieldName] = std::string("untitled");
 
-			bundles::item_ptr item(new bundles::item_t(uuid, bundle, bundles::kItemTypeMacro));
+			auto item = std::make_shared<bundles::item_t>(uuid, bundle, bundles::kItemTypeMacro);
 			item->set_plist(plist);
 			bundles::add_item(item);
 

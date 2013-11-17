@@ -48,7 +48,7 @@ namespace bundles
 
 	item_ptr item_t::menu_item_separator ()
 	{
-		static item_ptr item(new item_t(kSeparatorUUID, item_ptr(), kItemTypeMenuItemSeparator));
+		static item_ptr item = std::make_shared<item_t>(kSeparatorUUID, item_ptr(), kItemTypeMenuItemSeparator);
 		return item;
 	}
 
@@ -85,7 +85,7 @@ namespace bundles
 			else if(stringKeys.find(pair.first) != stringKeys.end())
 			{
 				if(std::string const* str = boost::get<std::string>(&pair.second))
-					_fields.insert(std::make_pair(pair.first, *str));
+					_fields.emplace(pair.first, *str);
 			}
 			else if(arrayKeys.find(pair.first) != arrayKeys.end())
 			{
@@ -94,7 +94,7 @@ namespace bundles
 					iterate(any, *array)
 					{
 						if(std::string const* str = boost::get<std::string>(&*any))
-							_fields.insert(std::make_pair(pair.first, *str));
+							_fields.emplace(pair.first, *str);
 					}
 				}
 			}
@@ -104,14 +104,14 @@ namespace bundles
 				if(plist::dictionary_t const* dictionary = boost::get<plist::dictionary_t>(&pair.second))
 				{
 					iterate(dictPair, *dictionary)
-						_fields.insert(std::make_pair(pair.first, dictPair->first));
+						_fields.emplace(pair.first, dictPair->first);
 				}
 				else if(plist::array_t const* array = boost::get<plist::array_t>(&pair.second))
 				{
 					iterate(any, *array) // initialize from cache
 					{
 						if(std::string const* str = boost::get<std::string>(&*any))
-							_fields.insert(std::make_pair(pair.first, *str));
+							_fields.emplace(pair.first, *str);
 					}
 				}
 			}
@@ -156,7 +156,7 @@ namespace bundles
 	void item_t::set_name (std::string const& newName)
 	{
 		_fields.erase(_fields.lower_bound(kFieldName), _fields.upper_bound(kFieldName));
-		_fields.insert(std::make_pair(kFieldName, newName));
+		_fields.emplace(kFieldName, newName);
 		_full_name = NULL_STR; // FIXME should setup a new full name based on menu nesting…
 	}
 
@@ -248,14 +248,14 @@ namespace bundles
 			switch(_paths.size())
 			{
 				case 0: return fallback;
-				case 1: _plist.reset(new plist::dictionary_t(plist::load(_paths.back()))); break;
+				case 1: _plist = std::make_shared<plist::dictionary_t>(plist::load(_paths.back())); break;
 
 				default:
 				{
 					std::vector<plist::dictionary_t> plists;
 					iterate(path, _paths)
 						plists.push_back(plist::load(*path));
-					_plist.reset(new plist::dictionary_t(plist::merge_delta(plists)));
+					_plist = std::make_shared<plist::dictionary_t>(plist::merge_delta(plists));
 				}
 				break;
 			}
@@ -266,7 +266,7 @@ namespace bundles
 	void item_t::set_plist (plist::dictionary_t const& plist, bool shouldInitialize)
 	{
 		std::lock_guard<std::mutex> lock(_plist_mutex);
-		_plist.reset(new plist::dictionary_t(plist));
+		_plist = std::make_shared<plist::dictionary_t>(plist);
 		if(shouldInitialize)
 			initialize(plist);
 	}

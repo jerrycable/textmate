@@ -153,6 +153,11 @@ gutter_styles_t::~gutter_styles_t ()
 	}
 }
 
+bool gutter_styles_t::is_transparent () const
+{
+	return background && CGColorGetAlpha(background) < 1;
+}
+
 // ===========
 // = theme_t =
 // ===========
@@ -160,8 +165,8 @@ gutter_styles_t::~gutter_styles_t ()
 theme_ptr theme_t::copy_with_font_name_and_size (std::string const& fontName, CGFloat fontSize)
 {
 	if(_font_name == fontName && _font_size == fontSize)
-		return theme_ptr(new theme_t::theme_t(*this));
-	return theme_ptr(new theme_t::theme_t(this->_item, fontName, fontSize));
+		return std::make_shared<theme_t::theme_t>(*this);
+	return std::make_shared<theme_t::theme_t>(this->_item, fontName, fontSize);
 }
 
 theme_t::theme_t (bundles::item_ptr const& themeItem, std::string const& fontName, CGFloat fontSize) :_item(themeItem), _font_name(fontName), _font_size(fontSize)
@@ -263,8 +268,8 @@ void theme_t::shared_styles_t::setup_styles ()
 
 	// We assume that the first style is the unscoped root style
 
-	_foreground     = _styles.empty() ? CGColorPtr(CGColorCreate(_color_space, (CGFloat[4]){ 1, 1, 1, 1 }), CGColorRelease) : OakColorCreateFromThemeColor(_styles[0].foreground, _color_space);
-	_background     = _styles.empty() ? CGColorPtr(CGColorCreate(_color_space, (CGFloat[4]){ 0, 0, 0, 1 }), CGColorRelease) : OakColorCreateFromThemeColor(_styles[0].background, _color_space);
+	_foreground     = (_styles.empty() ? CGColorPtr() : OakColorCreateFromThemeColor(_styles[0].foreground, _color_space)) ?: CGColorPtr(CGColorCreate(_color_space, (CGFloat[4]){ 1, 1, 1, 1 }), CGColorRelease);
+	_background     = (_styles.empty() ? CGColorPtr() : OakColorCreateFromThemeColor(_styles[0].background, _color_space)) ?: CGColorPtr(CGColorCreate(_color_space, (CGFloat[4]){ 0, 0, 0, 1 }), CGColorRelease);
 	_is_dark        = color_is_dark(_background.get());
 	_is_transparent = CGColorGetAlpha(_background.get()) < 1;
 
@@ -373,14 +378,14 @@ styles_t const& theme_t::styles_for_scope (scope::scope_t const& scope) const
 		{
 			double rank = 0;
 			if(it->scope_selector.does_match(scope, &rank))
-				ordering.insert(std::make_pair(rank, *it));
+				ordering.emplace(rank, *it);
 		}
 
 		iterate(it, _styles->_styles)
 		{
 			double rank = 0;
 			if(it->scope_selector.does_match(scope, &rank))
-				ordering.insert(std::make_pair(rank, *it));
+				ordering.emplace(rank, *it);
 		}
 
 		decomposed_style_t base(scope::selector_t(), _font_name, _font_size);
@@ -400,7 +405,7 @@ styles_t const& theme_t::styles_for_scope (scope::scope_t const& scope) const
 		CGColorPtr selection  = OakColorCreateFromThemeColor(base.selection,  _styles->_color_space) ?: CGColorPtr(CGColorCreate(_styles->_color_space, (CGFloat[4]){ 0.5, 0.5, 0.5,   1 }), CGColorRelease);
 
 		styles_t res(foreground, background, caret, selection, font, base.underlined == bool_true, base.misspelled == bool_true);
-		styles = _cache.insert(std::make_pair(scope, res)).first;
+		styles = _cache.emplace(scope, res).first;
 	}
 	return styles->second;
 }
@@ -410,11 +415,14 @@ static theme_t::color_info_t read_color (std::string const& str_color )
 	enum { R, G, B, A };
 	unsigned int col[4] = { 0x00, 0x00, 0x00, 0xFF } ;
 	
-	int res = sscanf(str_color.c_str(), "#%02x%02x%02x%02x", &col[R], &col[G], &col[B], &col[A]);
-	if(res < 3) // R G B was not parsed, or color is 100% transparent
-		return theme_t::color_info_t::color_info_t(); // color is not set
+	if(3 <= sscanf(str_color.c_str(), "#%02x%02x%02x%02x", &col[R], &col[G], &col[B], &col[A]))
+		return theme_t::color_info_t::color_info_t(col[R]/255.0, col[G]/255.0, col[B]/255.0, col[A]/255.0);
 
-	return theme_t::color_info_t::color_info_t(col[R]/255.0, col[G]/255.0, col[B]/255.0, col[A]/255.0);
+	col[A] = 0xF;
+	if(3 <= sscanf(str_color.c_str(), "#%1x%1x%1x%1x", &col[R], &col[G], &col[B], &col[A]))
+		return theme_t::color_info_t::color_info_t(col[R]/15.0, col[G]/15.0, col[B]/15.0, col[A]/15.0);
+
+	return theme_t::color_info_t::color_info_t(); // color is not set
 }
 
 static theme_t::color_info_t blend (theme_t::color_info_t const& lhs, theme_t::color_info_t const& rhs)
@@ -493,7 +501,7 @@ theme_t::shared_styles_ptr theme_t::find_shared_styles (bundles::item_ptr const&
 	oak::uuid_t const& uuid = themeItem ? themeItem->uuid() : kEmptyThemeUUID;
 	auto theme = Cache.find(uuid);
 	if(theme == Cache.end())
-		theme = Cache.insert(std::make_pair(uuid, shared_styles_ptr(new shared_styles_t(themeItem)))).first;
+		theme = Cache.emplace(uuid, std::make_shared<shared_styles_t>(themeItem)).first;
 	return theme->second;
 }
 
@@ -509,6 +517,6 @@ theme_ptr parse_theme (bundles::item_ptr const& themeItem)
 	oak::uuid_t const& uuid = themeItem ? themeItem->uuid() : kEmptyThemeUUID;
 	auto theme = Cache.find(uuid);
 	if(theme == Cache.end())
-		theme = Cache.insert(std::make_pair(uuid, theme_ptr(new theme_t(themeItem)))).first;
+		theme = Cache.emplace(uuid, std::make_shared<theme_t>(themeItem)).first;
 	return theme->second;
 }

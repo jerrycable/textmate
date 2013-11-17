@@ -26,7 +26,7 @@ static std::vector<bundles::item_ptr> binary_filters (std::string const& event, 
 		citerate(pattern, (*item)->values_for_field(bundles::kFieldContentMatch))
 		{
 			if(regexp::match_t const& m = regexp::search(*pattern, contentAsString))
-				ordering.insert(std::make_pair(-m.end(), *item));
+				ordering.emplace(-m.end(), *item);
 		}
 	}
 	return ordering.empty() ? std::vector<bundles::item_ptr>() : std::vector<bundles::item_ptr>(1, ordering.begin()->second);
@@ -52,20 +52,20 @@ namespace
 		void show_tool_tip (std::string const& str)                                        { fprintf(stderr, "tool tip: %s\n", str.c_str()); }
 		void show_error (bundle_command_t const& command, int rc, std::string const& out, std::string const& err) { _context->filter_error(command, rc, out, err); }
 
-		text::range_t write_unit_to_fd (int fd, input::type unit, input::type fallbackUnit, input_format::type format, scope::selector_t const& scopeSelector, std::map<std::string, std::string>& variables, bool* inputWasSelection);
-		bool accept_result (std::string const& out, output::type placement, output_format::type format, output_caret::type outputCaret, text::range_t inputRange, std::map<std::string, std::string> const& environment);
+		ng::range_t write_unit_to_fd (int fd, input::type unit, input::type fallbackUnit, input_format::type format, scope::selector_t const& scopeSelector, std::map<std::string, std::string>& variables, bool* inputWasSelection);
+		bool accept_result (std::string const& out, output::type placement, output_format::type format, output_caret::type outputCaret, ng::range_t inputRange, std::map<std::string, std::string> const& environment);
 
 	private:
 		io::bytes_ptr _input;
 		filter::callback_ptr _context;
 	};
 
-	text::range_t event_delegate_t::write_unit_to_fd (int fd, input::type unit, input::type fallbackUnit, input_format::type format, scope::selector_t const& scopeSelector, std::map<std::string, std::string>& variables, bool* inputWasSelection)
+	ng::range_t event_delegate_t::write_unit_to_fd (int fd, input::type unit, input::type fallbackUnit, input_format::type format, scope::selector_t const& scopeSelector, std::map<std::string, std::string>& variables, bool* inputWasSelection)
 	{
 		if(unit != input::entire_document || format != input_format::text)
 		{
 			close(fd);
-			return fprintf(stderr, "*** write unit to fd: unhandled unit/format: %d/%d\n", unit, format), text::range_t::undefined;
+			return fprintf(stderr, "*** write unit to fd: unhandled unit/format: %d/%d\n", unit, format), ng::range_t();
 		}
 
 		dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
@@ -74,15 +74,15 @@ namespace
 			close(fd);
 		});
 
-		return text::range_t::undefined;
+		return ng::range_t();
 	}
 
-	bool event_delegate_t::accept_result (std::string const& out, output::type placement, output_format::type format, output_caret::type outputCaret, text::range_t inputRange, std::map<std::string, std::string> const& environment)
+	bool event_delegate_t::accept_result (std::string const& out, output::type placement, output_format::type format, output_caret::type outputCaret, ng::range_t inputRange, std::map<std::string, std::string> const& environment)
 	{
 		if(placement != output::replace_document || format != output_format::text)
 			return fprintf(stderr, "*** unhandled placement/format (%d/%d): %s\n", placement, format, out.c_str()), false;
 
-		_context->set_content(io::bytes_ptr(new io::bytes_t(out)));
+		_context->set_content(std::make_shared<io::bytes_t>(out));
 		return true;
 	}
 }
@@ -123,7 +123,7 @@ namespace filter
 	void run (bundles::item_ptr filter, std::string const& path, io::bytes_ptr content, callback_ptr context)
 	{
 		std::map<std::string, std::string> variables = path_variables(path);
-		command::runner_ptr runner = command::runner(parse_command(filter), ng::buffer_t(), ng::ranges_t(), bundles::scope_variables(variables << filter->bundle_variables(), file::path_attributes(path)), command::delegate_ptr(new event_delegate_t(content, context)));
+		command::runner_ptr runner = command::runner(parse_command(filter), ng::buffer_t(), ng::ranges_t(), bundles::scope_variables(variables << filter->bundle_variables(), file::path_attributes(path)), std::make_shared<event_delegate_t>(content, context));
 		runner->launch();
 	}
 

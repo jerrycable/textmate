@@ -26,7 +26,7 @@ namespace ng
 	{
 		completion_command_delegate_t (ng::buffer_t const& buffer, ng::ranges_t const& ranges) : buffer(buffer), ranges(ranges), result(NULL_STR) { }
 
-		text::range_t write_unit_to_fd (int fd, input::type unit, input::type fallbackUnit, input_format::type format, scope::selector_t const& scopeSelector, std::map<std::string, std::string>& variables, bool* inputWasSelection)
+		ng::range_t write_unit_to_fd (int fd, input::type unit, input::type fallbackUnit, input_format::type format, scope::selector_t const& scopeSelector, std::map<std::string, std::string>& variables, bool* inputWasSelection)
 		{
 			return ng::write_unit_to_fd(buffer, ranges.last(), buffer.indent().tab_size(), fd, unit, fallbackUnit, format, scopeSelector, variables, inputWasSelection);
 		}
@@ -37,7 +37,7 @@ namespace ng
 		void show_tool_tip (std::string const& str) { fprintf(stderr, "tool tip: %s\n", str.c_str()); }
 		void show_error (bundle_command_t const& command, int rc, std::string const& out, std::string const& err) { fprintf(stderr, "error: %s%s\n", out.c_str(), err.c_str()); }
 
-		bool accept_result (std::string const& out, output::type placement, output_format::type format, output_caret::type outputCaret, text::range_t inputRange, std::map<std::string, std::string> const& environment)
+		bool accept_result (std::string const& out, output::type placement, output_format::type format, output_caret::type outputCaret, ng::range_t inputRange, std::map<std::string, std::string> const& environment)
 		{
 			if(placement == output::replace_selection && format == output_format::completion_list)
 				result = out;
@@ -96,7 +96,7 @@ namespace ng
 			}
 			else
 			{
-				completion_command_delegate_ptr delegate(new completion_command_delegate_t(_buffer, _selections));
+				auto delegate = std::make_shared<completion_command_delegate_t>(_buffer, _selections);
 				command::runner_ptr runner = command::runner(cmd, _buffer, _selections, env, delegate);
 				runner->launch();
 				runner->wait();
@@ -105,7 +105,8 @@ namespace ng
 				{
 					for(auto line : text::tokenize(delegate->result.begin(), delegate->result.end(), '\n'))
 					{
-						if(!line.empty() && utf8::is_valid(line.begin(), line.end()))
+						line.erase(utf8::remove_malformed(line.begin(), line.end()), line.end());
+						if(!line.empty())
 							commandResult.push_back(line);
 					}
 				}
@@ -159,12 +160,12 @@ namespace ng
 			auto it = ranked.find(word);
 			if(it != ranked.end())
 					it->second = std::min(rank, it->second);
-			else	ranked.insert(std::make_pair(word, rank));
+			else	ranked.emplace(word, rank);
 		}
 
 		std::map<ssize_t, std::string> ordered;
 		iterate(pair, ranked)
-			ordered.insert(std::make_pair(pair->second, pair->first));
+			ordered.emplace(pair->second, pair->first);
 
 		std::vector<std::string> res;
 		std::transform(ordered.begin(), ordered.end(), back_inserter(res), [](std::pair<ssize_t, std::string> const& p){ return p.second; });
@@ -199,7 +200,7 @@ namespace ng
 
 			std::multimap<range_t, std::string> insertions;
 			citerate(range, info.prefix_ranges())
-				insertions.insert(std::make_pair(*range, info.current()));
+				insertions.emplace(*range, info.current());
 			info.set_prefix_ranges(this->replace(insertions, true));
 			info.set_revision(_buffer.next_revision());
 			info.set_ranges(ng::move(_buffer, info.prefix_ranges(), kSelectionMoveToEndOfSelection));
@@ -216,7 +217,7 @@ namespace ng
 
 			std::multimap<range_t, std::string> insertions;
 			citerate(range, info.prefix_ranges())
-				insertions.insert(std::make_pair(*range, info.current()));
+				insertions.emplace(*range, info.current());
 			info.set_prefix_ranges(this->replace(insertions, true));
 			info.set_revision(_buffer.next_revision());
 			info.set_ranges(ng::move(_buffer, info.prefix_ranges(), kSelectionMoveToEndOfSelection));

@@ -63,6 +63,8 @@ namespace ng
 
 	buffer_parser_t::result_t buffer_parser_t::handle_request (request_t const& request)
 	{
+		std::lock_guard<std::mutex> lock(request.grammar->mutex());
+
 		result_t result;
 		result.state = parse::parse(request.line.data(), request.line.data() + request.line.size(), request.state, result.scopes, request.range.first == 0);
 		result.range = request.range;
@@ -92,7 +94,7 @@ namespace ng
 			auto state  = from == 0 ? _parser_states.begin() : _parser_states.find(from);
 			D(DBF_Buffer_Parsing, bug("line %zu dirty, offset %zu → %zu-%zu\n", n, _dirty.begin()->first, from, to););
 			if(state != _parser_states.end())
-					parser.reset(new buffer_parser_t(*this, state->second, substr(from, to), std::make_pair(from, to), batch_start ==-1? from : batch_start, limit_redraw));
+					parser = std::make_shared<buffer_parser_t>(*this, state->second, substr(from, to), std::make_pair(from, to), batch_start ==-1? from : batch_start, limit_redraw);
 			else	fprintf(stderr, "no parser state for %zu-%zu (%p)\n%s\n%s\n", from, to, this, substr(0, size()).c_str(), to_s(*this).c_str());
 		}
 	}
@@ -135,7 +137,11 @@ namespace ng
 
 	void buffer_t::wait_for_repair ()
 	{
+		if(!grammar())
+			return;
+
 		parser.reset();
+		std::lock_guard<std::mutex> lock(grammar()->mutex());
 		while(!_dirty.empty() && !_parser_states.empty())
 		{
 			size_t n    = convert(_dirty.begin()->first).line;

@@ -24,11 +24,11 @@ namespace command
 	{
 		virtual ~delegate_t () { }
 
-		virtual text::range_t write_unit_to_fd (int fd, input::type unit, input::type fallbackUnit, input_format::type format, scope::selector_t const& scopeSelector, std::map<std::string, std::string>& variables, bool* inputWasSelection) = 0;
+		virtual ng::range_t write_unit_to_fd (int fd, input::type unit, input::type fallbackUnit, input_format::type format, scope::selector_t const& scopeSelector, std::map<std::string, std::string>& variables, bool* inputWasSelection) = 0;
 
 		virtual bool accept_html_data (runner_ptr runner, char const* data, size_t len) { return true; }
 		virtual void discard_html () { }
-		virtual bool accept_result (std::string const& out, output::type placement, output_format::type format, output_caret::type outputCaret, text::range_t inputRange, std::map<std::string, std::string> const& environment) = 0;
+		virtual bool accept_result (std::string const& out, output::type placement, output_format::type format, output_caret::type outputCaret, ng::range_t inputRange, std::map<std::string, std::string> const& environment) = 0;
 
 		virtual void show_document (std::string const& str) = 0;
 		virtual void show_tool_tip (std::string const& str) = 0;
@@ -48,8 +48,8 @@ namespace command
 
 	struct PUBLIC runner_t : std::enable_shared_from_this<runner_t>
 	{
-		friend runner_ptr runner (bundle_command_t const& command, ng::buffer_t const& buffer, ng::ranges_t const& selection, std::map<std::string, std::string> const& environment, delegate_ptr delegate, std::string const& pwd);
 		runner_t () = delete;
+		runner_t (bundle_command_t const& command, ng::buffer_t const& buffer, ng::ranges_t const& selection, std::map<std::string, std::string> const& environment, std::string const& pwd, delegate_ptr delegate);
 
 		void launch ();
 		void wait (bool alsoForDetached = false);
@@ -65,8 +65,6 @@ namespace command
 		std::map<std::string, std::string> const& environment () const { return _environment; }
 
 	private:
-		runner_t (bundle_command_t const& command, ng::buffer_t const& buffer, ng::ranges_t const& selection, std::map<std::string, std::string> const& environment, std::string const& pwd, delegate_ptr delegate);
-
 		struct my_process_t : process_t
 		{
 			WATCH_LEAKS(my_process_t);
@@ -106,7 +104,7 @@ namespace command
 		std::string _directory;
 		delegate_ptr _delegate;
 
-		text::range_t _input_range;   // used when output replaces input
+		ng::range_t _input_range;     // used when output replaces input
 		bool _input_was_selection;    // used with ‘exit_insert_snippet’ and when ‘output_caret == heuristic’
 		bool _output_is_html;
 		bool _did_send_html = false;

@@ -13,9 +13,9 @@ namespace ng
 {
 	buffer_t::buffer_t (char const* str) : _grammar_callback(*this), _revision(0), _next_revision(1), _spelling_language("en")
 	{
-		_symbols.reset(new symbols_t);   _meta_data.push_back(_symbols.get());
-		_marks.reset(new marks_t);       _meta_data.push_back(_marks.get());
-		_pairs.reset(new pairs_t);       _meta_data.push_back(_pairs.get());
+		_meta_data.push_back((_symbols = std::make_shared<symbols_t>()).get());
+		_meta_data.push_back((_marks = std::make_shared<marks_t>()).get());
+		_meta_data.push_back((_pairs = std::make_shared<pairs_t>()).get());
 		_scopes.set(-1, "text");
 
 		if(str)
@@ -297,7 +297,9 @@ namespace ng
 	bool buffer_t::live_spelling () const                                          { return _spelling ? true : false; }
 	std::string const& buffer_t::spelling_language () const                        { return _spelling_language; }
 	std::map<size_t, bool> buffer_t::misspellings (size_t from, size_t to) const   { return _spelling ? _spelling->misspellings(this, from, to) : std::map<size_t, bool>(); }
+	std::pair<size_t, size_t> buffer_t::next_misspelling (size_t from) const       { return _spelling ? _spelling->next_misspelling(from) : std::pair<size_t, size_t>(0, 0); }
 	ns::spelling_tag_t buffer_t::spelling_tag () const                             { return _spelling_tag; }
+	void buffer_t::recheck_spelling (size_t from, size_t to)                       { if(_spelling) _spelling->recheck(this, from, to); }
 
 	void buffer_t::set_live_spelling (bool flag)
 	{

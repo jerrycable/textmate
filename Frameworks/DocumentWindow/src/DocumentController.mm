@@ -575,6 +575,13 @@ namespace
 	[self closeTabsAtIndexes:otherTabs askToSaveChanges:YES createDocumentIfEmpty:YES];
 }
 
+- (IBAction)performCloseTabsToTheRight:(id)sender
+{
+	NSUInteger from = _selectedTabIndex + 1, to = _documents.size();
+	if(from < to)
+		[self closeTabsAtIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(from, to - from)] askToSaveChanges:YES createDocumentIfEmpty:YES];
+}
+
 - (BOOL)windowShouldClose:(id)sender
 {
 	[self.htmlOutputView stopLoading];
@@ -662,7 +669,7 @@ namespace
 	{
 		auto iter = _trackedDocuments.find(aDocument->identifier());
 		if(iter == _trackedDocuments.end())
-			iter = _trackedDocuments.insert(std::make_pair(aDocument->identifier(), tracking_info_t(self, aDocument))).first;
+			iter = _trackedDocuments.emplace(aDocument->identifier(), tracking_info_t(self, aDocument)).first;
 		iter->second.track();
 	}
 }
@@ -817,7 +824,7 @@ namespace
 	}
 	else
 	{
-		NSInteger excessTabs = _documents.size() - self.tabBarView.countOfVisibleTabs;
+		NSInteger excessTabs = _documents.size() - std::max<NSUInteger>(self.tabBarView.countOfVisibleTabs, 8);
 		if(self.tabBarView && excessTabs > 0)
 		{
 			std::set<oak::uuid_t> uuids;
@@ -828,7 +835,7 @@ namespace
 			{
 				document::document_ptr doc = newDocuments[i];
 				if(!doc->is_modified() && doc->is_on_disk() && uuids.find(doc->identifier()) == uuids.end() && !doc->sticky())
-					ranked.insert(std::make_pair(doc->lru(), i));
+					ranked.emplace(doc->lru(), i);
 			}
 
 			NSMutableIndexSet* indexSet = [NSMutableIndexSet indexSet];
@@ -1308,7 +1315,7 @@ namespace
 		if(projectPath)
 		{
 			std::map<std::string, std::string> const map = { { "projectDirectory", to_s(projectPath) } };
-			settings_t const settings = settings_for_path(NULL_STR, NULL_STR, to_s(projectPath), map);
+			settings_t const settings = settings_for_path(NULL_STR, scope::scope_t(), to_s(projectPath), map);
 			std::string const userProjectDirectory = settings.get(kSettingsProjectDirectoryKey, NULL_STR);
 			if(path::is_absolute(userProjectDirectory))
 				projectPath = [NSString stringWithCxxString:path::normalize(userProjectDirectory)];
@@ -1372,10 +1379,12 @@ namespace
 
 - (NSIndexSet*)tryObtainIndexSetFrom:(id)sender
 {
-	id res = sender;
-	if([sender respondsToSelector:@selector(representedObject)])
-		res = [sender representedObject];
-	return [res isKindOfClass:[NSIndexSet class]] ? res : nil;
+	id res = [sender respondsToSelector:@selector(representedObject)] ? [sender representedObject] : sender;
+	if([res isKindOfClass:[NSIndexSet class]])
+		return res;
+	else if(!_documents.empty())
+		return [NSIndexSet indexSetWithIndex:self.selectedTabIndex];
+	return nil;
 }
 
 - (void)takeNewTabIndexFrom:(id)sender
@@ -1419,7 +1428,7 @@ namespace
 	}
 }
 
-- (void)toggleSticky:(id)sender
+- (IBAction)toggleSticky:(id)sender
 {
 	if(NSIndexSet* indexSet = [self tryObtainIndexSetFrom:sender])
 	{
@@ -1723,7 +1732,7 @@ namespace
 		}
 		else
 		{
-			if(!self.htmlOutputView)
+			if(!self.htmlOutputView || self.htmlOutputView.needsNewWebView)
 				self.htmlOutputView = [[OakHTMLOutputView alloc] initWithFrame:NSZeroRect];
 			self.layoutView.htmlOutputView = self.htmlOutputView;
 		}
@@ -1767,7 +1776,7 @@ namespace
 	{
 		_runner = aRunner;
 
-		if(!self.htmlOutputWindowController || [self.htmlOutputWindowController running])
+		if(!self.htmlOutputWindowController || [self.htmlOutputWindowController running] || self.htmlOutputWindowController.needsNewWebView)
 				self.htmlOutputWindowController = [HTMLOutputWindowController HTMLOutputWindowWithRunner:_runner];
 		else	[self.htmlOutputWindowController setCommandRunner:_runner];
 	}
@@ -1878,11 +1887,14 @@ namespace
 	{
 		std::string str = to_s(entry.string);
 		if(regexp::search("\\A.*?(\\.|/).*?:\\d+\\z", str))
-			fc.filterString = entry.string;
+		{
+			if([entry.string hasPrefix:fc.path])
+					fc.filterString = [NSString stringWithCxxString:path::relative_to(str, to_s(fc.path))];
+			else	fc.filterString = entry.string;
+		}
 	}
 
-	[self positionWindow:fc.window];
-	[fc showWindow:nil];
+	[fc showWindowRelativeToFrame:[self.window convertRectToScreen:[self.textView convertRect:[self.textView visibleRect] toView:nil]]];
 }
 
 - (void)fileChooserDidSelectItems:(FileChooser*)sender
@@ -2015,7 +2027,7 @@ namespace
 	int i = 0;
 	for(auto document : _documents)
 	{
-		NSMenuItem* item = [aMenu addItemWithTitle:[NSString stringWithCxxString:document->display_name()] action:@selector(takeSelectedTabIndexFrom:) keyEquivalent:i < 10 ? [NSString stringWithFormat:@"%c", '0' + ((i+1) % 10)] : @""];
+		NSMenuItem* item = [aMenu addItemWithTitle:[NSString stringWithCxxString:document->display_name()] action:@selector(takeSelectedTabIndexFrom:) keyEquivalent:i < 9 ? [NSString stringWithFormat:@"%c", '0' + ((i+1) % 10)] : @""];
 		item.tag     = i;
 		item.toolTip = [[NSString stringWithCxxString:document->path()] stringByAbbreviatingWithTildeInPath];
 		item.image   = [OakFileIconImage fileIconImageWithPath:[NSString stringWithCxxString:document->path()] isModified:document->is_modified()];
@@ -2027,7 +2039,17 @@ namespace
 	}
 
 	if(i == 0)
+	{
 		[aMenu addItemWithTitle:@"No Tabs Open" action:@selector(nop:) keyEquivalent:@""];
+	}
+	else
+	{
+		[aMenu addItem:[NSMenuItem separatorItem]];
+
+		NSMenuItem* item = [aMenu addItemWithTitle:@"Last Tab" action:@selector(takeSelectedTabIndexFrom:) keyEquivalent:@"0"];
+		item.tag     = _documents.size()-1;
+		item.toolTip = [NSString stringWithCxxString:_documents.back()->display_name()];
+	}
 }
 
 // ====================
@@ -2064,6 +2086,10 @@ namespace
 		[menuItem setTitle:self.window.firstResponder == self.textView ? @"Move Focus to File Browser" : @"Move Focus to Document"];
 	else if([menuItem action] == @selector(takeProjectPathFrom:))
 		[menuItem setState:[self.defaultProjectPath isEqualToString:[menuItem representedObject]] ? NSOnState : NSOffState];
+	else if([menuItem action] == @selector(performCloseOtherTabs:))
+		active = _documents.size() > 1;
+	else if([menuItem action] == @selector(performCloseTabsToTheRight:))
+		active = _selectedTabIndex + 1 < _documents.size();
 
 	SEL tabBarActions[] = { @selector(performCloseTab:), @selector(takeNewTabIndexFrom::), @selector(takeTabsToCloseFrom:), @selector(takeTabsToTearOffFrom:), @selector(toggleSticky:) };
 	if(oak::contains(std::begin(tabBarActions), std::end(tabBarActions), [menuItem action]))
@@ -2413,7 +2439,7 @@ static NSUInteger DisableSessionSavingCount = 0;
 					iterate(parent, parents)
 					{
 						if(path::is_child(*parent, projectPath))
-							candidates.insert(std::make_pair(parent->size() - projectPath.size(), candidate));
+							candidates.emplace(parent->size() - projectPath.size(), candidate);
 					}
 				}
 			}

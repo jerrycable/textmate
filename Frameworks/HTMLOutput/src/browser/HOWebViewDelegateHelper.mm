@@ -66,6 +66,13 @@
 	[[sender window] makeKeyAndOrderFront:self];
 }
 
+- (void)webViewClose:(WebView*)sender
+{
+	[sender tryToPerform:@selector(toggleHTMLOutput:) with:self];
+	// We cannot re-use WebView objects where window.close() has been executed because of https://bugs.webkit.org/show_bug.cgi?id=121232
+	self.needsNewWebView = YES;
+}
+
 // This is an undocumented WebView delegate method
 - (void)webView:(WebView*)webView addMessageToConsole:(NSDictionary*)dictionary;
 {
@@ -115,10 +122,10 @@
 	if([[request URL] isFileURL])
 	{
 		NSURL* redirectURL = [NSURL URLWithString:[NSString stringWithFormat:@"file://localhost%@?path=%@&error=1", [[[NSBundle bundleForClass:[self class]] pathForResource:@"error_not_found" ofType:@"html"] stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding], [[[request URL] path] stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding]]];
-		std::string const path = [[[request URL] path] fileSystemRepresentation];
+		char const* path = [[[request URL] path] fileSystemRepresentation];
 
 		struct stat buf;
-		if(stat(path.c_str(), &buf) == 0)
+		if(path && stat(path, &buf) == 0)
 		{
 			if(S_ISREG(buf.st_mode) || S_ISLNK(buf.st_mode))
 			{
