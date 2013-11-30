@@ -29,6 +29,7 @@
 #import <ns/spellcheck.h>
 #import <text/classification.h>
 #import <text/format.h>
+#import <text/newlines.h>
 #import <text/trim.h>
 #import <text/utf16.h>
 #import <text/utf8.h>
@@ -1218,8 +1219,8 @@ doScroll:
 		ret = nsRanges;
 	} HANDLE_ATTR(VisibleCharacterRange) {
 		NSRect visibleRect = [self visibleRect];
-		CGPoint startPoint = NSPointToCGPoint(NSMakePoint(NSMinX(visibleRect), NSMaxY(visibleRect)));
-		CGPoint   endPoint = NSPointToCGPoint(NSMakePoint(NSMinX(visibleRect), NSMinY(visibleRect)));
+		CGPoint startPoint = NSMakePoint(NSMinX(visibleRect), NSMaxY(visibleRect));
+		CGPoint   endPoint = NSMakePoint(NSMinX(visibleRect), NSMinY(visibleRect));
 		ng::range_t visibleRange(layout->index_at_point(startPoint), layout->index_at_point(endPoint));
 		visibleRange = visibleRange.sorted();
 		visibleRange.last = layout->index_below(visibleRange.last);
@@ -1483,7 +1484,7 @@ doScroll:
 - (id)accessibilityHitTest:(NSPoint)screenPoint
 {
 	NSPoint point = [self convertRect:[self.window convertRectFromScreen:NSMakeRect(screenPoint.x, screenPoint.y, 0, 0)] fromView:nil].origin;
-	ng::index_t index = layout->index_at_point(NSPointToCGPoint(point));
+	ng::index_t index = layout->index_at_point(point);
 	const links_ptr links = self.links;
 	auto it = links->lower_bound(index.index);
 	if(it != links->end() && it->second.range.min() <= index)
@@ -3326,8 +3327,12 @@ static char const* kOakMenuItemTitle = "OakMenuItemTitle";
 		}
 		else
 		{
+			std::string str = to_s(text);
+			str.erase(text::convert_line_endings(str.begin(), str.end(), text::estimate_line_endings(str.begin(), str.end())), str.end());
+			str.erase(utf8::remove_malformed(str.begin(), str.end()), str.end());
+
 			editor->set_selections(ng::range_t(pos));
-			editor->insert(to_s(text));
+			editor->insert(str);
 		}
 	}
 	else if(files)
