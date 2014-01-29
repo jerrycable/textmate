@@ -99,10 +99,12 @@ namespace ng
 		bool is_line_fold_start_marker (size_t n) const;
 		bool is_line_fold_stop_marker (size_t n) const;
 		void fold (size_t from, size_t to);
+		void unfold (size_t from, size_t to);
 		void remove_enclosing_folds (size_t from, size_t to);
 		void toggle_fold_at_line (size_t n, bool recursive);
 		void toggle_all_folds_at_level (size_t level);
 		std::string folded_as_string () const;
+		ng::range_t folded_range_at_point (CGPoint point) const;
 
 		// =======================
 		// = Gutter view support =

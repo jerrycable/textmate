@@ -10,6 +10,7 @@
 #import <bundles/bundles.h>
 #import <OakFilterList/SymbolChooser.h>
 #import <OakFoundation/NSString Additions.h>
+#import <OakFoundation/NSArray Additions.h>
 #import <OakAppKit/OakAppKit.h>
 #import <OakAppKit/NSColor Additions.h>
 #import <OakAppKit/NSImage Additions.h>
@@ -244,7 +245,7 @@ private:
 	if(NSFont* newFont = [sender convertFont:textView.font])
 	{
 		settings_t::set(kSettingsFontNameKey, to_s([newFont fontName]));
-		settings_t::set(kSettingsFontSizeKey, (size_t)[newFont pointSize]);
+		settings_t::set(kSettingsFontSizeKey, [newFont pointSize]);
 		[self setFont:newFont];
 	}
 }
@@ -708,19 +709,19 @@ static std::string const kSearchmarkType = "search";
 - (NSImage*)imageForState:(NSUInteger)state forColumnWithIdentifier:(id)identifier
 {
 	NSArray* array = _gutterImages[identifier];
-	return array && state < [array count] && array[state] != [NSNull null] ? array[state] : nil;
+	return [array safeObjectAtIndex:state];
 }
 
 - (NSImage*)hoverImageForState:(NSUInteger)state forColumnWithIdentifier:(id)identifier
 {
 	NSArray* array = _gutterHoverImages[identifier];
-	return array && state < [array count] && array[state] != [NSNull null] ? array[state] : nil;
+	return [array safeObjectAtIndex:state];
 }
 
 - (NSImage*)pressedImageForState:(NSUInteger)state forColumnWithIdentifier:(id)identifier
 {
 	NSArray* array = _gutterPressedImages[identifier];
-	return array && state < [array count] && array[state] != [NSNull null] ? array[state] : nil;
+	return [array safeObjectAtIndex:state];
 }
 
 // =============================
@@ -839,19 +840,26 @@ static std::string const kSearchmarkType = "search";
 	return NO;
 }
 
+- (NSSet*)myAccessibilityAttributeNames
+{
+	static NSSet* set = [NSSet setWithArray:@[
+		NSAccessibilityRoleAttribute,
+		NSAccessibilityDescriptionAttribute,
+	]];
+	return set;
+}
+
 - (NSArray*)accessibilityAttributeNames
 {
-	static NSArray* attributes = nil;
-	if(!attributes)
-	{
-		NSSet* set = [NSSet setWithArray:[super accessibilityAttributeNames]];
-		set = [set setByAddingObjectsFromArray:@[
-			NSAccessibilityRoleAttribute,
-			NSAccessibilityDescriptionAttribute,
-		]];
-		attributes = [set allObjects];
-	}
+	static NSArray* attributes = [[[self myAccessibilityAttributeNames] setByAddingObjectsFromArray:[super accessibilityAttributeNames]] allObjects];
 	return attributes;
+}
+
+- (BOOL)accessibilityIsAttributeSettable:(NSString*)attribute
+{
+	if([[self myAccessibilityAttributeNames] containsObject:attribute])
+		return NO;
+	return [super accessibilityIsAttributeSettable:attribute];
 }
 
 - (id)accessibilityAttributeValue:(NSString*)attribute

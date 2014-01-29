@@ -104,24 +104,26 @@ struct buffer_refresh_callback_t;
 	return NO;
 }
 
+- (NSSet*)myAccessibilityAttributeNames
+{
+	static NSSet* set = [NSSet setWithArray:@[
+		NSAccessibilityRoleAttribute,
+		NSAccessibilityRoleDescriptionAttribute,
+		NSAccessibilitySubroleAttribute,
+		NSAccessibilityParentAttribute,
+		NSAccessibilityWindowAttribute,
+		NSAccessibilityTopLevelUIElementAttribute,
+		NSAccessibilityPositionAttribute,
+		NSAccessibilitySizeAttribute,
+		NSAccessibilityTitleAttribute,
+		NSAccessibilityURLAttribute,
+	]];
+	return set;
+}
+
 - (NSArray*)accessibilityAttributeNames
 {
-	static NSArray* attributes = nil;
-	if(!attributes)
-	{
-		attributes = @[
-			NSAccessibilityRoleAttribute,
-			NSAccessibilityRoleDescriptionAttribute,
-			NSAccessibilitySubroleAttribute,
-			NSAccessibilityParentAttribute,
-			NSAccessibilityWindowAttribute,
-			NSAccessibilityTopLevelUIElementAttribute,
-			NSAccessibilityPositionAttribute,
-			NSAccessibilitySizeAttribute,
-			NSAccessibilityTitleAttribute,
-			NSAccessibilityURLAttribute,
-		];
-	}
+	static NSArray* attributes = [[[self myAccessibilityAttributeNames] setByAddingObjectsFromArray:[super accessibilityAttributeNames]] allObjects];
 	return attributes;
 }
 
@@ -160,12 +162,16 @@ struct buffer_refresh_callback_t;
 
 - (BOOL)accessibilityIsAttributeSettable:(NSString*)attribute
 {
-	return NO;
+	if([[self myAccessibilityAttributeNames] containsObject:attribute])
+		return NO;
+	return [super accessibilityIsAttributeSettable:attribute];
 }
 
 - (void)accessibilitySetValue:(id)value forAttribute:(NSString*)attribute
 {
-	@throw [NSException exceptionWithName:NSAccessibilityException reason:[NSString stringWithFormat:@"Setting accessibility attribute not supported: %@", attribute] userInfo:nil];
+	if([[self myAccessibilityAttributeNames] containsObject:attribute])
+		@throw [NSException exceptionWithName:NSAccessibilityException reason:[NSString stringWithFormat:@"Setting accessibility attribute not supported: %@", attribute] userInfo:nil];
+	[super accessibilitySetValue:value forAttribute:attribute];
 }
 
 - (NSArray*)accessibilityParameterizedAttributeNames
@@ -730,7 +736,7 @@ static std::string shell_quote (std::vector<std::string> paths)
 
 		theme          = parse_theme(bundles::lookup(settings.get(kSettingsThemeKey, NULL_STR)));
 		fontName       = settings.get(kSettingsFontNameKey, NULL_STR);
-		fontSize       = settings.get(kSettingsFontSizeKey, 11);
+		fontSize       = settings.get(kSettingsFontSizeKey, 11.0);
 		theme          = theme->copy_with_font_name_and_size(fontName, fontSize);
 
 		_showInvisibles = settings.get(kSettingsShowInvisiblesKey, false);
@@ -1168,25 +1174,25 @@ doScroll:
 #define HANDLE_ATTR(attr) else if(ATTREQ_(ATTR(attr)))
 #define HANDLE_PATTR(attr) else if(ATTREQ_(PATTR(attr)))
 
+- (NSSet*)myAccessibilityAttributeNames
+{
+	static NSSet* set = [NSSet setWithArray:@[
+		ATTR(Role),
+		ATTR(Value),
+		ATTR(InsertionPointLineNumber),
+		ATTR(NumberOfCharacters),
+		ATTR(SelectedText),
+		ATTR(SelectedTextRange),
+		ATTR(SelectedTextRanges),
+		ATTR(VisibleCharacterRange),
+		ATTR(Children),
+	]];
+	return set;
+}
+
 - (NSArray*)accessibilityAttributeNames
 {
-	static NSArray* attributes = nil;
-	if(!attributes)
-	{
-		NSSet* set = [NSSet setWithArray:@[
-			ATTR(Role),
-			ATTR(Value),
-			ATTR(InsertionPointLineNumber),
-			ATTR(NumberOfCharacters),
-			ATTR(SelectedText),
-			ATTR(SelectedTextRange),
-			ATTR(SelectedTextRanges),
-			ATTR(VisibleCharacterRange),
-			ATTR(Children),
-		]];
-
-		attributes = [[set setByAddingObjectsFromArray:[super accessibilityAttributeNames]] allObjects];
-	}
+	static NSArray* attributes = [[[self myAccessibilityAttributeNames] setByAddingObjectsFromArray:[super accessibilityAttributeNames]] allObjects];
 	return attributes;
 }
 
@@ -1206,8 +1212,8 @@ doScroll:
 	} HANDLE_ATTR(NumberOfCharacters) {
 		ret = [NSNumber numberWithUnsignedInteger:[self nsRangeForRange:ng::range_t(0, buffer.size())].length];
 	} HANDLE_ATTR(SelectedText) {
-		ng::range_t const& selection = editor->ranges().last();
-		std::string const& text = buffer.substr(selection.min().index, selection.max().index);
+		ng::range_t const selection = editor->ranges().last();
+		std::string const text = buffer.substr(selection.min().index, selection.max().index);
 		ret = [NSString stringWithCxxString:text];
 	} HANDLE_ATTR(SelectedTextRange) {
 		ret = [NSValue valueWithRange:[self nsRangeForRange:editor->ranges().last()]];
@@ -1239,9 +1245,9 @@ doScroll:
 
 - (BOOL)accessibilityIsAttributeSettable:(NSString*)attribute
 {
-	NSArray* settable = @[ ATTR(Value), ATTR(SelectedText), ATTR(SelectedTextRange), ATTR(SelectedTextRanges) ];
-	if([settable containsObject:attribute])
-		return YES;
+	static NSArray* settable = @[ ATTR(Value), ATTR(SelectedText), ATTR(SelectedTextRange), ATTR(SelectedTextRanges) ];
+	if([[self myAccessibilityAttributeNames] containsObject:attribute])
+		return [settable containsObject:attribute];
 	return [super accessibilityIsAttributeSettable:attribute];
 }
 
@@ -3555,8 +3561,19 @@ static scope::context_t add_modifiers_to_scope (scope::context_t scope, NSUInteg
 	if(!layout || [anEvent type] != NSLeftMouseDown || ignoreMouseDown)
 		return (void)(ignoreMouseDown = NO);
 
+	if(ng::range_t r = layout->folded_range_at_point([self convertPoint:[anEvent locationInWindow] fromView:nil]))
+	{
+		layout->unfold(r.min().index, r.max().index);
+		return;
+	}
+
 	if(macroRecordingArray && [anEvent type] == NSLeftMouseDown)
-		return (void)NSRunAlertPanel(@"You are recording a macro", @"While recording macros it is not possible to select text or reposition the caret using your mouse.\nYou can stop macro recording from the Edit → Macros menu.", @"Continue", nil, nil);
+	{
+		NSInteger choice = NSRunAlertPanel(@"You are recording a macro", @"While recording macros it is not possible to select text or reposition the caret using your mouse.", @"Continue", @"Stop Recording", nil);
+		if(choice == NSAlertAlternateReturn) // "Stop Macro Recording"
+			self.isMacroRecording = NO;
+		return;
+	}
 
 	std::vector<bundles::item_ptr> const& items = bundles::query(bundles::kFieldSemanticClass, "callback.mouse-click", add_modifiers_to_scope(ng::scope(document->buffer(), layout->index_at_point([self convertPoint:[anEvent locationInWindow] fromView:nil]), to_s([self scopeAttributes])), [anEvent modifierFlags]));
 	if(!items.empty())
