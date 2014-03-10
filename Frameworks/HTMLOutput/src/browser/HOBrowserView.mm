@@ -7,7 +7,7 @@
 @interface HOBrowserView ()
 @property (nonatomic, readwrite) WebView* webView;
 @property (nonatomic, readwrite) HOStatusBar* statusBar;
-@property (nonatomic, retain) HOWebViewDelegateHelper* webViewDelegateHelper;
+@property (nonatomic) HOWebViewDelegateHelper* webViewDelegateHelper;
 @end
 
 @implementation HOBrowserView
@@ -32,7 +32,7 @@
 
 		_webViewDelegateHelper          = [HOWebViewDelegateHelper new];
 		_webViewDelegateHelper.delegate = _statusBar;
-		_webView.policyDelegate         = _webViewDelegateHelper;
+		_webView.policyDelegate         = self;
 		_webView.resourceLoadDelegate   = _webViewDelegateHelper;
 		_webView.UIDelegate             = _webViewDelegateHelper;
 		_webView.frameLoadDelegate      = self;
@@ -59,9 +59,6 @@
 {
 	return _webViewDelegateHelper.needsNewWebView;
 }
-
-- (NSString*)projectUUID                       { return _webViewDelegateHelper.projectUUID; }
-- (void)setProjectUUID:(NSString*)aProjectUUID { _webViewDelegateHelper.projectUUID = aProjectUUID; }
 
 - (void)webViewProgressEstimateChanged:(NSNotification*)notification
 {

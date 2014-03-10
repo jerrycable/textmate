@@ -80,14 +80,8 @@ bool delegate_t::accept_html_data (command::runner_ptr runner, char const* data,
 	{
 		_did_open_html_window = true;
 		if(_controller)
-		{
-			if(![_controller setCommandRunner:runner])
-				oak::kill_process_group_in_background(runner->process_id());
-		}
-		else
-		{
-			[HTMLOutputWindowController HTMLOutputWindowWithRunner:runner];
-		}
+				[_controller setCommandRunner:runner];
+		else	[HTMLOutputWindowController HTMLOutputWindowWithRunner:runner];
 	}
 	return true;
 }
@@ -143,6 +137,23 @@ void delegate_t::show_error (bundle_command_t const& command, int rc, std::strin
 void run_impl (bundle_command_t const& command, ng::buffer_t const& buffer, ng::ranges_t const& selection, document::document_ptr document, std::map<std::string, std::string> baseEnv, std::string const& pwd)
 {
 	DocumentController* controller = [DocumentController controllerForDocument:document];
+	if(controller && command.output == output::new_window && command.output_format == output_format::html)
+	{
+		if(command.output_reuse == output_reuse::reuse_busy || command.output_reuse == output_reuse::abort_and_reuse_busy)
+		{
+			bundle_command_t cmd = command;
+			cmd.output_reuse = output_reuse::reuse_available; // Avoid infinite loop when completionHandler calls us
+			ng::ranges_t sel = selection;
+			std::string dir  = pwd;
+
+			[controller bundleItemReuseOutputForCommand:command completionHandler:^(BOOL success){
+				if(success)
+					run_impl(cmd, buffer, sel, document, baseEnv, dir);
+			}];
+			return;
+		}
+	}
+
 	if(controller && command.pre_exec != pre_exec::nop)
 	{
 		bundle_command_t cmd = command;

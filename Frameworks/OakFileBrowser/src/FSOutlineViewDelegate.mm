@@ -112,11 +112,11 @@ static NSSet* VisibleItems (NSOutlineView* outlineView, FSItem* root, NSMutableS
 	CGFloat pendingScrollOffset;
 }
 - (void)applicationWillTerminate:(NSNotification*)aNotification;
-@property (nonatomic, retain) NSSet* pendingSelectURLs;
-@property (nonatomic, retain) NSURL* pendingEditURL;
-@property (nonatomic, retain) NSURL* pendingMakeVisibleURL;
-@property (nonatomic, retain) NSMutableSet* pendingExpandURLs;
-@property (nonatomic, assign) CGFloat pendingScrollOffset;
+@property (nonatomic) NSSet* pendingSelectURLs;
+@property (nonatomic) NSURL* pendingEditURL;
+@property (nonatomic) NSURL* pendingMakeVisibleURL;
+@property (nonatomic) NSMutableSet* pendingExpandURLs;
+@property (nonatomic) CGFloat pendingScrollOffset;
 @end
 
 @implementation FSOutlineViewDelegate
@@ -170,6 +170,9 @@ static NSSet* VisibleItems (NSOutlineView* outlineView, FSItem* root, NSMutableS
 {
 	for(FSItem* child in anItem.children)
 	{
+		if(flag && child.link)
+			continue;
+
 		if(!child.leaf && (flag || [expandedURLs containsObject:child.url]))
 		{
 			if(flag)

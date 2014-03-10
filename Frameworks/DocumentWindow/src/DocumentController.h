@@ -20,6 +20,8 @@ PUBLIC @interface DocumentController : NSObject
 @property (nonatomic) NSSize                                     htmlOutputSize;
 
 + (BOOL)restoreSession;
++ (void)disableSessionSave;
++ (void)enableSessionSave;
 + (BOOL)saveSessionIncludingUntitledDocuments:(BOOL)includeUntitled;
 + (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender;
 
@@ -41,7 +43,7 @@ PUBLIC @interface DocumentController : NSObject
 
 - (NSPoint)positionForWindowUnderCaret;
 - (void)performBundleItem:(bundles::item_ptr const&)anItem;
-- (BOOL)setCommandRunner:(command::runner_ptr const&)aRunner;
+- (void)setCommandRunner:(command::runner_ptr const&)aRunner;
 - (IBAction)toggleHTMLOutput:(id)sender;
 
 - (IBAction)moveFocus:(id)sender;
@@ -87,4 +89,5 @@ PUBLIC @interface DocumentController : NSObject
 // Used by DocumentCommand.mm
 + (instancetype)controllerForDocument:(document::document_ptr const&)aDocument;
 - (void)bundleItemPreExec:(pre_exec::type)preExec completionHandler:(void(^)(BOOL success))callback;
+- (void)bundleItemReuseOutputForCommand:(bundle_command_t const&)aCommand completionHandler:(void(^)(BOOL success))callback;
 @end

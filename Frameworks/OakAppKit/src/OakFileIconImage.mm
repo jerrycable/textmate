@@ -82,26 +82,16 @@ static NSImage* BadgeForSCMStatus (scm::status::type scmStatus)
 // ===============================
 
 @interface OakFileIconImageRep : NSImageRep
-@property (nonatomic)                       NSString*         path;
-@property (nonatomic)                       BOOL              exists;
-@property (nonatomic, getter = isDirectory) BOOL              directory;
-@property (nonatomic, getter = isAlias)     BOOL              alias;
-@property (nonatomic)                       scm::status::type scmStatus;
-@property (nonatomic, getter = isModified)  BOOL              modified;
-@property (nonatomic)                       NSArray*          imageStack;
+@property (nonatomic, weak) OakFileIconImage* fileIconImage;
+@property (nonatomic) NSArray* imageStack;
 @end
 
 @implementation OakFileIconImageRep
 - (id)copyWithZone:(NSZone*)zone
 {
 	OakFileIconImageRep* copy = [super copyWithZone:zone];
-	copy->_path       = _path;
-	copy->_exists     = _exists;
-	copy->_directory  = _directory;
-	copy->_alias      = _alias;
-	copy->_scmStatus  = _scmStatus;
-	copy->_modified   = _modified;
-	copy->_imageStack = _imageStack;
+	copy->_fileIconImage = _fileIconImage;
+	copy->_imageStack    = _imageStack;
 	return copy;
 }
 
@@ -112,14 +102,14 @@ static NSImage* BadgeForSCMStatus (scm::status::type scmStatus)
 		NSMutableArray* res = [NSMutableArray array];
 		_imageStack = res;
 
-		if(_path && _exists)
+		if(_fileIconImage.path && _fileIconImage.exists)
 		{
-			if(!_directory)
+			if(!_fileIconImage.isDirectory)
 			{
-				if(NSImage* customImage = CustomIconForPath(_path))
+				if(NSImage* customImage = CustomIconForPath(_fileIconImage.path))
 				{
 					[res addObject:customImage];
-					if(_alias)
+					if(_fileIconImage.isAlias)
 					{
 						if(NSImage* imageBadge = IconBadgeForAlias())
 							[res addObject:imageBadge];
@@ -130,16 +120,16 @@ static NSImage* BadgeForSCMStatus (scm::status::type scmStatus)
 			if(res.count == 0)
 			{
 				NSImage* image;
-				if(![[NSURL fileURLWithPath:_path isDirectory:_directory] getResourceValue:&image forKey:NSURLEffectiveIconKey error:NULL])
-					image = [[NSWorkspace sharedWorkspace] iconForFile:_path];
+				if(![[NSURL fileURLWithPath:_fileIconImage.path isDirectory:_fileIconImage.isDirectory] getResourceValue:&image forKey:NSURLEffectiveIconKey error:NULL])
+					image = [[NSWorkspace sharedWorkspace] iconForFile:_fileIconImage.path];
 
 				if(image)
 					[res addObject:image];
 			}
 		}
-		else if(_exists)
+		else if(_fileIconImage.exists)
 		{
-			if(NSImage* image = [[NSWorkspace sharedWorkspace] iconForFileType:NSFileTypeForHFSTypeCode(_directory ? kGenericFolderIcon : kGenericDocumentIcon)])
+			if(NSImage* image = [[NSWorkspace sharedWorkspace] iconForFileType:NSFileTypeForHFSTypeCode(_fileIconImage.isDirectory ? kGenericFolderIcon : kGenericDocumentIcon)])
 				[res addObject:image];
 		}
 		else
@@ -147,7 +137,7 @@ static NSImage* BadgeForSCMStatus (scm::status::type scmStatus)
 			[res addObject:SystemIconForHFSType(kUnknownFSObjectIcon)];
 		}
 
-		if(NSImage* scmStatusImage = BadgeForSCMStatus(_scmStatus))
+		if(NSImage* scmStatusImage = BadgeForSCMStatus(_fileIconImage.scmStatus))
 			[res addObject:scmStatusImage];
 	}
 	return _imageStack;
@@ -156,7 +146,7 @@ static NSImage* BadgeForSCMStatus (scm::status::type scmStatus)
 - (BOOL)draw
 {
 	NSImage* buffer = nil;
-	if(self.isModified)
+	if(_fileIconImage.isModified)
 	{
 		buffer = [[NSImage alloc] initWithSize:[self size]];
 		[buffer lockFocus];
@@ -169,7 +159,7 @@ static NSImage* BadgeForSCMStatus (scm::status::type scmStatus)
 		op = NSCompositeSourceOver;
 	}
 
-	if(self.isModified)
+	if(_fileIconImage.isModified)
 	{
 		[buffer unlockFocus];
 		[buffer drawAtPoint:NSZeroPoint fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:0.4];
@@ -184,8 +174,22 @@ static NSImage* BadgeForSCMStatus (scm::status::type scmStatus)
 // ====================
 
 @interface OakFileIconImage ()
+{
+	BOOL              _exists;
+	BOOL              _directory;
+	BOOL              _alias;
+	scm::status::type _scmStatus;
+	NSUInteger        _needsSetupMask;
+}
 @property (nonatomic) OakFileIconImageRep* fileIconImageRep;
 @end
+
+enum {
+	kNeedExists    = 1,
+	kNeedDirectory = 2,
+	kNeedAlias     = 4,
+	kNeedSCMStatus = 8
+};
 
 @implementation OakFileIconImage
 - (id)initWithSize:(NSSize)aSize
@@ -193,8 +197,9 @@ static NSImage* BadgeForSCMStatus (scm::status::type scmStatus)
 	if((self = [super initWithSize:aSize]))
 	{
 		_fileIconImageRep = [OakFileIconImageRep new];
+		_fileIconImageRep.fileIconImage = self;
 		[self addRepresentation:_fileIconImageRep];
-		self.exists = YES;
+		_exists = YES;
 	}
 	return self;
 }
@@ -204,46 +209,63 @@ static NSImage* BadgeForSCMStatus (scm::status::type scmStatus)
 	return [self initWithSize:NSZeroSize];
 }
 
-- (id)initWithWithPath:(NSString*)aPath isModified:(BOOL)modifiedFlag size:(NSSize)aSize
+- (id)initWithPath:(NSString*)aPath isModified:(BOOL)modifiedFlag size:(NSSize)aSize
 {
 	if((self = [self initWithSize:aSize]))
 	{
-		self.path     = aPath;
-		self.modified = modifiedFlag;
-		self.exists   = NO;
+		_path       = aPath;
+		_modified   = modifiedFlag;
+		_exists     = NO;
 
-		if(aPath)
-		{
-			std::string path = [aPath fileSystemRepresentation];
-
-			struct stat buf;
-			if(lstat(path.c_str(), &buf) == 0)
-			{
-				self.exists    = YES;
-				self.directory = S_ISDIR(buf.st_mode);
-				self.alias     = S_ISLNK(buf.st_mode);
-			}
-
-			if(auto scmDriver = scm::info(path::parent(path)))
-				self.scmStatus = scmDriver->status(path);
-		}
+		_needsSetupMask = (kNeedExists|kNeedDirectory|kNeedAlias|kNeedSCMStatus);
 	}
 	return self;
+}
+
+- (void)checkSetupMask
+{
+	if(!_path || !_needsSetupMask)
+		return;
+
+	std::string const path = [_path fileSystemRepresentation];
+	if((_needsSetupMask & (kNeedExists|kNeedDirectory|kNeedAlias)) != 0)
+	{
+		struct stat buf;
+		if(lstat(path.c_str(), &buf) == 0)
+		{
+			_exists    = YES;
+			_directory = S_ISDIR(buf.st_mode);
+			_alias     = S_ISLNK(buf.st_mode);
+		}
+		_needsSetupMask &= ~(kNeedExists|kNeedDirectory|kNeedAlias);
+	}
+
+	if((_needsSetupMask & kNeedSCMStatus) == kNeedSCMStatus)
+	{
+		if(auto scmDriver = scm::info(path::parent(path)))
+			_scmStatus = scmDriver->status(path);
+		_needsSetupMask &= ~kNeedSCMStatus;
+	}
 }
 
 - (id)copyWithZone:(NSZone*)zone
 {
 	OakFileIconImage* copy = [super copyWithZone:zone];
 	copy->_fileIconImageRep = _fileIconImageRep;
+	copy->_path             = _path;
+	copy->_exists           = _exists;
+	copy->_directory        = _directory;
+	copy->_alias            = _alias;
+	copy->_scmStatus        = _scmStatus;
+	copy->_needsSetupMask   = _needsSetupMask;
+	copy->_modified         = _modified;
 	return copy;
 }
 
-- (NSString*)path              { return _fileIconImageRep.path;        }
-- (BOOL)exists                 { return _fileIconImageRep.exists;      }
-- (BOOL)isDirectory            { return _fileIconImageRep.isDirectory; }
-- (BOOL)isAlias                { return _fileIconImageRep.isAlias;     }
-- (scm::status::type)scmStatus { return _fileIconImageRep.scmStatus;   }
-- (BOOL)isModified             { return _fileIconImageRep.isModified;  }
+- (BOOL)exists                 { [self checkSetupMask]; return _exists;    }
+- (BOOL)isDirectory            { [self checkSetupMask]; return _directory; }
+- (BOOL)isAlias                { [self checkSetupMask]; return _alias;     }
+- (scm::status::type)scmStatus { [self checkSetupMask]; return _scmStatus; }
 
 - (void)recache
 {
@@ -253,59 +275,63 @@ static NSImage* BadgeForSCMStatus (scm::status::type scmStatus)
 
 - (void)setPath:(NSString*)newPath
 {
-	if(self.path != newPath && ![self.path isEqualToString:newPath])
+	if(_path != newPath && ![_path isEqualToString:newPath])
 	{
-		_fileIconImageRep.path = newPath;
+		_path = newPath;
 		[self recache];
 	}
 }
 
 - (void)setExists:(BOOL)newExists
 {
-	if(self.exists != newExists)
+	_needsSetupMask &= ~kNeedExists;
+	if(_exists != newExists)
 	{
-		_fileIconImageRep.exists = newExists;
+		_exists = newExists;
 		[self recache];
 	}
 }
 
 - (void)setDirectory:(BOOL)newDirectory
 {
-	if(self.isDirectory != newDirectory)
+	_needsSetupMask &= ~kNeedDirectory;
+	if(_directory != newDirectory)
 	{
-		_fileIconImageRep.directory = newDirectory;
+		_directory = newDirectory;
 		[self recache];
 	}
 }
 
 - (void)setAlias:(BOOL)newAlias
 {
-	if(self.isAlias != newAlias)
+	_needsSetupMask &= ~kNeedAlias;
+	if(_alias != newAlias)
 	{
-		_fileIconImageRep.alias = newAlias;
+		_alias = newAlias;
 		[self recache];
 	}
 }
 
 - (void)setScmStatus:(scm::status::type)newScmStatus
 {
-	if(self.scmStatus != newScmStatus)
+	_needsSetupMask &= ~kNeedSCMStatus;
+	if(_scmStatus != newScmStatus)
 	{
-		_fileIconImageRep.scmStatus = newScmStatus;
+		_scmStatus = newScmStatus;
 		[self recache];
 	}
 }
 
 - (void)setModified:(BOOL)newModified
 {
-	if(self.isModified != newModified)
+	if(_modified != newModified)
 	{
-		_fileIconImageRep.modified = newModified;
+		_modified = newModified;
 		[self recache];
 	}
 }
 
-+ (id)fileIconImageWithPath:(NSString*)aPath isModified:(BOOL)flag size:(NSSize)aSize { return [[self alloc] initWithWithPath:aPath isModified:flag size:aSize]; }
++ (id)fileIconImageWithPath:(NSString*)aPath isModified:(BOOL)flag size:(NSSize)aSize { return [[self alloc] initWithPath:aPath isModified:flag size:aSize]; }
 + (id)fileIconImageWithPath:(NSString*)aPath isModified:(BOOL)flag                    { return [self fileIconImageWithPath:aPath isModified:flag size:NSMakeSize(16, 16)]; }
 + (id)fileIconImageWithPath:(NSString*)aPath size:(NSSize)aSize                       { return [self fileIconImageWithPath:aPath isModified:NO size:aSize]; }
 @end

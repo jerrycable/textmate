@@ -3,6 +3,9 @@
 #import <OakAppKit/NSAlert Additions.h>
 #import <OakFoundation/NSString Additions.h>
 #import <io/path.h>
+#import <oak/debug.h>
+
+OAK_DEBUG_VAR(HTMLOutput_WebViewDelegate);
 
 @implementation HOWebViewDelegateHelper
 // =====================
@@ -46,6 +49,7 @@
 
 - (WebView*)webView:(WebView*)sender createWebViewWithRequest:(NSURLRequest*)request
 {
+	D(DBF_HTMLOutput_WebViewDelegate, bug("%s\n", [[request description] UTF8String]););
 	NSPoint origin = [sender.window cascadeTopLeftFromPoint:NSMakePoint(NSMinX(sender.window.frame), NSMaxY(sender.window.frame))];
 	origin.y -= NSHeight(sender.window.frame);
 
@@ -55,20 +59,26 @@
 																	 backing:NSBackingStoreBuffered
 																		defer:NO];
 	[window bind:NSTitleBinding toObject:view.webView withKeyPath:@"mainFrameTitle" options:nil];
-	[window setReleasedWhenClosed:YES];
 	[window setContentView:view];
 	[[view.webView mainFrame] loadRequest:request];
+
+	__attribute__ ((unused)) CFTypeRef dummy = CFBridgingRetain(window);
+	[window setReleasedWhenClosed:YES];
+
 	return view.webView;
 }
 
 - (void)webViewShow:(WebView*)sender
 {
+	D(DBF_HTMLOutput_WebViewDelegate, bug("%s\n", [[sender description] UTF8String]););
 	[[sender window] makeKeyAndOrderFront:self];
 }
 
 - (void)webViewClose:(WebView*)sender
 {
-	[sender tryToPerform:@selector(toggleHTMLOutput:) with:self];
+	D(DBF_HTMLOutput_WebViewDelegate, bug("\n"););
+	if(![sender tryToPerform:@selector(toggleHTMLOutput:) with:self])
+		[sender tryToPerform:@selector(performClose:) with:self];
 	// We cannot re-use WebView objects where window.close() has been executed because of https://bugs.webkit.org/show_bug.cgi?id=121232
 	self.needsNewWebView = YES;
 }
@@ -80,39 +90,13 @@
 		fprintf(stderr, "%s: %s on line %d\n", [[[[[[webView mainFrame] dataSource] request] URL] absoluteString] UTF8String], [[dictionary objectForKey:@"message"] UTF8String], [[dictionary objectForKey:@"lineNumber"] intValue]);
 }
 
-// =========================================
-// = WebPolicyDelegate : Intercept txmt:// =
-// =========================================
-
-- (void)webView:(WebView*)sender decidePolicyForNavigationAction:(NSDictionary*)actionInformation request:(NSURLRequest*)request frame:(WebFrame*)frame decisionListener:(id <WebPolicyDecisionListener>)listener
-{
-	if([NSURLConnection canHandleRequest:request])
-	{
-		[listener use];
-	}
-	else
-	{
-		[listener ignore];
-		NSURL* url = request.URL;
-		if([[url scheme] isEqualToString:@"txmt"])
-		{
-			if(_projectUUID)
-				url = [NSURL URLWithString:[[url absoluteString] stringByAppendingFormat:@"&project=%@", _projectUUID]];
-			[NSApp sendAction:@selector(handleTxMtURL:) to:nil from:url];
-		}
-		else
-		{
-			[[NSWorkspace sharedWorkspace] openURL:url];
-		}
-	}
-}
-
 // =====================================================
 // = WebResourceLoadDelegate: Redirect tm-file to file =
 // =====================================================
 
 - (NSURLRequest*)webView:(WebView*)sender resource:(id)identifier willSendRequest:(NSURLRequest*)request redirectResponse:(NSURLResponse*)redirectResponse fromDataSource:(WebDataSource*)dataSource
 {
+	D(DBF_HTMLOutput_WebViewDelegate, bug("%s\n", [[request description] UTF8String]););
 	if([[[request URL] scheme] isEqualToString:@"tm-file"])
 	{
 		NSString* fragment = [[request URL] fragment];
