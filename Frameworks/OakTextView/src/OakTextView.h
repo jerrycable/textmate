@@ -6,9 +6,10 @@
 #import <document/document.h>
 #import <oak/debug.h>
 
-extern int32_t const NSWrapColumnWindowWidth;
-extern int32_t const NSWrapColumnAskUser;
-extern NSString* const kUserDefaultsDisableAntiAliasKey;
+PUBLIC extern int32_t const NSWrapColumnWindowWidth;
+PUBLIC extern int32_t const NSWrapColumnAskUser;
+PUBLIC extern NSString* const kUserDefaultsWrapColumnPresetsKey;
+PUBLIC extern NSString* const kUserDefaultsDisableAntiAliasKey;
 
 namespace bundles { struct item_t; typedef std::shared_ptr<item_t> item_ptr; }
 
@@ -32,7 +33,11 @@ enum OTVFontSmoothing : NSUInteger
 PUBLIC @interface OakTextView : OakView <NSTextInput, NSTextFieldDelegate>
 - (void)setDocument:(document::document_ptr const&)aDocument;
 
+#if !defined(MAC_OS_X_VERSION_10_7) || (MAC_OS_X_VERSION_MIN_REQUIRED <= MAC_OS_X_VERSION_10_7)
+@property (nonatomic, assign) id <OakTextViewDelegate>      delegate; // BundleEditor is delegate and an NSWindowController subclass
+#else
 @property (nonatomic, weak) id <OakTextViewDelegate>        delegate;
+#endif
 @property (nonatomic) theme_ptr const&                      theme;
 @property (nonatomic) NSCursor*                             ibeamCursor;
 @property (nonatomic) NSFont*                               font;

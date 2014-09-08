@@ -4,6 +4,8 @@
 #import "NSImage Additions.h"
 #import "NSMenuItem Additions.h"
 #import "NSView Additions.h"
+#import "OakFileIconImage.h"
+#import <OakFoundation/OakFoundation.h>
 #import <OakFoundation/NSString Additions.h>
 #import <OakFoundation/NSArray Additions.h>
 #import <oak/oak.h>
@@ -274,6 +276,10 @@ layout_metrics_t::raw_layer_t layout_metrics_t::parse_layer (NSDictionary* item)
 
 	if(NSString* color = [item objectForKey:@"color"])
 		res.layer.color = [NSColor colorWithString:color];
+	if(NSString* borderColor = [item objectForKey:@"borderColor"])
+		res.layer.borderColor = [NSColor colorWithString:borderColor];
+	if(NSString* cornerRadius = [item objectForKey:@"cornerRadius"])
+		res.layer.cornerRadius = [cornerRadius doubleValue];
 	if(NSString* requisite = [item objectForKey:@"requisite"])
 		res.layer.requisite = parse_requisite([requisite UTF8String]);
 	res.layer.requisite_mask = res.layer.requisite;
@@ -307,7 +313,7 @@ layout_metrics_t::raw_layer_t layout_metrics_t::parse_layer (NSDictionary* item)
 	OBJC_WATCH_LEAKS(OakTabBarView);
 
 	NSMutableArray* tabTitles;
-	NSMutableArray* tabToolTips;
+	NSMutableArray* tabPaths;
 	NSMutableArray* tabModifiedStates;
 
 	BOOL layoutNeedsUpdate;
@@ -503,7 +509,7 @@ layout_metrics_t::raw_layer_t layout_metrics_t::parse_layer (NSDictionary* item)
 		metrics           = layout_metrics_t::parse([NSDictionary dictionaryWithContentsOfFile:[[NSBundle bundleForClass:[self class]] pathForResource:@"TabBar" ofType:@"plist"]]);
 		hiddenTab         = NSNotFound;
 		tabTitles         = [NSMutableArray new];
-		tabToolTips       = [NSMutableArray new];
+		tabPaths          = [NSMutableArray new];
 		tabModifiedStates = [NSMutableArray new];
 
 		[self userDefaultsDidChange:nil];
@@ -649,7 +655,7 @@ layout_metrics_t::raw_layer_t layout_metrics_t::parse_layer (NSDictionary* item)
 		else	rect.size.width = tabSizes[tabIndex];
 
 		std::string layer_id  = [self layerNameForTabIndex:tabIndex];
-		NSString* toolTipText = [tabToolTips safeObjectAtIndex:tabIndex];
+		NSString* toolTipText = [[tabPaths safeObjectAtIndex:tabIndex] stringByAbbreviatingWithTildeInPath];
 		NSString* title       = [tabTitles safeObjectAtIndex:tabIndex];
 
 		std::vector<layer_t> const& layers = metrics->layers_for(layer_id, rect, tabIndex, title, toolTipText, [self filterForTabIndex:tabIndex]);
@@ -722,7 +728,8 @@ layout_metrics_t::raw_layer_t layout_metrics_t::parse_layer (NSDictionary* item)
 	{
 		NSMenuItem* item = [menu addItemWithTitle:[tabTitles objectAtIndex:i] action:@selector(takeSelectedTabIndexFrom:) keyEquivalent:@""];
 		item.tag     = i;
-		item.toolTip = [tabToolTips objectAtIndex:i];
+		item.toolTip = [[tabPaths objectAtIndex:i] stringByAbbreviatingWithTildeInPath];
+		item.image   = [OakFileIconImage fileIconImageWithPath:[[tabPaths objectAtIndex:i] isEqualTo:@""] ? NULL : [tabPaths objectAtIndex:i] isModified:[[tabModifiedStates objectAtIndex:i] boolValue]];
 		if(i == selectedTab)
 			[item setState:NSOnState];
 		else if([[tabModifiedStates objectAtIndex:i] boolValue])
@@ -771,35 +778,35 @@ layout_metrics_t::raw_layer_t layout_metrics_t::parse_layer (NSDictionary* item)
 		return;
 
 	NSMutableArray* titles         = [NSMutableArray array];
-	NSMutableArray* toolTips       = [NSMutableArray array];
+	NSMutableArray* paths          = [NSMutableArray array];
 	NSMutableArray* modifiedStates = [NSMutableArray array];
 
 	NSUInteger count = [self.dataSource numberOfRowsInTabBarView:self];
 	for(NSUInteger i = 0; i < count; ++i)
 	{
 		[titles addObject:[self.dataSource tabBarView:self titleForIndex:i]];
-		[toolTips addObject:[self.dataSource tabBarView:self toolTipForIndex:i]];
+		[paths addObject:[self.dataSource tabBarView:self pathForIndex:i]];
 		[modifiedStates addObject:@([self.dataSource tabBarView:self isEditedAtIndex:i])];
 	}
 
 	if(previousShowAsLastTab != 0 && count != tabTitles.count && previousShowAsLastTab < tabTitles.count)
 	{
-		// We use tool tip as identifer since this is tilde-abbreviated path and thus more unique than the title
+		// We use the path as an identifer since this is more unique than the title
 		// Ideally we should introduce a real (unique) identifier, like the document’s UUID
-		NSString* tabIdentifier = tabToolTips[previousShowAsLastTab];
-		if([tabIdentifier isEqualToString:@""])
-				previousShowAsLastTab = [toolTips indexOfObject:tabTitles[previousShowAsLastTab]];
-		else	previousShowAsLastTab = [toolTips indexOfObject:tabIdentifier];
+		NSString* tabIdentifier = tabPaths[previousShowAsLastTab];
+		if(OakIsEmptyString(tabIdentifier))
+				previousShowAsLastTab = [paths indexOfObject:tabTitles[previousShowAsLastTab]];
+		else	previousShowAsLastTab = [paths indexOfObject:tabIdentifier];
 
 		if(previousShowAsLastTab == NSNotFound)
 			previousShowAsLastTab = 0;
 	}
 
 	[tabTitles setArray:titles];
-	[tabToolTips setArray:toolTips];
+	[tabPaths setArray:paths];
 	[tabModifiedStates setArray:modifiedStates];
 
-	selectedTab = [tabToolTips count] && selectedTab != NSNotFound ? std::min(selectedTab, [tabToolTips count]-1) : NSNotFound;
+	selectedTab = [tabPaths count] && selectedTab != NSNotFound ? std::min(selectedTab, [tabPaths count]-1) : NSNotFound;
 
 	BOOL shouldBeExpanded = self.shouldCollapse ? [tabTitles count] > 1 : YES;
 	if(shouldBeExpanded != self.isExpanded)
@@ -912,7 +919,7 @@ layout_metrics_t::raw_layer_t layout_metrics_t::parse_layer (NSDictionary* item)
 
 - (NSDragOperation)draggingSourceOperationMaskForLocal:(BOOL)isLocal
 {
-	return NSDragOperationMove|NSDragOperationCopy|NSDragOperationLink;
+	return isLocal ? (NSDragOperationCopy|NSDragOperationMove|NSDragOperationLink) : (NSDragOperationCopy|NSDragOperationGeneric);
 }
 
 - (void)draggedImage:(NSImage*)image endedAt:(NSPoint)point operation:(NSDragOperation)operation
@@ -1048,7 +1055,7 @@ layout_metrics_t::raw_layer_t layout_metrics_t::parse_layer (NSDictionary* item)
 {
 	NSRect rect = index < tabRects.size() ? tabRects[index] : [self bounds];
 	NSString* title = [tabTitles safeObjectAtIndex:index];
-	NSString* toolTip = [tabToolTips safeObjectAtIndex:index];
+	NSString* toolTip = [[tabPaths safeObjectAtIndex:index] stringByAbbreviatingWithTildeInPath];
 	BOOL modified = [(NSNumber*)[tabModifiedStates safeObjectAtIndex:index] boolValue];
 	return [[OakTabFauxUIElement alloc] initWithTabBarView:self index:index rect:rect title:title toolTip:toolTip modified:modified selected:selectedTab==index];
 }
@@ -1065,4 +1072,24 @@ layout_metrics_t::raw_layer_t layout_metrics_t::parse_layer (NSDictionary* item)
 	}
 	return self;
 }
+@end
+
+// ==================
+// = Tab Bar Colors =
+// ==================
+
+@implementation NSColor (OakTabBarViewColors)
+#define TAB_BAR_COLOR(name, white) \
+  + (NSColor*)tm##name { return [NSColor colorWithCalibratedWhite:white alpha:1]; }
+
+TAB_BAR_COLOR(WindowDividerColor,           0.25);
+TAB_BAR_COLOR(WindowDividerColorInactive,   0.52);
+TAB_BAR_COLOR(TabBarDividerColor,           0.33);
+TAB_BAR_COLOR(TabBarDividerColorInactive,   0.66);
+TAB_BAR_COLOR(TabBarColor,                  0.52);
+TAB_BAR_COLOR(TabBarColorInactive,          0.80);
+TAB_BAR_COLOR(TabBarHighlightColor,         0.66);
+TAB_BAR_COLOR(TabBarHighlightColorInactive, 0.87);
+TAB_BAR_COLOR(TabHoverColor,                0.46);
+TAB_BAR_COLOR(TabHoverColorInactive,        0.60);
 @end

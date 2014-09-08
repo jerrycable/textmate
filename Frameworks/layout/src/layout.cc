@@ -98,55 +98,13 @@ namespace ng
 		clear_text_widths();
 	}
 
-	void layout_t::set_character_mapping (std::string const& invisibles)
-	{
-		enum state_t { kWaiting, kExclude, kSpace, kTab, kNewline } state = kWaiting;
-		for(auto ch : diacritics::make_range(invisibles.data(), invisibles.data() + invisibles.size()))
-		{
-			if(state == kWaiting)
-			{
-				switch(ch)
-				{
-					case '~':  state = kExclude; break;
-					case ' ':  state = kSpace;   break;
-					case '\t': state = kTab;     break;
-					case '\n': state = kNewline; break;
-				}
-			}
-			else
-			{
-				switch(state)
-				{
-					case kExclude:
-					{
-						switch(ch)
-						{
-							case ' ':  _invisibles.space   = ""; break;
-							case '\t': _invisibles.tab     = ""; break;
-							case '\n': _invisibles.newline = ""; break;
-						}
-					}
-					break;
-
-					case kSpace:   _invisibles.space   = utf8::to_s(ch); break;
-					case kTab:     _invisibles.tab     = utf8::to_s(ch); break;
-					case kNewline: _invisibles.newline = utf8::to_s(ch); break;
-				}
-				state = kWaiting;
-			}
-		}
-	}
-
 	void layout_t::set_tab_size (size_t tabSize)
 	{
 		if(tabSize == _tab_size)
 			return;
 		_tab_size = tabSize;
 		iterate(row, _rows)
-		{
-			row->value.set_tab_size(tabSize, *_metrics);
-			update_row(row);
-		}
+			row->value.set_tab_size(*_metrics);
 		_dirty_rects.push_back(OakRectMake(0, 0, width(), height()));
 	}
 
@@ -173,12 +131,11 @@ namespace ng
 
 		_dirty_rects.push_back(OakRectMake(0, 0, width(), height()));
 	}
-	
+
 	void layout_t::set_scroll_past_end (bool scrollPastEnd)
 	{
 		_scroll_past_end = scrollPastEnd;
 	}
-
 
 	// ======================
 	// = Display Attributes =
@@ -295,6 +252,8 @@ namespace ng
 
 	CGRect layout_t::rect_at_index (ng::index_t const& index, bool bol_as_eol) const
 	{
+		ASSERT_LE(index.index, _buffer.size());
+
 		auto row = row_for_offset(index.index);
 		if(bol_as_eol && index.index == row->offset._length && row != _rows.begin())
 			--row;
@@ -306,7 +265,7 @@ namespace ng
 		ASSERT_LE(first, last);
 
 		auto r1 = rect_at_index(first);
-		auto r2 = rect_at_index(last, bol_as_eol);
+		auto r2 = rect_at_index(last, bol_as_eol && (first != last));
 		auto res = CGRectZero;
 
 		if(CGRectGetMinY(r1) == CGRectGetMinY(r2) && CGRectGetHeight(r1) == CGRectGetHeight(r2))
@@ -594,9 +553,9 @@ namespace ng
 			size_t first = from + it->first;
 			size_t last  = ++it != map.end() ? from + it->first : to;
 			if(oak::cap(first, index, last) == index)
-				return std::make_pair(first, last);
+				return { first, last };
 		}
-		return std::make_pair(0, 0);
+		return { 0, 0 };
 	}
 
 	std::vector<CGRect> layout_t::end_refresh_cycle (ng::ranges_t const& selection, CGRect visibleRect, ng::ranges_t const& highlightRanges)
@@ -825,9 +784,8 @@ namespace ng
 
 	}
 
-	void layout_t::draw (ng::context_t const& context, CGRect visibleRect, bool isFlipped, bool showInvisibles, ng::ranges_t const& selection, ng::ranges_t const& highlightRanges, bool drawBackground)
+	void layout_t::draw (ng::context_t const& context, CGRect visibleRect, bool isFlipped, ng::ranges_t const& selection, ng::ranges_t const& highlightRanges, bool drawBackground)
 	{
-		_invisibles.enabled = showInvisibles;
 		update_metrics(visibleRect);
 
 		CGContextSetTextMatrix(context, CGAffineTransformMake(1, 0, 0, 1, 0, 0));
@@ -846,7 +804,7 @@ namespace ng
 		if(drawBackground)
 		{
 			foreach(row, firstY, _rows.lower_bound(yMax, &row_y_comp))
-				row->value.draw_background(_theme, *_metrics, context, isFlipped, visibleRect, _invisibles, background, _buffer, row->offset._length, CGPointMake(_margin.left, _margin.top + row->offset._height));
+				row->value.draw_background(_theme, *_metrics, context, isFlipped, visibleRect, background, _buffer, row->offset._length, CGPointMake(_margin.left, _margin.top + row->offset._height));
 		}
 
 		base_colors_t const& baseColors = get_base_colors(_theme->is_dark());
@@ -874,7 +832,7 @@ namespace ng
 		}
 
 		foreach(row, firstY, _rows.lower_bound(yMax, &row_y_comp))
-			row->value.draw_foreground(_theme, *_metrics, context, isFlipped, visibleRect, _invisibles, _buffer, row->offset._length, selection, CGPointMake(_margin.left, _margin.top + row->offset._height));
+			row->value.draw_foreground(_theme, *_metrics, context, isFlipped, visibleRect, _buffer, row->offset._length, selection, CGPointMake(_margin.left, _margin.top + row->offset._height));
 
 		if(_draw_caret && !_drop_marker)
 		{

@@ -8,11 +8,11 @@
 #import <CrashReporter/CrashReporter.h>
 #import <DocumentWindow/DocumentController.h>
 #import <Find/Find.h>
+#import <CommitWindow/CommitWindow.h>
 #import <OakAppKit/NSMenuItem Additions.h>
 #import <OakAppKit/OakAppKit.h>
 #import <OakAppKit/OakPasteboard.h>
 #import <OakFilterList/BundleItemChooser.h>
-#import <OakFilterList/OakFilterList.h>
 #import <OakFoundation/NSString Additions.h>
 #import <OakTextView/OakDocumentView.h>
 #import <Preferences/Keys.h>
@@ -80,7 +80,6 @@ BOOL HasDocumentWindow (NSArray* windows)
 }
 
 @interface AppController ()
-@property (nonatomic) OakFilterWindowController* filterWindowController;
 @property (nonatomic) BOOL didFinishLaunching;
 @property (nonatomic) BOOL currentResponderIsOakTextView;
 @end
@@ -146,8 +145,8 @@ BOOL HasDocumentWindow (NSArray* windows)
 
 	NSDate* currentDate    = [NSDate date];
 	NSDate* compileDate    = [NSDate dateWithString:@COMPILE_DATE @" 00:00:00 +0000"];
-	NSDate* warningDate    = [compileDate dateByAddingTimeInterval:45*kSecondsPerDay];
-	NSDate* expirationDate = [compileDate dateByAddingTimeInterval:90*kSecondsPerDay];
+	NSDate* warningDate    = [compileDate dateByAddingTimeInterval: 90*kSecondsPerDay];
+	NSDate* expirationDate = [compileDate dateByAddingTimeInterval:120*kSecondsPerDay];
 
 	if([currentDate laterDate:expirationDate] == currentDate)
 	{
@@ -160,7 +159,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 	else if([currentDate laterDate:warningDate] == currentDate)
 	{
 		NSInteger daysUntilExpiration = floor([expirationDate timeIntervalSinceNow] / kSecondsPerDay);
-		NSInteger weeksSinceCompilation = floor(-[compileDate timeIntervalSinceNow] / kSecondsPerDay / 7);
+		NSInteger weeksSinceCompilation = floor([[NSDate date] timeIntervalSinceDate:compileDate] / kSecondsPerDay / 7);
 		NSInteger choice = NSRunAlertPanel(@"TextMate is Outdated!", @"This version of TextMate is more than %ld weeks old and you should update to latest version. You can continue to use this version for another %ld day%s.", @"Continue", @"Visit Download Page", nil, weeksSinceCompilation, daysUntilExpiration, daysUntilExpiration == 1 ? "" : "s");
 		if(choice == NSAlertAlternateReturn) // "Visit Website"
 			[[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"https://macromates.com/download"]];
@@ -233,7 +232,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 
 	if(BOOL restoreSession = ![[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsDisableSessionRestoreKey])
 	{
-		std::string const prematureTerminationDuringRestore = path::join(path::home(), "Library/Application Support/TextMate/Session/restore_in_progress");;
+		std::string const prematureTerminationDuringRestore = path::join(path::temp(), "textmate_session_restore");
 
 		NSString* promptUser = nil;
 		if(path::exists(prematureTerminationDuringRestore))
@@ -243,7 +242,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 
 		if(promptUser)
 		{
-			NSInteger choice = NSRunAlertPanel(@"Disable Session Restore?", promptUser, @"Disable", @"Restore Documents", nil);
+			NSInteger choice = NSRunAlertPanel(@"Disable Session Restore?", @"%@", @"Disable", @"Restore Documents", nil, promptUser);
 			if(choice == NSAlertDefaultReturn) // "Disable"
 				restoreSession = NO;
 		}
@@ -275,17 +274,18 @@ BOOL HasDocumentWindow (NSArray* windows)
 	NSString* parms = [NSString stringWithFormat:@"v=%@&os=%zu.%zu.%zu", [[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding], oak::os_major(), oak::os_minor(), oak::os_patch()];
 	[swUpdate setSignee:key_chain_t::key_t("org.textmate.duff", "Allan Odgaard", "-----BEGIN PUBLIC KEY-----\nMIIBtjCCASsGByqGSM44BAEwggEeAoGBAPIE9PpXPK3y2eBDJ0dnR/D8xR1TiT9m\n8DnPXYqkxwlqmjSShmJEmxYycnbliv2JpojYF4ikBUPJPuerlZfOvUBC99ERAgz7\nN1HYHfzFIxVo1oTKWurFJ1OOOsfg8AQDBDHnKpS1VnwVoDuvO05gK8jjQs9E5LcH\ne/opThzSrI7/AhUAy02E9H7EOwRyRNLofdtPxpa10o0CgYBKDfcBscidAoH4pkHR\nIOEGTCYl3G2Pd1yrblCp0nCCUEBCnvmrWVSXUTVa2/AyOZUTN9uZSC/Kq9XYgqwj\nhgzqa8h/a8yD+ao4q8WovwGeb6Iso3WlPl8waz6EAPR/nlUTnJ4jzr9t6iSH9owS\nvAmWrgeboia0CI2AH++liCDvigOBhAACgYAFWO66xFvmF2tVIB+4E7CwhrSi2uIk\ndeBrpmNcZZ+AVFy1RXJelNe/cZ1aXBYskn/57xigklpkfHR6DGqpEbm6KC/47Jfy\ny5GEx+F/eBWEePi90XnLinytjmXRmS2FNqX6D15XNG1xJfjociA8bzC7s4gfeTUd\nlpQkBq2z71yitA==\n-----END PUBLIC KEY-----\n")];
 	[swUpdate setChannels:@{
-		kSoftwareUpdateChannelRelease : [NSURL URLWithString:[NSString stringWithFormat:REST_API @"/releases/release?%@", parms]],
-		kSoftwareUpdateChannelBeta    : [NSURL URLWithString:[NSString stringWithFormat:REST_API @"/releases/beta?%@", parms]],
-		kSoftwareUpdateChannelNightly : [NSURL URLWithString:[NSString stringWithFormat:REST_API @"/releases/nightly?%@", parms]],
+		kSoftwareUpdateChannelRelease : [NSURL URLWithString:[NSString stringWithFormat:@"%s/releases/release?%@", REST_API, parms]],
+		kSoftwareUpdateChannelBeta    : [NSURL URLWithString:[NSString stringWithFormat:@"%s/releases/beta?%@", REST_API, parms]],
+		kSoftwareUpdateChannelNightly : [NSURL URLWithString:[NSString stringWithFormat:@"%s/releases/nightly?%@", REST_API, parms]],
 	}];
 
 	[self userDefaultsDidChange:nil]; // setup mate/rmate server
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(userDefaultsDidChange:) name:NSUserDefaultsDidChangeNotification object:[NSUserDefaults standardUserDefaults]];
 
-	bundlesMenu.delegate  = self;
-	themesMenu.delegate   = self;
-	spellingMenu.delegate = self;
+	bundlesMenu.delegate    = self;
+	themesMenu.delegate     = self;
+	spellingMenu.delegate   = self;
+	wrapColumnMenu.delegate = self;
 
 	NSMenu* selectMenu = [[[[[NSApp mainMenu] itemWithTitle:@"Edit"] submenu] itemWithTitle:@"Select"] submenu];
 	[[selectMenu itemWithTitle:@"Toggle Column Selection"] setActivationString:@"⌥" withFont:nil];
@@ -295,7 +295,9 @@ BOOL HasDocumentWindow (NSArray* windows)
 	[[BundlesManager sharedInstance] setAutoUpdateBundles:YES];
 
 	[[CrashReporter sharedInstance] applicationDidFinishLaunching:aNotification];
-	[[CrashReporter sharedInstance] postNewCrashReportsToURLString:REST_API @"/crashes"];
+	[[CrashReporter sharedInstance] postNewCrashReportsToURLString:[NSString stringWithFormat:@"%s/crashes", REST_API]];
+
+	[OakCommitWindowServer sharedInstance]; // Setup server
 
 	self.didFinishLaunching = YES;
 }
@@ -356,7 +358,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 {
 	D(DBF_AppController, bug("\n"););
 	[goToLinePanel orderOut:self];
-	[NSApp sendAction:@selector(setSelectionString:) to:nil from:[goToLineTextField stringValue]];
+	[NSApp sendAction:@selector(selectAndCenter:) to:nil from:[goToLineTextField stringValue]];
 }
 
 - (IBAction)showPreferences:(id)sender
@@ -390,48 +392,17 @@ BOOL HasDocumentWindow (NSArray* windows)
 // = Bundle Item Chooser =
 // =======================
 
-- (void)setFilterWindowController:(OakFilterWindowController*)controller
-{
-	if(controller != _filterWindowController)
-	{
-		if(_filterWindowController)
-		{
-			[[NSNotificationCenter defaultCenter] removeObserver:self name:NSWindowWillCloseNotification object:_filterWindowController.window];
-			_filterWindowController.target = nil;
-			[_filterWindowController close];
-		}
-
-		if(_filterWindowController = controller)
-			[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(filterWindowWillClose:) name:NSWindowWillCloseNotification object:_filterWindowController.window];
-	}
-}
-
-- (void)filterWindowWillClose:(NSNotification*)notification
-{
-	BundleItemChooser* dataSource = [_filterWindowController dataSource];
-	bundleItemSearch.filter_string  = to_s([dataSource filterString]);
-	bundleItemSearch.key_equivalent = [dataSource keyEquivalentSearch];
-	bundleItemSearch.all_scopes     = [dataSource searchAllScopes];
-	bundleItemSearch.search_type    = [dataSource searchType];
-	self.filterWindowController     = nil;
-}
-
 - (IBAction)showBundleItemChooser:(id)sender
 {
-	self.filterWindowController            = [OakFilterWindowController new];
-	OakTextView* textView                  = [NSApp targetForAction:@selector(scopeContext)];
+	BundleItemChooser* chooser = [BundleItemChooser sharedInstance];
+	chooser.action     = @selector(bundleItemChooserDidSelectItems:);
+	chooser.editAction = @selector(editBundleItem:);
 
-	BundleItemChooser* dataSource          = [BundleItemChooser bundleItemChooserForScope:textView ? [textView scopeContext] : scope::wildcard];
-	dataSource.searchType                  = search::type(bundleItemSearch.search_type);
-	dataSource.keyEquivalentSearch         = bundleItemSearch.key_equivalent;
-	dataSource.textViewHasSelection        = [textView hasSelection];
-	dataSource.searchAllScopes             = bundleItemSearch.all_scopes;
-	dataSource.filterString                = [NSString stringWithCxxString:bundleItemSearch.filter_string];
+	OakTextView* textView = [NSApp targetForAction:@selector(scopeContext)];
+	chooser.scope        = textView ? [textView scopeContext] : scope::wildcard;
+	chooser.hasSelection = [textView hasSelection];
 
-	_filterWindowController.dataSource      = dataSource;
-	_filterWindowController.action          = @selector(bundleItemChooserDidSelectItems:);
-	_filterWindowController.accessoryAction = @selector(editBundleItem:);
-	[_filterWindowController showWindowRelativeToWindow:[textView window]];
+	[chooser showWindowRelativeToFrame:textView.window ? [textView.window convertRectToScreen:[textView convertRect:[textView visibleRect] toView:nil]] : [[NSScreen mainScreen] visibleFrame]];
 }
 
 - (void)bundleItemChooserDidSelectItems:(id)sender
@@ -503,8 +474,6 @@ BOOL HasDocumentWindow (NSArray* windows)
 
 	if(NSString* uuid = [[[sender selectedItems] lastObject] objectForKey:@"uuid"])
 		[[BundleEditor sharedInstance] revealBundleItem:bundles::lookup(to_s(uuid))];
-
-	self.filterWindowController = nil;
 }
 
 - (void)editBundleItemWithUUIDString:(NSString*)uuidString

@@ -6,16 +6,12 @@
 #import <ns/ns.h>
 #import <text/utf8.h>
 
-static NSString* const kBindingInfoControllerKey   = @"controller";
-static NSString* const kBindingInfoBindingKey      = @"binding";
-static NSString* const kBindingInfoKeyPathKey      = @"keyPath";
-
 static NSString* const kRecordingPlaceholderString = @"…";
 
 @interface OakKeyEquivalentView ()
 {
-	NSMutableArray* _observers;
 	NSRect _clearButtonRect;
+	id _eventMonitor;
 	void* _hotkeyToken;
 	BOOL _mouseDown;
 }
@@ -32,10 +28,9 @@ static NSString* const kRecordingPlaceholderString = @"…";
 	return self;
 }
 
-- (void)dealloc
+- (NSSize)intrinsicContentSize
 {
-	for(NSDictionary* info in _observers)
-		[info[kBindingInfoControllerKey] removeObserver:self forKeyPath:info[kBindingInfoKeyPathKey]];
+	return NSMakeSize(NSViewNoInstrinsicMetric, 22);
 }
 
 - (void)setEventString:(NSString*)aString
@@ -45,21 +40,25 @@ static NSString* const kRecordingPlaceholderString = @"…";
 
 	_eventString = aString;
 
-	self.showClearButton = NSNotEmptyString(self.eventString) && !self.recording;
+	self.showClearButton = OakNotEmptyString(self.eventString) && !self.recording;
 	self.displayString = self.recording ? kRecordingPlaceholderString : [NSString stringWithCxxString:ns::glyphs_for_event_string(to_s(_eventString))];
 
-	for(NSDictionary* info in _observers)
+	if(NSDictionary* info = [self infoForBinding:NSValueBinding])
 	{
-		if([info[kBindingInfoBindingKey] isEqualToString:NSValueBinding])
+		id controller     = info[NSObservedObjectKey];
+		NSString* keyPath = info[NSObservedKeyPathKey];
+		if(controller && controller != [NSNull null] && keyPath && (id)keyPath != [NSNull null])
 		{
-			id controller = info[kBindingInfoControllerKey];
-			NSString* keyPath = info[kBindingInfoKeyPathKey];
-			NSString* oldValue = [controller valueForKeyPath:keyPath];
-			if(!oldValue || ![oldValue isEqualToString:_eventString])
+			id oldValue = [controller valueForKeyPath:keyPath];
+			if(!oldValue || ![oldValue isEqualTo:_eventString])
 				[controller setValue:_eventString forKeyPath:keyPath];
 		}
 	}
+	NSAccessibilityPostNotification(self, NSAccessibilityValueChangedNotification);
 }
+
+- (id)value                   { return self.eventString; }
+- (void)setValue:(id)newValue { self.eventString = newValue; }
 
 - (void)setDisplayString:(NSString*)aString
 {
@@ -103,14 +102,38 @@ static NSString* const kRecordingPlaceholderString = @"…";
 		return;
 
 	_recording = flag;
-	self.showClearButton = NSNotEmptyString(self.eventString) && !self.recording;
+	self.showClearButton = OakNotEmptyString(self.eventString) && !self.recording;
 	self.displayString = _recording ? kRecordingPlaceholderString : [NSString stringWithCxxString:ns::glyphs_for_event_string(to_s(self.eventString))];
 
-	if(self.disableGlobalHotkeys)
+	if(self.recording)
 	{
-		if(self.recording)
-				_hotkeyToken = PushSymbolicHotKeyMode(kHIHotKeyModeAllDisabled);
-		else	PopSymbolicHotKeyMode(_hotkeyToken);
+		if(self.disableGlobalHotkeys)
+			_hotkeyToken = PushSymbolicHotKeyMode(kHIHotKeyModeAllDisabled);
+
+		_eventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSFlagsChangedMask|NSKeyDownMask handler:^NSEvent*(NSEvent* event){
+			if([event type] == NSFlagsChanged)
+			{
+				std::string const str = ns::glyphs_for_flags([event modifierFlags]);
+				self.displayString = str == "" ? kRecordingPlaceholderString : [NSString stringWithCxxString:str];
+			}
+			else if([event type] == NSKeyDown)
+			{
+				self.eventString = [NSString stringWithCxxString:to_s(event)];
+				self.recording = NO;
+			}
+			return nil;
+		}];
+	}
+	else
+	{
+		[NSEvent removeMonitor:_eventMonitor];
+		_eventMonitor = nil;
+
+		if(self.disableGlobalHotkeys)
+		{
+			PopSymbolicHotKeyMode(_hotkeyToken);
+			_hotkeyToken  = nullptr;
+		}
 	}
 }
 
@@ -126,7 +149,7 @@ static NSString* const kRecordingPlaceholderString = @"…";
 {
 	[super setKeyState:newState];
 
-	BOOL doesHaveResponder = (newState & (OakViewViewIsFirstResponderMask)) == (OakViewViewIsFirstResponderMask);
+	BOOL doesHaveResponder = (newState & (OakViewViewIsFirstResponderMask|OakViewWindowIsKeyMask)) == (OakViewViewIsFirstResponderMask|OakViewWindowIsKeyMask);
 	if(!doesHaveResponder)
 		self.recording = NO;
 
@@ -201,55 +224,17 @@ static NSString* const kRecordingPlaceholderString = @"…";
 	self.mouseInClearButton = NSMouseInRect([self convertPoint:[anEvent locationInWindow] fromView:nil], _clearButtonRect, [self isFlipped]);
 }
 
-- (void)flagsChanged:(NSEvent*)anEvent
-{
-	if(self.recording)
-	{
-		std::string const str = ns::glyphs_for_flags([anEvent modifierFlags]);
-		self.displayString = str == "" ? kRecordingPlaceholderString : [NSString stringWithCxxString:str];
-	}
-}
-
-- (BOOL)performKeyEquivalent:(NSEvent*)anEvent
-{
-	if(!self.recording)
-		return NO;
-
-	self.eventString = [NSString stringWithCxxString:to_s(anEvent)];
-	self.recording = NO;
-	return YES;
-}
-
 - (void)keyDown:(NSEvent*)anEvent
 {
-	if(self.recording)
-	{
-		[self performKeyEquivalent:anEvent];
-	}
+	static std::set<std::string> const ClearKeys     = { utf8::to_s(NSDeleteCharacter), utf8::to_s(NSDeleteFunctionKey), "\e" };
+	static std::set<std::string> const RecordingKeys = { " " };
+	std::string const keyString = to_s(anEvent);
+	if(ClearKeys.find(keyString) != ClearKeys.end() && !OakIsEmptyString(self.eventString))
+		[self clearKeyEquivalent:self];
+	else if(RecordingKeys.find(keyString) != RecordingKeys.end())
+		self.recording = YES;
 	else
-	{
-		static std::set<std::string> const ClearKeys     = { utf8::to_s(NSDeleteCharacter), utf8::to_s(NSDeleteFunctionKey) };
-		static std::set<std::string> const RecordingKeys = { " ", "\n", "\r" };
-		std::string const keyString = to_s(anEvent);
-		if(ClearKeys.find(keyString) != ClearKeys.end())
-			[self clearKeyEquivalent:self];
-		else if(RecordingKeys.find(keyString) != RecordingKeys.end())
-			self.recording = YES;
-		else
-			[self interpretKeyEvents:@[ anEvent ]];
-	}
-}
-
-- (void)insertTab:(id)sender
-{
-	if([[self window] firstResponder] == self)
-		[[self window] selectNextKeyView:self];
-}
-
-- (void)insertBacktab:(id)sender
-{
-	if([[self window] firstResponder] == self)
-		[[self window] selectPreviousKeyView:self];
+		[super keyDown:anEvent];
 }
 
 - (void)drawRect:(NSRect)aRect
@@ -275,7 +260,7 @@ static NSString* const kRecordingPlaceholderString = @"…";
 		NSImage* imgHover  = [NSImage imageNamed:@"CloseFileOver"    inSameBundleAsClass:cl];
 		NSImage* imgDown   = [NSImage imageNamed:@"CloseFilePressed" inSameBundleAsClass:cl];
 		NSImage* image = self.mouseInClearButton ? (_mouseDown ? imgDown : imgHover) : imgNormal;
-		[image drawAdjustedInRect:_clearButtonRect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1.0];
+		[image drawAdjustedInRect:_clearButtonRect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
 	}
 }
 
@@ -289,43 +274,45 @@ static NSString* const kRecordingPlaceholderString = @"…";
 	return [self bounds];
 }
 
-// ============
-// = Bindings =
-// ============
-
-- (void)bind:(NSString*)aBinding toObject:(id)observableController withKeyPath:(NSString*)aKeyPath options:(NSDictionary*)someOptions
+- (BOOL)accessibilityIsIgnored
 {
-	_observers = _observers ?: [NSMutableArray new];
-	[_observers addObject:@{
-		kBindingInfoBindingKey    : aBinding,
-		kBindingInfoControllerKey : observableController,
-		kBindingInfoKeyPathKey    : aKeyPath,
-	}];
-	[observableController addObserver:self forKeyPath:aKeyPath options:NSKeyValueObservingOptionInitial context:NULL];
+	return NO;
 }
 
-- (void)unbind:(NSString*)aBinding
+- (NSArray*)accessibilityAttributeNames
 {
-	for(NSUInteger i = [_observers count]; i > 0; --i)
-	{
-		NSDictionary* info = _observers[i-1];
-		if([aBinding isEqualToString:info[kBindingInfoBindingKey]])
-		{
-			[info[kBindingInfoControllerKey] removeObserver:self forKeyPath:info[kBindingInfoKeyPathKey]];
-			[_observers removeObjectAtIndex:i-i];
-		}
-	}
+	static NSArray* myAttributes = @[
+		NSAccessibilityValueAttribute,
+		NSAccessibilityNumberOfCharactersAttribute,
+		NSAccessibilityDescriptionAttribute,
+		NSAccessibilitySelectedTextAttribute,
+		NSAccessibilitySelectedTextRangeAttribute,
+		NSAccessibilityVisibleCharacterRangeAttribute,
+	];
+	static NSArray* attributes = [[[NSSet setWithArray:myAttributes] setByAddingObjectsFromArray:[super accessibilityAttributeNames]] allObjects];
+	return attributes;
 }
 
-- (void)observeValueForKeyPath:(NSString*)aKeyPath ofObject:(id)observableController change:(NSDictionary*)changeDictionary context:(void*)userData
+- (id)accessibilityAttributeValue:(NSString*)attribute
 {
-	for(NSDictionary* info in _observers)
-	{
-		if(observableController == info[kBindingInfoControllerKey] && [aKeyPath isEqualToString:info[kBindingInfoKeyPathKey]])
-		{
-			if([info[kBindingInfoBindingKey] isEqualToString:NSValueBinding])
-				self.eventString = [observableController valueForKeyPath:aKeyPath];
-		}
-	}
+	id value = nil;
+	BOOL isEmptyRecording = [self.displayString isEqualToString:kRecordingPlaceholderString];
+	if([attribute isEqualToString:NSAccessibilityRoleAttribute])
+		value = NSAccessibilityTextFieldRole;
+	else if([attribute isEqualToString:NSAccessibilityValueAttribute])
+		value = isEmptyRecording ? @"" : self.displayString;
+	else if([attribute isEqualToString:NSAccessibilityNumberOfCharactersAttribute])
+		value = @(isEmptyRecording ? 0 : self.displayString.length);
+	else if(
+			  [attribute isEqualToString:NSAccessibilitySelectedTextAttribute]
+			||[attribute isEqualToString:NSAccessibilitySelectedTextRangeAttribute]
+			||[attribute isEqualToString:NSAccessibilityVisibleCharacterRangeAttribute]
+				)
+		value = nil;
+	else if([attribute isEqualToString:NSAccessibilityDescriptionAttribute])
+		value = @"Key Equivalent";
+	else
+		value = [super accessibilityAttributeValue:attribute];
+	return value;
 }
 @end

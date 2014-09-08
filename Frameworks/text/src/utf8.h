@@ -63,17 +63,17 @@ namespace utf8
 		iterator_t (_Iter const& base_iterator) : base_iterator(base_iterator) { }
 		iterator_t () { }
 
-		self& operator++ ()								{ fetch(); std::advance(base_iterator, mb_length); return *this; }
-		self& operator-- ()								{ do { --base_iterator; } while((*base_iterator & 0xC0) == 0x80); return *this; }
+		self& operator++ ()                       { fetch(); std::advance(base_iterator, mb_length); return *this; }
+		self& operator-- ()                       { do { --base_iterator; } while((*base_iterator & 0xC0) == 0x80); return *this; }
 
-		bool operator== (self const& rhs) const	{ return base_iterator == rhs.base_iterator; }
-		bool operator!= (self const& rhs) const	{ return base_iterator != rhs.base_iterator; }
+		bool operator== (self const& rhs) const   { return base_iterator == rhs.base_iterator; }
+		bool operator!= (self const& rhs) const   { return base_iterator != rhs.base_iterator; }
 
-		uint32_t& operator* ()                  { fetch(); return value; }
-		uint32_t const& operator* () const      { fetch(); return value; }
+		uint32_t& operator* ()                    { fetch(); return value; }
+		uint32_t const& operator* () const        { fetch(); return value; }
 
-		_Iter operator& () const						{ return base_iterator; }
-		ssize_t length () const							{ fetch(); return mb_length; }
+		_Iter operator& () const                  { return base_iterator; }
+		ssize_t length () const                   { fetch(); return mb_length; }
 
 	private:
 		void fetch () const
@@ -102,7 +102,7 @@ namespace utf8
 		mutable ssize_t mb_length;
 	};
 
-	template <typename _BaseIter> iterator_t<_BaseIter> make (_BaseIter const& base)	{ return iterator_t<_BaseIter>(base); }
+	template <typename _BaseIter> iterator_t<_BaseIter> make (_BaseIter const& base) { return iterator_t<_BaseIter>(base); }
 
 	struct validate_t
 	{
@@ -175,33 +175,36 @@ namespace utf8
 		static bool partial (T ch)       { return ch & 0x80; }
 		static bool is_start (T ch)      { return (ch & 0xC0) == 0xC0; }
 		static size_t length (T ch)      {
-			ASSERT(is_start(ch)); ASSERT((ch & 0xF8) != 0xF8);
 			size_t numBytes = 1;
-			while((ch & (1 << (7-numBytes))) && numBytes < 6)
-				++numBytes;
+			if(is_start(ch))
+			{
+				ASSERT((ch & 0xF8) != 0xF8);
+				while((ch & (1 << (7-numBytes))) && numBytes < 6)
+					++numBytes;
+			}
 			return numBytes;
 		}
+	};
+
+	static struct { char mask, expect; } const UTF8LengthCodes[] =
+	{
+		{ 0b10000000, 0b00000000 },
+		{ 0b11100000, 0b11000000 },
+		{ 0b11110000, 0b11100000 },
+		{ 0b11111000, 0b11110000 },
+		{ 0b11111100, 0b11111000 },
+		{ 0b11111110, 0b11111100 },
 	};
 
 	template <typename _Iter>
 	_Iter find_safe_end (_Iter const& first, _Iter const& last)
 	{
-		static struct { char mask, expect; } const Codes[] =
-		{
-			{ 0x80, 0x00 }, // 0xxxxxxx
-			{ 0xE0, 0xC0 }, // 110xxxxx
-			{ 0xF0, 0xE0 }, // 1110xxxx
-			{ 0xF8, 0xF0 }, // 11110xxx
-			{ 0xFC, 0xF8 }, // 11110xxx
-			{ 0xFE, 0xFC }, // 111110xx
-		};
-
 		_Iter it = last;
-		for(auto const& code : Codes)
+		for(auto const& code : UTF8LengthCodes)
 		{
 			if(it == first || (*--it & code.mask) == code.expect)
 				return last;
-			if((*it & 0xC0) == 0xC0) // 11xxxxxx
+			if((*it & 0b11000000) == 0b11000000)
 				return it;
 		}
 		return last;
@@ -211,37 +214,21 @@ namespace utf8
 	_Iter remove_malformed (_Iter it, _Iter const& last)
 	{
 		auto dst = it;
-		for(; it != last; ++it)
+		while(it != last)
 		{
-			bool valid = true;
-			size_t len = 0;
-
-			char ch = *it;
-			if((ch & 0x80) == 0x00)
-				len = 0;
-			else if((ch & 0xE0) == 0xC0)
-				len = 1;
-			else if((ch & 0xF0) == 0xE0)
-				len = 2;
-			else if((ch & 0xF8) == 0xF0)
-				len = 3;
-			else if((ch & 0xFC) == 0xF8)
-				len = 4;
-			else if((ch & 0xFE) == 0xFC)
-				len = 5;
-			else
-				valid = false;
-
 			auto bt = it;
-			for(size_t i = 0; i < len && valid; ++i)
-				valid = ++it != last && (*it & 0xC0) == 0x80;
+			bool valid = false;
+			for(auto const& code : UTF8LengthCodes)
+			{
+				if(valid = ((*bt & code.mask) == code.expect))
+					break;
+				if(++it == last || (*it & 0b11000000) != 0b10000000)
+					break;
+			}
 
-			if(!valid)
-				it = bt;
-			else if(dst == bt)
-				std::advance(dst, len+1);
-			else
-				dst = std::copy_n(bt, len+1, dst);
+			if(valid)
+					dst = dst == bt ? ++it : std::copy(bt, ++it, dst);
+			else	it = ++bt;
 		}
 		return dst;
 	}
@@ -257,7 +244,7 @@ namespace diacritics
 
 		iterator_t (utf8::iterator_t<_Iter> const& first, utf8::iterator_t<_Iter> const& last) : current(first), stop(last) { }
 
-		self& operator++ ()											{ fetch(); current = next; return *this; }
+		self& operator++ () { fetch(); current = next; return *this; }
 
 		self& operator-- ()
 		{
@@ -294,14 +281,14 @@ namespace diacritics
 			return res;
 		}
 
-		bool operator== (self const& rhs) const				{ return current == rhs.current; }
-		bool operator!= (self const& rhs) const				{ return current != rhs.current; }
+		bool operator== (self const& rhs) const    { return current == rhs.current; }
+		bool operator!= (self const& rhs) const    { return current != rhs.current; }
 
 		uint32_t& operator* ()                     { ASSERT(current != stop); return *current; }
 		uint32_t const& operator* () const         { ASSERT(current != stop); return *current; }
 
-		_Iter operator& () const									{ return &current; }
-		ssize_t length () const										{ fetch(); return &next - &current; }
+		_Iter operator& () const                   { return &current; }
+		ssize_t length () const                    { fetch(); return &next - &current; }
 
 	private:
 		utf8::iterator_t<_Iter> current, stop;
@@ -319,8 +306,8 @@ namespace diacritics
 		}
 	};
 
-	template <typename _BaseIter> iterator_t<_BaseIter> begin_of (_BaseIter const& first, _BaseIter const& last)	{ return iterator_t<_BaseIter>(utf8::iterator_t<_BaseIter>(first), utf8::iterator_t<_BaseIter>(last)); }
-	template <typename _BaseIter> iterator_t<_BaseIter> end_of (_BaseIter const& first, _BaseIter const& last)		{ return iterator_t<_BaseIter>(utf8::iterator_t<_BaseIter>(last), utf8::iterator_t<_BaseIter>(last)); }
+	template <typename _BaseIter> iterator_t<_BaseIter> begin_of (_BaseIter const& first, _BaseIter const& last) { return iterator_t<_BaseIter>(utf8::iterator_t<_BaseIter>(first), utf8::iterator_t<_BaseIter>(last)); }
+	template <typename _BaseIter> iterator_t<_BaseIter> end_of (_BaseIter const& first, _BaseIter const& last)   { return iterator_t<_BaseIter>(utf8::iterator_t<_BaseIter>(last), utf8::iterator_t<_BaseIter>(last)); }
 
 	template <typename _BaseIter>
 	struct range_t
@@ -328,11 +315,11 @@ namespace diacritics
 		typedef iterator_t<_BaseIter> const_iterator;
 
 		range_t (iterator_t<_BaseIter> const& first, iterator_t<_BaseIter> const& last) : first(first), last(last) { }
-		iterator_t<_BaseIter> begin () const	{ return first; }
-		iterator_t<_BaseIter> end () const		{ return last; }
+		iterator_t<_BaseIter> begin () const                     { return first; }
+		iterator_t<_BaseIter> end () const                       { return last; }
 
-		std::reverse_iterator< iterator_t<_BaseIter> > rbegin ()			{ return std::reverse_iterator< iterator_t<_BaseIter> >(last); }
-		std::reverse_iterator< iterator_t<_BaseIter> > rend ()					{ return std::reverse_iterator< iterator_t<_BaseIter> >(first); }
+		std::reverse_iterator< iterator_t<_BaseIter> > rbegin () { return std::reverse_iterator< iterator_t<_BaseIter> >(last); }
+		std::reverse_iterator< iterator_t<_BaseIter> > rend ()   { return std::reverse_iterator< iterator_t<_BaseIter> >(first); }
 
 	private:
 		iterator_t<_BaseIter> first, last;
@@ -343,7 +330,7 @@ namespace diacritics
 	{
 		return range_t<_BaseIter>(iterator_t<_BaseIter>(utf8::iterator_t<_BaseIter>(first), utf8::iterator_t<_BaseIter>(last)), iterator_t<_BaseIter>(utf8::iterator_t<_BaseIter>(last), utf8::iterator_t<_BaseIter>(last)));
 	}
-	
+
 } /* diacritics */
 
 #endif /* end of include guard: TEXT_UTF8_H_8I8S2ODM */

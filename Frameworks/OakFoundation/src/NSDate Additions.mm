@@ -10,12 +10,12 @@
 	NSTimeInterval const month  =  31*day;
 	NSTimeInterval const year   = 365*day;
 
-	NSTimeInterval t = -[self timeIntervalSinceNow];
+	NSTimeInterval t = [[NSDate date] timeIntervalSinceDate:self];
 	if(t < 1)
 		return @"Just now";
 	if(t < minute)
 		return @"Less than a minute ago";
-	if(t < 2 * minute) 
+	if(t < 2 * minute)
 		return @"1 minute ago";
 	if(t < hour)
 		return [NSString stringWithFormat:@"%.0f minutes ago", t / minute];

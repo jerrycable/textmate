@@ -55,7 +55,7 @@ namespace find
 	// ==============
 	// = DFA Helper =
 	// ==============
-	
+
 	struct dfa_node_t;
 	typedef std::shared_ptr<dfa_node_t> dfa_node_ptr;
 
@@ -90,11 +90,11 @@ namespace find
 				(*it)->clear();
 		}
 
-		bool does_match (char needle) const							{ return needle == byte; }
-		std::vector<dfa_node_ptr> const& descend () const		{ return children; }
+		bool does_match (char needle) const                   { return needle == byte; }
+		std::vector<dfa_node_ptr> const& descend () const     { return children; }
 
-		char get_byte () const											{ return byte; }
-		bool can_merge (dfa_node_ptr const& rhs) const			{ return byte == rhs->byte; }
+		char get_byte () const                                { return byte; }
+		bool can_merge (dfa_node_ptr const& rhs) const        { return byte == rhs->byte; }
 		dfa_node_ptr merge (dfa_node_ptr const& rhs) const
 		{
 			std::vector<dfa_node_ptr> merged = children, tmp;
@@ -177,10 +177,12 @@ namespace find
 				if((options & ignore_whitespace) && is_whitespace(*it))
 					continue;
 
-				CFStringRef tmp = CFStringCreateWithBytes(kCFAllocatorDefault, (UInt8*)&it, it.length(), kCFStringEncodingUTF8, false);
-				matrix.push_back(std::vector<std::string>());
-				all_variations(tmp, options, matrix.back());
-				CFRelease(tmp);
+				if(CFStringRef tmp = CFStringCreateWithBytes(kCFAllocatorDefault, (UInt8*)&it, it.length(), kCFStringEncodingUTF8, false))
+				{
+					matrix.push_back(std::vector<std::string>());
+					all_variations(tmp, options, matrix.back());
+					CFRelease(tmp);
+				}
 			}
 
 			if(options & backwards)
@@ -283,7 +285,7 @@ namespace find
 					i -= increment;
 				}
 			}
-			return std::make_pair(len+1, len);
+			return { len+1, len };
 		}
 
 	private:

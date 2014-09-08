@@ -108,6 +108,7 @@ static NSImage* IconImage (NSURL* url, NSSize size = NSMakeSize(16, 16))
 {
 	OBJC_WATCH_LEAKS(OakFileBrowser);
 	NSUInteger _historyIndex;
+	NSUndoManager* _localUndoManager;
 }
 @property (nonatomic, readwrite)         OakFileBrowserView* view;
 @property (nonatomic)                    OFBHeaderView* headerView;
@@ -280,11 +281,10 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 	if(rowIndex == -1)
 		return NSZeroRect;
 	NSRect r = [_outlineView frameOfCellAtColumn:0 row:rowIndex];
-	r.origin.x += 7.0; // FIXME some hard-coded values here
-	r.origin.y -= 1.0;
+	r.origin.x += 7; // FIXME some hard-coded values here
+	r.origin.y -= 1;
 	r.size = NSMakeSize(16, 16);
-	r = [_outlineView convertRect:r toView:nil];
-	r.origin = [_outlineView.window convertBaseToScreen:r.origin];
+	r = [_outlineView.window convertRectToScreen:[_outlineView convertRect:r toView:nil]];
 	return r;
 }
 
@@ -315,7 +315,7 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 	NSMenu* folderPopUpMenu = _headerView.folderPopUpButton.menu;
 	[folderPopUpMenu removeAllItems];
 
-	NSMenuItem* menuItem = [folderPopUpMenu addItemWithTitle:(_outlineViewDelegate.dataSource.rootItem.name ?: @"") action:@selector(takeURLFrom:) keyEquivalent:@""];
+	NSMenuItem* menuItem = [folderPopUpMenu addItemWithTitle:(_outlineViewDelegate.dataSource.rootItem.displayName ?: @"") action:@selector(takeURLFrom:) keyEquivalent:@""];
 	menuItem.image = _outlineViewDelegate.dataSource.rootItem.icon;
 	menuItem.image.size = NSMakeSize(16, 16);
 	menuItem.target = self;
@@ -404,17 +404,14 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 {
 	std::map<std::string, std::string> env;
 
-	std::vector<std::string> selection;
-	for(NSString* aPath in self.selectedPaths)
-		selection.push_back([aPath fileSystemRepresentation]);
-
-	if(!selection.empty())
+	if(self.selectedPaths.count)
 	{
-		std::vector<std::string> quoted;
-		for(auto const& path : selection)
-			quoted.push_back(format_string::replace(path, "\\A(?m:.*)\\z", "'${0/'/'\\''/}'"));
-		env["TM_SELECTED_FILE"]  = selection.back();
-		env["TM_SELECTED_FILES"] = text::join(quoted, " ");
+		std::vector<std::string> paths;
+		for(NSString* aPath in self.selectedPaths)
+			paths.emplace_back(path::escape(to_s(aPath)));
+
+		env["TM_SELECTED_FILE"]  = [[self.selectedPaths lastObject] fileSystemRepresentation];
+		env["TM_SELECTED_FILES"] = text::join(paths, " ");
 	}
 
 	return env;
@@ -651,7 +648,7 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 	{
 		if([url isFileURL])
 		{
-			if(NSURL* res = [[OakFileManager sharedInstance] createDuplicateOfURL:url window:_view.window])
+			if(NSURL* res = [[OakFileManager sharedInstance] createDuplicateOfURL:url view:_view])
 				[duplicatedURLs addObject:res];
 		}
 	}
@@ -725,7 +722,7 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 {
 	if(NSString* folder = [self directoryForNewItems])
 	{
-		if(NSURL* res = [[OakFileManager sharedInstance] createUntitledDirectoryAtURL:[NSURL fileURLWithPath:folder] window:_view.window])
+		if(NSURL* res = [[OakFileManager sharedInstance] createUntitledDirectoryAtURL:[NSURL fileURLWithPath:folder] view:_view])
 			[self editURL:res];
 	}
 }
@@ -753,7 +750,7 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 	for(NSURL* url in self.selectedURLs)
 	{
 		if([url isFileURL])
-			[[OakFileManager sharedInstance] trashItemAtURL:url window:_view.window];
+			[[OakFileManager sharedInstance] trashItemAtURL:url view:_view];
 	}
 
 	if(itemToSelect)
@@ -783,14 +780,14 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 	for(NSURL* url in urls)
 	{
 		std::string const dst = path::join(favFolder, path::name(to_s([url path])));
-		[[OakFileManager sharedInstance] createSymbolicLinkAtURL:[NSURL fileURLWithPath:[NSString stringWithCxxString:dst]] withDestinationURL:url window:_view.window];
+		[[OakFileManager sharedInstance] createSymbolicLinkAtURL:[NSURL fileURLWithPath:[NSString stringWithCxxString:dst]] withDestinationURL:url view:_view];
 	}
 }
 
 - (void)removeSelectedEntriesFromFavorites:(id)sender
 {
 	for(NSURL* url in self.selectedURLs)
-		[[OakFileManager sharedInstance] trashItemAtURL:url window:_view.window];
+		[[OakFileManager sharedInstance] trashItemAtURL:url view:_view];
 }
 
 - (IBAction)cut:(id)sender
@@ -828,8 +825,8 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 			std::string const dst = path::unique(path::join([folder fileSystemRepresentation], path::name([path fileSystemRepresentation])));
 			NSURL* dstURL = [NSURL fileURLWithPath:[NSString stringWithCxxString:dst]];
 			if(cut)
-					[[OakFileManager sharedInstance] moveItemAtURL:[NSURL fileURLWithPath:path] toURL:dstURL window:_view.window];
-			else	[[OakFileManager sharedInstance] copyItemAtURL:[NSURL fileURLWithPath:path] toURL:dstURL window:_view.window];
+					[[OakFileManager sharedInstance] moveItemAtURL:[NSURL fileURLWithPath:path] toURL:dstURL view:_view];
+			else	[[OakFileManager sharedInstance] copyItemAtURL:[NSURL fileURLWithPath:path] toURL:dstURL view:_view];
 			[created addObject:[NSURL fileURLWithPath:[dstURL path]]]; // recreate to set ‘isDirectory’
 		}
 	}
@@ -977,7 +974,7 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 		swatch.font          = [aMenu font];
 
 		[aMenu addItem:[NSMenuItem separatorItem]];
-		[[aMenu addItemWithTitle:@"Color Swatch" action:@selector(nop:) keyEquivalent:@""] setView:swatch];
+		[[aMenu addItemWithTitle:@"Color Swatch" action:NULL keyEquivalent:@""] setView:swatch];
 	}
 
 	for(NSUInteger i = countOfExistingItems; i < [aMenu numberOfItems]; ++i)
@@ -987,13 +984,13 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 			[item setTarget:self];
 	}
 
-	if([_view.window.undoManager canUndo] || [_view.window.undoManager canRedo])
+	if([_view.undoManager canUndo] || [_view.undoManager canRedo])
 	{
 		if(countOfExistingItems != [aMenu numberOfItems])
 			[aMenu addItem:[NSMenuItem separatorItem]];
 
-		[[aMenu addItemWithTitle:@"Undo" action:@selector(undo:) keyEquivalent:@""] setTarget:_view.window];
-		[[aMenu addItemWithTitle:@"Redo" action:@selector(redo:) keyEquivalent:@""] setTarget:_view.window];
+		[[aMenu addItemWithTitle:[_view.undoManager undoMenuItemTitle] action:@selector(undo:) keyEquivalent:@""] setTarget:self];
+		[[aMenu addItemWithTitle:[_view.undoManager redoMenuItemTitle] action:@selector(redo:) keyEquivalent:@""] setTarget:self];
 	}
 
 	if(countOfExistingItems == [aMenu numberOfItems])
@@ -1034,7 +1031,7 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 - (void)menuNeedsUpdate:(NSMenu*)aMenu
 {
 	[aMenu removeAllItems];
-	[aMenu addItemWithTitle:@"Dummy" action:@selector(nop:) keyEquivalent:@""];
+	[aMenu addItemWithTitle:@"Dummy" action:NULL keyEquivalent:@""];
 	[self updateMenu:aMenu];
 }
 
@@ -1060,7 +1057,7 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 			type    = tmp.urlType;
 			itemURL = tmp.target ?: tmp.url;
 		}
-		
+
 		if(type == FSItemURLTypePackage && OakIsAlternateKeyOrMouseEvent())
 			type = FSItemURLTypeFolder;
 		else if(type == FSItemURLTypeFile && is_binary([itemURL.path fileSystemRepresentation]) && !OakIsAlternateKeyOrMouseEvent())
@@ -1192,7 +1189,7 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 
 - (void)scrollWheel:(NSEvent*)anEvent
 {
-	if(![NSEvent isSwipeTrackingFromScrollEventsEnabled] || [anEvent phase] == NSEventPhaseNone || fabsf([anEvent scrollingDeltaX]) <= fabsf([anEvent scrollingDeltaY]))
+	if(![NSEvent isSwipeTrackingFromScrollEventsEnabled] || [anEvent phase] == NSEventPhaseNone || fabs([anEvent scrollingDeltaX]) <= fabs([anEvent scrollingDeltaY]))
 		return;
 
 	[anEvent trackSwipeEventWithOptions:0 dampenAmountThresholdMin:(self.canGoForward ? -1 : 0) max:(self.canGoBack ? +1 : 0) usingHandler:^(CGFloat gestureAmount, NSEventPhase phase, BOOL isComplete, BOOL* stop) {
@@ -1218,6 +1215,32 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 	}];
 }
 
+// =============
+// = Undo/Redo =
+// =============
+
+- (NSUndoManager*)undoManager
+{
+	if(!_localUndoManager)
+		_localUndoManager = [NSUndoManager new];
+	return _localUndoManager;
+}
+
+- (NSUndoManager*)activeUndoManager
+{
+	return [[_view.window firstResponder] undoManager];
+}
+
+- (void)undo:(id)sender
+{
+	[self.activeUndoManager undo];
+}
+
+- (void)redo:(id)sender
+{
+	[self.activeUndoManager redo];
+}
+
 // ===================
 // = Menu Validation =
 // ===================
@@ -1228,8 +1251,9 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 	static std::set<SEL> const requireSelection{ @selector(didDoubleClickOutlineView:), @selector(editSelectedEntries:), @selector(duplicateSelectedEntries:), @selector(cut:), @selector(copy:), @selector(delete:) };
 
 	NSUInteger selectedFiles = 0;
+	struct stat buf;
 	for(FSItem* item in self.selectedItems)
-		selectedFiles += [item.url isFileURL] && path::exists([[item.url path] fileSystemRepresentation]) ? 1 : 0;
+		selectedFiles += [item.url isFileURL] && lstat([[item.url path] fileSystemRepresentation], &buf) == 0 ? 1 : 0;
 
 	if([item action] == @selector(goToParentFolder:))
 		res = ParentForURL(_url) != nil;
@@ -1247,6 +1271,16 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 		res = selectedFiles == 1;
 	else if([item action] == @selector(toggleShowInvisibles:))
 		[item setTitle:self.showExcludedItems ? @"Hide Invisible Files" : @"Show Invisible Files"];
+	else if([item action] == @selector(undo:))
+	{
+		[item setTitle:[self.activeUndoManager undoMenuItemTitle]];
+		res = [self.activeUndoManager canUndo];
+	}
+	else if([item action] == @selector(redo:))
+	{
+		[item setTitle:[self.activeUndoManager redoMenuItemTitle]];
+		res = [self.activeUndoManager canRedo];
+	}
 
 	NSString* quickLookTitle = [QLPreviewPanel sharedPreviewPanelExists] && [[QLPreviewPanel sharedPreviewPanel] isVisible] ? @"Close Quick Look" : @"Quick Look%@";
 
@@ -1270,7 +1304,7 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 				switch(selectedFiles)
 				{
 					case 0:  items = [NSString stringWithFormat:@" “%@”", DisplayName(_url)]; break;
-					case 1:  items = [NSString stringWithFormat:@" “%@”", ((FSItem*)[self.selectedItems lastObject]).name]; break;
+					case 1:  items = [NSString stringWithFormat:@" “%@”", ((FSItem*)[self.selectedItems lastObject]).displayName]; break;
 					default: items = [NSString stringWithFormat:@" %ld Items", selectedFiles]; break;
 				}
 			}

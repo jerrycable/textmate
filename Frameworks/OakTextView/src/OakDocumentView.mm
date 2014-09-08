@@ -91,7 +91,7 @@ struct document_view_callback_t : document::document_t::callback_t
 		if(document->recent_tracking() && document->path() != NULL_STR)
 		{
 			if(event == did_save || event == did_change_path || (event == did_change_open_status && document->is_open()))
-				[[NSDocumentController sharedDocumentController] noteNewRecentDocumentURL:[NSURL fileURLWithPath:[NSString stringWithCxxString:document->path()]]]; 
+				[[NSDocumentController sharedDocumentController] noteNewRecentDocumentURL:[NSURL fileURLWithPath:[NSString stringWithCxxString:document->path()]]];
 		}
 	}
 private:
@@ -133,7 +133,7 @@ private:
 		if([[NSUserDefaults standardUserDefaults] boolForKey:@"DocumentView Disable Line Numbers"])
 			[gutterView setVisibility:NO forColumnWithIdentifier:GVLineNumbersColumnIdentifier];
 
-		gutterDividerView = OakCreateViewWithColor();
+		gutterDividerView = OakCreateVerticalLine(nil);
 		[self addSubview:gutterDividerView];
 
 		statusDividerView = OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.500 alpha:1], [NSColor colorWithCalibratedWhite:0.750 alpha:1]);
@@ -168,18 +168,21 @@ private:
 	[self removeConstraints:[self constraints]];
 	[super updateConstraints];
 
-	NSDictionary* views = NSDictionaryOfVariableBindings(gutterScrollView, gutterView, gutterDividerView, textScrollView, statusDividerView, statusBar);
-	[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[gutterScrollView(==gutterView)][gutterDividerView(==1)][textScrollView(>=100)]|" options:NSLayoutFormatAlignAllTop|NSLayoutFormatAlignAllBottom metrics:nil views:views]];
-	[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[statusBar]|"                                                                     options:0 metrics:nil views:views]];
-	[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:[statusDividerView][statusBar]|"                                                   options:NSLayoutFormatAlignAllLeft|NSLayoutFormatAlignAllRight metrics:nil views:views]];
-
 	NSMutableArray* stackedViews = [NSMutableArray array];
 	[stackedViews addObjectsFromArray:topAuxiliaryViews];
 	[stackedViews addObject:gutterScrollView];
 	[stackedViews addObjectsFromArray:bottomAuxiliaryViews];
-	[stackedViews addObject:statusDividerView];
 
+	if(statusBar)
+	{
+		[stackedViews addObjectsFromArray:@[ statusDividerView, statusBar ]];
+		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[statusBar(==statusDividerView)]|" options:NSLayoutFormatAlignAllLeft|NSLayoutFormatAlignAllRight metrics:nil views:NSDictionaryOfVariableBindings(statusDividerView, statusBar)]];
+	}
+
+	[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[gutterScrollView(==gutterView)][gutterDividerView][textScrollView(>=100)]|" options:NSLayoutFormatAlignAllTop|NSLayoutFormatAlignAllBottom metrics:nil views:NSDictionaryOfVariableBindings(gutterScrollView, gutterView, gutterDividerView, textScrollView)]];
 	[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[topView]" options:0 metrics:nil views:@{ @"topView" : stackedViews[0] }]];
+	[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:[bottomView]|" options:0 metrics:nil views:@{ @"bottomView" : [stackedViews lastObject] }]];
+
 	for(size_t i = 0; i < [stackedViews count]-1; ++i)
 		[self addConstraint:[NSLayoutConstraint constraintWithItem:stackedViews[i] attribute:NSLayoutAttributeBottom relatedBy:NSLayoutRelationEqual toItem:stackedViews[i+1] attribute:NSLayoutAttributeTop multiplier:1 constant:0]];
 
@@ -191,6 +194,35 @@ private:
 	}
 }
 
+- (void)setHideStatusBar:(BOOL)flag
+{
+	if(_hideStatusBar == flag)
+		return;
+
+	_hideStatusBar = flag;
+	if(_hideStatusBar)
+	{
+		[statusDividerView removeFromSuperview];
+		statusDividerView = nil;
+
+		[statusBar removeFromSuperview];
+		statusBar.delegate = nil;
+		statusBar.target = nil;
+		statusBar = nil;
+	}
+	else
+	{
+		statusDividerView = OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.500 alpha:1], [NSColor colorWithCalibratedWhite:0.750 alpha:1]);
+		[self addSubview:statusDividerView];
+
+		statusBar = [[OTVStatusBar alloc] initWithFrame:NSZeroRect];
+		statusBar.delegate = self;
+		statusBar.target = self;
+		[self addSubview:statusBar];
+	}
+	[self setNeedsUpdateConstraints:YES];
+}
+
 - (NSImage*)gutterImage:(NSString*)aName
 {
 	if(NSImage* res = [[NSImage imageNamed:aName inSameBundleAsClass:[self class]] copy])
@@ -200,7 +232,7 @@ private:
 		CGFloat height = [gutterView.lineNumberFont capHeight];
 		CGFloat width = [res size].width * height / [res size].height;
 
-		CGFloat scaleFactor = 1.0;
+		CGFloat scaleFactor = 1;
 
 		// Since all images are vector based and don’t contain any spacing to
 		// align it, we need to set the individual scaleFactor per image.
@@ -244,7 +276,7 @@ private:
 
 - (void)changeFont:(id)sender
 {
-	if(NSFont* newFont = [sender convertFont:textView.font])
+	if(NSFont* newFont = [sender convertFont:textView.font ?: [NSFont userFixedPitchFontOfSize:0]])
 	{
 		settings_t::set(kSettingsFontNameKey, to_s([newFont fontName]));
 		settings_t::set(kSettingsFontSizeKey, [newFont pointSize]);
@@ -311,7 +343,7 @@ private:
 		oldDocument->remove_callback(callback);
 
 	if(aDocument)
-		aDocument->open();
+		aDocument->sync_open();
 
 	if(document = aDocument)
 	{
@@ -491,6 +523,12 @@ private:
 // = Symbol Chooser =
 // ==================
 
+- (void)selectAndCenter:(NSString*)aSelectionString
+{
+	textView.selectionString = aSelectionString;
+	[textView centerSelectionInVisibleArea:self];
+}
+
 - (void)setSymbolChooser:(SymbolChooser*)aSymbolChooser
 {
 	if(_symbolChooser == aSymbolChooser)
@@ -512,7 +550,7 @@ private:
 		_symbolChooser.document        = document;
 		_symbolChooser.selectionString = textView.selectionString;
 
-		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(symbolChooserWillClose:) name:NSWindowWillCloseNotification object:_symbolChooser.window];		
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(symbolChooserWillClose:) name:NSWindowWillCloseNotification object:_symbolChooser.window];
 	}
 }
 
@@ -530,7 +568,7 @@ private:
 - (void)symbolChooserDidSelectItems:(id)sender
 {
 	for(id item in [sender selectedItems])
-		[textView setSelectionString:[item selectionString]];
+		[self selectAndCenter:[item selectionString]];
 }
 
 // =======================
@@ -545,7 +583,7 @@ private:
 
 - (void)goToSymbol:(id)sender
 {
-	[textView setSelectionString:[sender representedObject]];
+	[self selectAndCenter:[sender representedObject]];
 }
 
 - (void)showSymbolSelector:(NSPopUpButton*)symbolPopUp
@@ -737,7 +775,7 @@ static std::string const kSearchmarkType = "search";
 - (void)takeBookmarkFrom:(id)sender
 {
 	if([sender respondsToSelector:@selector(representedObject)])
-		[textView setSelectionString:[sender representedObject]];
+		[self selectAndCenter:[sender representedObject]];
 }
 
 - (void)updateBookmarksMenu:(NSMenu*)aMenu
@@ -956,7 +994,7 @@ static std::string const kSearchmarkType = "search";
 {
 	NSEraseRect(aRect);
 	if(![NSGraphicsContext currentContextDrawingToScreen] && layout)
-		layout->draw((CGContextRef)[[NSGraphicsContext currentContext] graphicsPort], aRect, [self isFlipped], /* show invisibles: */ false, /* selection: */ ng::ranges_t(), /* highlight: */ ng::ranges_t(), /* draw background: */ false);
+		layout->draw((CGContextRef)[[NSGraphicsContext currentContext] graphicsPort], aRect, [self isFlipped], /* selection: */ ng::ranges_t(), /* highlight: */ ng::ranges_t(), /* draw background: */ false);
 }
 
 - (void)layoutIfNeeded

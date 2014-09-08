@@ -38,7 +38,7 @@ namespace
 			if(str.find("*") != std::string::npos)
 			{
 				_is_glob = true;
-				_glob = path::glob_t(str);
+				_glob = path::glob_t(str, false, false);
 			}
 			else if(regexp::match_t const& m = regexp::search("(?x)  \\A  (?: (?:/(?=.*/))? (.*) / )?  ([^/]*?)  (?: :([\\d+:-x\\+]*) | @(.*) )?  \\z", str))
 			{
@@ -201,6 +201,7 @@ static path::glob_list_t globs_for_path (std::string const& path)
 	std::vector<document_record_t>                _records;
 	document::scanner_ptr                         _scanner;
 }
+@property (nonatomic) NSArray* sourceListLabels;
 @property (nonatomic) NSProgressIndicator* progressIndicator;
 
 @property (nonatomic) BOOL     polling;
@@ -219,6 +220,8 @@ static path::glob_list_t globs_for_path (std::string const& path)
 {
 	if((self = [super init]))
 	{
+		_sourceListLabels = @[ @"All", @"Open Documents", @"Uncommitted Documents" ];
+
 		[self.window setContentBorderThickness:57 forEdge:NSMaxYEdge];
 		self.tableView.allowsMultipleSelection = YES;
 
@@ -227,7 +230,7 @@ static path::glob_list_t globs_for_path (std::string const& path)
 		[[self.tableView tableColumnWithIdentifier:@"name"] setDataCell:cell];
 
 		OakScopeBarView* scopeBar = [OakScopeBarView new];
-		scopeBar.labels = @[ @"All", @"Open Documents", @"Uncommitted Documents" ];
+		scopeBar.labels = self.sourceListLabels;
 
 		_progressIndicator = [[NSProgressIndicator alloc] initWithFrame:NSZeroRect];
 		_progressIndicator.style                = NSProgressIndicatorSpinningStyle;
@@ -237,9 +240,9 @@ static path::glob_list_t globs_for_path (std::string const& path)
 		NSDictionary* views = @{
 			@"searchField"        : self.searchField,
 			@"aboveScopeBarDark"  : OakCreateHorizontalLine([NSColor grayColor], [NSColor lightGrayColor]),
-			@"aboveScopeBarLight" : OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.797 alpha:1.000], [NSColor colorWithCalibratedWhite:0.912 alpha:1.000]),
+			@"aboveScopeBarLight" : OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.797 alpha:1], [NSColor colorWithCalibratedWhite:0.912 alpha:1]),
 			@"scopeBar"           : scopeBar,
-			@"topDivider"         : OakCreateHorizontalLine([NSColor darkGrayColor], [NSColor colorWithCalibratedWhite:0.551 alpha:1.000]),
+			@"topDivider"         : OakCreateHorizontalLine([NSColor darkGrayColor], [NSColor colorWithCalibratedWhite:0.551 alpha:1]),
 			@"scrollView"         : self.scrollView,
 			@"bottomDivider"      : OakCreateHorizontalLine([NSColor grayColor], [NSColor lightGrayColor]),
 			@"statusTextField"    : self.statusTextField,
@@ -269,6 +272,9 @@ static path::glob_list_t globs_for_path (std::string const& path)
 	}
 	return self;
 }
+
+- (IBAction)selectNextTab:(id)sender     { self.sourceIndex = (self.sourceIndex + 1) % self.sourceListLabels.count; }
+- (IBAction)selectPreviousTab:(id)sender { self.sourceIndex = (self.sourceIndex + self.sourceListLabels.count - 1) % self.sourceListLabels.count; }
 
 - (void)showWindow:(id)sender
 {
@@ -374,15 +380,8 @@ static path::glob_list_t globs_for_path (std::string const& path)
 			auto& record = _records[i];
 			record.cover.clear();
 			record.display_parents = 0;
-
-			for(auto const& str : { record.name, path::relative_to(record.full_path, basePath), record.full_path })
-			{
-				if(record.matched = filter.glob().does_match(str))
-				{
-					record.display = str;
-					break;
-				}
-			}
+			if(record.matched = filter.glob().does_match(record.full_path))
+				record.display = record.name;
 		}
 
 		for(auto const& record : _records)

@@ -83,7 +83,7 @@ namespace ng
 		return caret;
 	}
 
-	static ranges_t sanitize (buffer_t const& buffer, ranges_t const& selection)
+	ranges_t sanitize (buffer_t const& buffer, ranges_t const& selection)
 	{
 		/* This function will transform the selection so that
 		   all indexes are on proper multi-byte boundaries and
@@ -127,7 +127,7 @@ namespace ng
 		size_t index = 0;
 		std::set<indexed_range_t> set;
 		for(auto range : selection)
-			set.emplace(range_t(index_t(buffer.sanitize_index(range.first.index), range.first.carry), index_t(buffer.sanitize_index(range.last.index), range.last.carry), range.columnar, range.freehanded, range.unanchored), index++);
+			set.emplace(range_t(index_t(buffer.sanitize_index(range.first.index), range.first.carry), index_t(buffer.sanitize_index(range.last.index), range.last.carry), range.columnar, range.freehanded, range.unanchored, range.color), index++);
 
 		index_t last;
 		std::map<size_t, range_t> map;
@@ -193,7 +193,7 @@ namespace ng
 
 			pattern_t (std::string const& plain) : plain(plain)
 			{
-				if(plain.size() > 2 && plain[0] == '/' && plain[plain.size()-1] == '/')
+				if(plain.size() > 2 && plain.front() == '/' && plain.back() == '/')
 				{
 					left_anchored_regexp = "\\G" + plain.substr(1, plain.size()-2);
 					right_anchored_regexp = plain.substr(1, plain.size()-2) + "\\G";
@@ -443,12 +443,12 @@ namespace ng
 				for(size_t n = fromLine; n <= toLine; ++n)
 				{
 					index_t from = at_column(buffer, n, fromCol), to = at_column(buffer, n, toCol);
-					res.push_back(range_t(from, to, false, from.carry || to.carry));
+					res.push_back(range_t(from, to, false, from.carry || to.carry, range.unanchored, range.color));
 				}
 			}
 			else
 			{
-				res.push_back(range_t(range.min(), range.max(), range.columnar, range.freehanded));
+				res.push_back(range_t(range.min(), range.max(), range.columnar, range.freehanded, range.unanchored, range.color));
 			}
 		}
 		return res;
@@ -518,7 +518,7 @@ namespace ng
 
 		switch(unit)
 		{
-			case kSelectionMoveToBeginOfDocument:     return 0; 
+			case kSelectionMoveToBeginOfDocument:     return 0;
 			case kSelectionMoveToEndOfDocument:       return buffer.size();
 			case kSelectionMoveToBeginOfParagraph:    return buffer.begin(line);
 			case kSelectionMoveToEndOfParagraph:      return buffer.eol(line);
@@ -648,7 +648,16 @@ namespace ng
 
 			case kSelectionMoveToBeginOfSubWord:
 			{
-				static regexp::pattern_t ptrn("(\\p{Upper}\\p{Lower}+|\\p{Upper}+|\\p{Lower}+)[^\\p{Upper}\\p{Lower}]?$|[^\\p{Upper}\\p{Lower}]+$");
+				static regexp::pattern_t ptrn(
+					    "(\\p{Upper}\\p{Lower}+"
+					    "|\\p{Upper}+"
+					    "|\\p{Lower}+"
+					    ")"
+					    "[^\\p{Upper}\\p{Lower}]?$"
+					"|" "[^\\p{Alnum}]+$"
+					"|" "[\\p{Digit}]+$"
+					"|" "[^\\p{Digit}\\p{Upper}\\p{Lower}]+$"
+				);
 
 				size_t n = line && caret == buffer.begin(line) ? line-1 : line;
 				std::string const& line = buffer.substr(buffer.begin(n), caret);
@@ -664,7 +673,11 @@ namespace ng
 					"|\\p{Upper}\\p{Upper}+"                          // NDEBUG‸
 					"|\\p{Upper}\\p{Lower}*"                          // Camel‸Case || Camel‸_case
 					"|\\p{Lower}+"                                    // camel‸Case || camel‸_case
-					")|[^\\p{Upper}\\p{Lower}]*)");                   //    ‸leading_whitespace
+					")"
+					"|[^\\p{Alnum}]+"
+					"|[\\p{Digit}]+"
+					"|[^\\p{Digit}\\p{Upper}\\p{Lower}]+"
+					")");
 
 				size_t n = line+1 < buffer.lines() && caret == buffer.eol(line) ? line+1 : line;
 				std::string const& line = buffer.substr(caret, buffer.eol(n));
@@ -1034,6 +1047,7 @@ namespace ng
 			if(not_empty(buffer, range))
 			{
 				res.push_back(range);
+				res.last().color = true;
 			}
 			else
 			{
@@ -1043,6 +1057,7 @@ namespace ng
 					if(unit == kSelectionExtendToEndOfParagraph && range.empty())
 						range = extend(buffer, range, kSelectionExtendRight, layout);
 					res.push_back(range);
+					res.last().color = false;
 				}
 			}
 		}
@@ -1083,7 +1098,7 @@ namespace ng
 	// ================
 	// = Obtain Scope =
 	// ================
-	
+
 	scope::context_t scope (buffer_t const& buffer, ranges_t const& selection, std::string const& extraAttributes)
 	{
 		scope::context_t res;
@@ -1337,7 +1352,7 @@ namespace ng
 		{
 			if(options & find::backwards)
 			{
-				auto it = std::lower_bound(tmp.begin(), tmp.end(), range, [](decltype(tmp)::value_type const& candidate, ng::range_t const& range){
+				auto it = std::lower_bound(tmp.begin(), tmp.end(), range, [](auto const& candidate, ng::range_t const& range){
 					return candidate.first.empty() ? candidate.first.max() < range.min() : candidate.first.max() <= range.min();
 				});
 

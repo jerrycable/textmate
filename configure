@@ -8,7 +8,10 @@ function error () { printf >&2 "%s\n\nPlease see README.md for build instruction
 
 : ${builddir:=$HOME/build/TextMate}
 : ${identity:=-}
+: ${capnp_prefix:=/usr/local}
 : ${rest_api:=https://api.textmate.org}
+: ${CC:=xcrun clang}
+: ${CXX:=xcrun clang++}
 
 # ========================================================
 # = Application name, version, revision, and required OS =
@@ -18,32 +21,6 @@ name=TextMate
 ver=2.0-alpha.\$APP_REVISION${tag:-+git.$(git rev-parse --short HEAD)}
 rev=$(( $(curl -sf "${rest_api}/releases/nightly/revision")+1 ))
 min_os=10.7
-
-# ===============================================
-# = Find clang via xcrun, MacPorts, or Homebrew =
-# ===============================================
-
-clang_good_enough() {
-	[[ -x "$CC" && -x "$CXX" ]] && "$CC" &>/dev/null -x objective-c -include Foundation/Foundation.h -c -o /dev/null - <<< 'int main () { id str = @("str"); return 0; }'
-}
-test_xcode_clang() {
-	if which -s xcrun; then
-		CC=$(xcrun -find clang)
-		CXX=$(xcrun -find clang++)
-		clang_good_enough && return
-	fi
-	false
-}
-test_local_clang() {
-	for cc in /{opt,usr}/local/bin/clang /usr/bin/clang; do
-		CC="${cc}"
-		CXX="${cc}++"
-		clang_good_enough && return
-	done
-	false
-}
-
-clang_good_enough || test_xcode_clang || test_local_clang || error "$CC is too old to build this project."
 
 # ===============================
 # = Check if boost is installed =
@@ -61,25 +38,6 @@ done
 
 test -L "${builddir}/include/boost" || error "*** boost not installed."
 
-# ==================================
-# = Locate Xcode directory and SDK =
-# ==================================
-
-xcodedir=/Developer
-sdk="/Developer/SDKs/${sdk:-MacOSX10.8}.sdk"
-
-if which -s xcode-select; then
-	xcodedir=$(xcode-select -print-path)
-	if ! [[ -e "$sdk" ]]; then
-		sdk="$xcodedir/Platforms/MacOSX.platform$sdk"
-	fi
-fi
-
-if ! [[ -e "$sdk" ]]; then
-	sdk=""
-	echo 2>&1 "WARNING: Building without platform-specific SDK."
-fi
-
 # ===============================================
 # = Check if we can use pbzip2 instead of bzip2 =
 # ===============================================
@@ -93,7 +51,9 @@ fi
 # = Check various dependencies =
 # ==============================
 
-for dep in ninja ragel multimarkdown pgrep pkill "$CC" "$CXX"; do
+test -x "${capnp_prefix}/bin/capnp" || error "*** cap’n’proto not installed in ‘${capnp_prefix}’. Set \`capnp_prefix\` if installed elsewhere."
+
+for dep in ninja ragel multimarkdown pgrep pkill; do
 	which -s "$dep" || error "*** dependency missing: ‘${dep}’."
 done
 
@@ -104,7 +64,7 @@ done
 mkdir -p "$builddir/Frameworks/SoftwareUpdate/fixtures"
 DST=$(cd >/dev/null "$builddir/Frameworks/SoftwareUpdate/fixtures"; pwd) make -C Frameworks/SoftwareUpdate/fixtures
 
-bin/gen_build -o build.ninja -C "$builddir" -dAPP_NAME="$name" -dAPP_REVISION="$rev" -dAPP_VERSION="$ver" -dAPP_MIN_OS="$min_os" -dCC="$CC" -dCXX="$CXX" -dxcodedir="$xcodedir" -didentity="$identity" -drest_api="$rest_api" -dsdk="$sdk" -dbzip2_flag="$bzip2_flag" target
+bin/gen_build -o build.ninja -C "$builddir" -dAPP_NAME="$name" -dAPP_REVISION="$rev" -dAPP_VERSION="$ver" -dAPP_MIN_OS="$min_os" -dCC="$CC" -dCXX="$CXX" -didentity="$identity" -drest_api="$rest_api" -dbzip2_flag="$bzip2_flag" -dcapnp_prefix="$capnp_prefix" target
 
 ninja Frameworks/encoding/src/frequencies.capnp.h
 ninja Frameworks/plist/src/cache.capnp.h

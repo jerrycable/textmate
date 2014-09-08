@@ -135,7 +135,7 @@ static NSTextField* OakCreateTextField ()
 
 - (void)validateOwnerAndLicense
 {
-	bool hasContent   = NSNotEmptyString(self.trimmedOwnerString) && NSNotEmptyString(self.licenseString);
+	bool hasContent   = OakNotEmptyString(self.trimmedOwnerString) && OakNotEmptyString(self.licenseString);
 	bool validLicense = hasContent && license::is_valid(license::decode(to_s(self.licenseString)), to_s(self.trimmedOwnerString));
 
 	self.canRegister  = validLicense;
@@ -314,6 +314,13 @@ static NSTextField* OakCreateTextField ()
 		self.webView.policyDelegate = self;
 		[contentView addSubview:self.webView];
 
+		NSString* const kAboutWindowPreferencesIdentifier = @"About Window Preferences Identifier";
+		WebPreferences* webViewPrefs = [[WebPreferences alloc] initWithIdentifier:kAboutWindowPreferencesIdentifier];
+		webViewPrefs.plugInsEnabled = NO;
+		webViewPrefs.usesPageCache  = NO;
+		webViewPrefs.cacheModel     = WebCacheModelDocumentViewer;
+		self.webView.preferencesIdentifier = kAboutWindowPreferencesIdentifier;
+
 		NSDictionary* views = @{ @"webView" : self.webView };
 		[contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[webView(>=200)]|" options:NSLayoutFormatAlignAllTop     metrics:nil views:views]];
 		[contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[webView(>=200)]|" options:NSLayoutFormatAlignAllLeading metrics:nil views:views]];
@@ -430,10 +437,10 @@ static NSTextField* OakCreateTextField ()
 		return;
 	}
 
-	char key = '0';
+	char key = 0;
 	for(NSString* label in [self toolbarSelectableItemIdentifiers:self.toolbar])
 	{
-		NSMenuItem* item = [aMenu addItemWithTitle:label action:@selector(didClickToolbarItem:) keyEquivalent:key++ < '9' ? [NSString stringWithFormat:@"%c", key] : @""];
+		NSMenuItem* item = [aMenu addItemWithTitle:label action:@selector(didClickToolbarItem:) keyEquivalent:key < 9 ? [NSString stringWithFormat:@"%c", '0' + (++key % 10)] : @""];
 		[item setRepresentedObject:label];
 		[item setTarget:self];
 		[item setState:[label isEqualToString:[self.toolbar selectedItemIdentifier]] ? NSOnState : NSOffState];
@@ -482,9 +489,8 @@ static NSDictionary* RemoveOldCommits (NSDictionary* src)
 			{
 				if(NSData* data = [NSJSONSerialization dataWithJSONObject:RemoveOldCommits(obj) options:0 error:&err])
 				{
-					if(!first)
+					if(!std::exchange(first, false))
 						[str appendString:@","];
-					first = false;
 
 					[str appendString:[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]];
 					continue;

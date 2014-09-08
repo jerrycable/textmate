@@ -2,6 +2,13 @@
 #import "NSImage Additions.h"
 
 @implementation OakImageAndTextCell
+{
+	NSImage* _image;
+}
+
+- (NSImage*)image                  { return _image; }
+- (void)setImage:(NSImage*)anImage { _image = anImage; }
+
 - (id)copyWithZone:(NSZone*)zone
 {
 	OakImageAndTextCell* cell = [super copyWithZone:zone];
@@ -41,7 +48,7 @@
 - (NSRect)expansionFrameWithFrame:(NSRect)cellFrame inView:(NSView*)view
 {
 	NSRect frame = [super expansionFrameWithFrame:[self textFrameWithFrame:cellFrame inControlView:view] inView:view];
-	frame.size.width -= self.image ? [self.image size].width + 3.0 : 0.0;
+	frame.size.width -= self.image ? [self.image size].width + 3 : 0;
 	return frame;
 }
 
@@ -55,7 +62,7 @@
 			[[self backgroundColor] set];
 			NSRectFill(imageRect);
 		}
-		[self.image drawAdjustedInRect:imageRect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1.0];
+		[self.image drawAdjustedInRect:imageRect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
 	}
 
 	[super drawWithFrame:[self textFrameWithFrame:cellFrame inControlView:controlView] inView:controlView];
@@ -64,7 +71,7 @@
 - (NSSize)cellSize
 {
 	NSSize cellSize = [super cellSize];
-	cellSize.width += self.image ? [self.image size].width + 3.0 : 0.0;
+	cellSize.width += self.image ? [self.image size].width + 3 : 0;
 	return cellSize;
 }
 
@@ -72,7 +79,7 @@
 {
 	NSRect imageRect = [self imageFrameWithFrame:cellFrame inControlView:controlView];
 	NSRect textRect  = [self textFrameWithFrame:cellFrame inControlView:controlView];
-	NSPoint point    = [controlView convertPoint:([event window] ? [event locationInWindow] : [[controlView window] convertScreenToBase:[event locationInWindow]]) fromView:nil];
+	NSPoint point    = [controlView convertPoint:([event window] ? [event locationInWindow] : [[controlView window] convertRectFromScreen:(NSRect){ [event locationInWindow], NSZeroSize }].origin) fromView:nil];
 
 	NSUInteger res = NSCellHitContentArea;
 	if(NSMouseInRect(point, imageRect, controlView.isFlipped))

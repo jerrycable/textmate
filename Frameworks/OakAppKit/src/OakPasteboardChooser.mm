@@ -8,36 +8,41 @@
 #import <OakFoundation/NSString Additions.h>
 #import <ns/ns.h>
 
-static NSAttributedString* JoinedAttributedString (NSArray* components, NSAttributedString* joiner)
+@implementation OakPasteboardEntry (DisplayString)
+- (NSAttributedString*)displayString
 {
-	NSMutableAttributedString* res = [[NSMutableAttributedString alloc] init];
-	BOOL first = YES;
-	for(id str in components)
-	{
-		if(!first)
-			[res appendAttributedString:joiner];
-		first = NO;
+	static NSAttributedString* const lineJoiner = [[NSAttributedString alloc] initWithString:@"¬" attributes:@{ NSForegroundColorAttributeName : [NSColor lightGrayColor] }];
+	static NSAttributedString* const tabJoiner  = [[NSAttributedString alloc] initWithString:@"‣" attributes:@{ NSForegroundColorAttributeName : [NSColor lightGrayColor] }];
+	static NSAttributedString* const ellipsis   = [[NSAttributedString alloc] initWithString:@"…" attributes:@{ NSForegroundColorAttributeName : [NSColor lightGrayColor] }];
 
-		NSAttributedString* aStr = [str isKindOfClass:[NSString class]] ? [[NSAttributedString alloc] initWithString:str] : str;
-		[res appendAttributedString:aStr];
-	}
+	NSMutableAttributedString* res = [[NSMutableAttributedString alloc] init];
+
+	__block bool firstLine = true;
+	[self.string enumerateLinesUsingBlock:^(NSString* line, BOOL* stop){
+		if(!std::exchange(firstLine, false))
+			[res appendAttributedString:lineJoiner];
+
+		bool firstTab = true;
+		for(NSString* str in [line componentsSeparatedByString:@"\t"])
+		{
+			if([[res string] length] > 1024)
+			{
+				[res appendAttributedString:ellipsis];
+				*stop = YES;
+				break;
+			}
+
+			if(!std::exchange(firstTab, false))
+				[res appendAttributedString:tabJoiner];
+			[res appendAttributedString:[[NSAttributedString alloc] initWithString:str]];
+		}
+	}];
 
 	NSMutableParagraphStyle* paragraphStyle = [[NSMutableParagraphStyle alloc] init];
 	[paragraphStyle setLineBreakMode:NSLineBreakByTruncatingTail];
 	[res addAttributes:@{ NSParagraphStyleAttributeName : paragraphStyle } range:NSMakeRange(0, [[res string] length])];
 
 	return res;
-}
-
-@implementation OakPasteboardEntry (DisplayString)
-- (NSAttributedString*)displayString
-{
-	static NSDictionary* const styles = @{ NSForegroundColorAttributeName : [NSColor lightGrayColor] };
-
-	NSMutableArray* tmp = [NSMutableArray array];
-	for(NSString* line in [self.string componentsSeparatedByString:@"\n"])
-		[tmp addObject:JoinedAttributedString([line componentsSeparatedByString:@"\t"], [[NSAttributedString alloc] initWithString:@"‣" attributes:styles])];
-	return JoinedAttributedString(tmp, [[NSAttributedString alloc] initWithString:@"¬" attributes:styles]);
 }
 @end
 
@@ -132,9 +137,9 @@ static void* kOakPasteboardChooserCurrentEntryBinding = &kOakPasteboardChooserCu
 		NSDictionary* views = @{
 			@"searchField"        : self.searchField,
 			@"aboveScopeBarDark"  : OakCreateHorizontalLine([NSColor grayColor], [NSColor lightGrayColor]),
-			@"aboveScopeBarLight" : OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.797 alpha:1.000], [NSColor colorWithCalibratedWhite:0.912 alpha:1.000]),
+			@"aboveScopeBarLight" : OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.797 alpha:1], [NSColor colorWithCalibratedWhite:0.912 alpha:1]),
 			@"scopeBar"           : scopeBar,
-			@"topDivider"         : OakCreateHorizontalLine([NSColor darkGrayColor], [NSColor colorWithCalibratedWhite:0.551 alpha:1.000]),
+			@"topDivider"         : OakCreateHorizontalLine([NSColor darkGrayColor], [NSColor colorWithCalibratedWhite:0.551 alpha:1]),
 			@"scrollView"         : self.scrollView,
 			@"bottomDivider"      : OakCreateHorizontalLine([NSColor grayColor], [NSColor lightGrayColor]),
 			@"delete"             : deleteButton,
@@ -162,7 +167,6 @@ static void* kOakPasteboardChooserCurrentEntryBinding = &kOakPasteboardChooserCu
 		[_tableView setNextResponder:self];
 		[self setNextResponder:nextResponder];
 
-		[_searchField bind:NSValueBinding toObject:self withKeyPath:@"filterString" options:nil];
 		[deleteButton bind:NSEnabledBinding toObject:_arrayController withKeyPath:@"canRemove" options:nil];
 		[actionButton bind:NSEnabledBinding toObject:_arrayController withKeyPath:@"canRemove" options:nil];
 		[tableColumn bind:NSValueBinding toObject:_arrayController withKeyPath:@"arrangedObjects.displayString" options:nil];
@@ -177,7 +181,6 @@ static void* kOakPasteboardChooserCurrentEntryBinding = &kOakPasteboardChooserCu
 	[_arrayController removeObserver:self forKeyPath:@"selection" context:kOakPasteboardChooserSelectionBinding];
 	[_pasteboard removeObserver:self forKeyPath:@"currentEntry" context:kOakPasteboardChooserCurrentEntryBinding];
 	[[[_tableView tableColumns] lastObject] unbind:NSValueBinding];
-	[_searchField unbind:NSValueBinding];
 
 	_window.delegate    = nil;
 	_tableView.delegate = nil;
@@ -187,6 +190,7 @@ static void* kOakPasteboardChooserCurrentEntryBinding = &kOakPasteboardChooserCu
 - (void)showWindow:(id)sender
 {
 	self.retainedSelf = self;
+	[_searchField bind:NSValueBinding toObject:self withKeyPath:@"filterString" options:nil];
 	[_arrayController fetch:self];
 	[self performSelector:@selector(arrayControllerDidFinishInitialFetch:) withObject:nil afterDelay:0];
 }
@@ -220,6 +224,7 @@ static void* kOakPasteboardChooserCurrentEntryBinding = &kOakPasteboardChooserCu
 
 - (void)windowWillClose:(NSNotification*)aNotification
 {
+	[_searchField unbind:NSValueBinding];
 	[self performSelector:@selector(setRetainedSelf:) withObject:nil afterDelay:0];
 }
 
@@ -255,7 +260,7 @@ static void* kOakPasteboardChooserCurrentEntryBinding = &kOakPasteboardChooserCu
 	_filterString = newString;
 	[self didChangeValueForKey:@"filterString"];
 
-	if(NSIsEmptyString(_filterString))
+	if(OakIsEmptyString(_filterString))
 			_arrayController.fetchPredicate = [NSPredicate predicateWithFormat:@"pasteboard == %@", _pasteboard];
 	else	_arrayController.fetchPredicate = [NSPredicate predicateWithFormat:@"pasteboard == %@ AND string LIKE[nc] %@", _pasteboard, [NSString stringWithFormat:@"*%@*", _filterString]];
 	[_arrayController fetch:self];
@@ -267,13 +272,13 @@ static void* kOakPasteboardChooserCurrentEntryBinding = &kOakPasteboardChooserCu
 
 - (void)tableView:(NSTableView*)aTableView willDisplayCell:(id)aCell forTableColumn:(NSTableColumn*)aTableColumn row:(NSInteger)rowIndex
 {
-	if([aCell isHighlighted] && [[aTableColumn identifier] isEqualToString:@"name"])
+	if([aCell backgroundStyle] == NSBackgroundStyleDark && [[aTableColumn identifier] isEqualToString:@"name"])
 	{
 		id obj = [aCell objectValue];
 		if([obj isKindOfClass:[NSAttributedString class]])
 		{
 			NSMutableAttributedString* str = [obj mutableCopy];
-			[str addAttribute:NSForegroundColorAttributeName value:[NSColor selectedTextColor] range:NSMakeRange(0, [str length])];
+			[str addAttribute:NSForegroundColorAttributeName value:[NSColor alternateSelectedControlTextColor] range:NSMakeRange(0, [str length])];
 			[aCell setAttributedStringValue:str];
 		}
 	}
@@ -323,6 +328,16 @@ static void* kOakPasteboardChooserCurrentEntryBinding = &kOakPasteboardChooserCu
 	[_arrayController removeObjects:entries];
 }
 
+- (void)insertTab:(id)sender
+{
+	[_window selectNextKeyView:self];
+}
+
+- (void)insertBacktab:(id)sender
+{
+	[_window selectPreviousKeyView:self];
+}
+
 - (void)insertText:(id)aString
 {
 	self.filterString = aString;
@@ -361,7 +376,7 @@ static void* kOakPasteboardChooserCurrentEntryBinding = &kOakPasteboardChooserCu
 	}
 }
 
-- (int)visibleRows                                      { return (int)floorf(NSHeight([_tableView visibleRect]) / ([_tableView rowHeight]+[_tableView intercellSpacing].height)) - 1; }
+- (int)visibleRows                                      { return (int)floor(NSHeight([_tableView visibleRect]) / ([_tableView rowHeight]+[_tableView intercellSpacing].height)) - 1; }
 
 - (void)moveUp:(id)sender                               { [self moveSelectedRowByOffset:-1 extendingSelection:NO]; }
 - (void)moveDown:(id)sender                             { [self moveSelectedRowByOffset:+1 extendingSelection:NO]; }

@@ -60,7 +60,7 @@ namespace plist
 	static void convert_dictionary (CFDictionaryRef dict, any_t& res)
 	{
 		std::map<std::string, any_t>& ref = boost::get< std::map<std::string, any_t> >(res = std::map<std::string, any_t>());
-		
+
 		CFIndex len = CFDictionaryGetCount(dict);
 		CFPropertyListRef keys[len];
 		CFPropertyListRef values[len];
@@ -91,7 +91,7 @@ namespace plist
 		else if(CFGetTypeID(plist) == CFDictionaryGetTypeID())
 			return convert_dictionary((CFDictionaryRef)plist, res);
 	}
-	
+
 	dictionary_t convert (CFPropertyListRef plist)
 	{
 		if(plist && CFGetTypeID(plist) == CFDictionaryGetTypeID())
@@ -102,11 +102,11 @@ namespace plist
 		}
 		return dictionary_t();
 	}
-	
+
 	// ===========
 	// = Loading =
 	// ===========
-	
+
 	dictionary_t load (std::string const& path)
 	{
 		dictionary_t res;
@@ -118,13 +118,15 @@ namespace plist
 				v.insert(v.end(), tmp, tmp + len);
 			fclose(fp);
 
-			CFDataRef data = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, &v[0], v.size(), kCFAllocatorNull);
-			if(CFPropertyListRef plist = CFPropertyListCreateFromXMLData(kCFAllocatorDefault, data, kCFPropertyListImmutable, NULL))
+			if(CFDataRef data = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, &v[0], v.size(), kCFAllocatorNull))
 			{
-				res = convert(plist);
-				CFRelease(plist);
+				if(CFPropertyListRef plist = CFPropertyListCreateFromXMLData(kCFAllocatorDefault, data, kCFPropertyListImmutable, NULL))
+				{
+					res = convert(plist);
+					CFRelease(plist);
+				}
+				CFRelease(data);
 			}
-			CFRelease(data);
 		}
 		return res;
 	}
@@ -133,17 +135,19 @@ namespace plist
 	{
 		any_t res;
 
-		CFDataRef data = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, (UInt8 const*)str.data(), str.size(), kCFAllocatorNull);
-		if(CFPropertyListRef plist = CFPropertyListCreateFromXMLData(kCFAllocatorDefault, data, kCFPropertyListImmutable, NULL))
+		if(CFDataRef data = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, (UInt8 const*)str.data(), str.size(), kCFAllocatorNull))
 		{
-			convert_any(plist, res);
-			CFRelease(plist);
+			if(CFPropertyListRef plist = CFPropertyListCreateFromXMLData(kCFAllocatorDefault, data, kCFPropertyListImmutable, NULL))
+			{
+				convert_any(plist, res);
+				CFRelease(plist);
+			}
+			else
+			{
+				fprintf(stderr, "error parsing plist: ‘%s’\n", str.c_str());
+			}
+			CFRelease(data);
 		}
-		else
-		{
-			fprintf(stderr, "error parsing plist: ‘%s’\n", str.c_str());
-		}
-		CFRelease(data);
 
 		return res;
 	}
@@ -374,4 +378,4 @@ namespace plist
 	template PUBLIC plist::array_t get (plist::any_t const& from);
 	template PUBLIC plist::dictionary_t get (plist::any_t const& from);
 
-} /* plist */ 
+} /* plist */

@@ -6,6 +6,7 @@
 #include <text/tokenize.h>
 #include <text/format.h>
 #include <regexp/regexp.h>
+#include <regexp/format_string.h>
 #include <cf/cf.h>
 
 OAK_DEBUG_VAR(IO_Path);
@@ -161,6 +162,45 @@ namespace path
 		return n == std::string::npos ? "" : path.substr(n);
 	}
 
+	std::string escape (std::string const& str)
+	{
+		return format_string::replace(str, "(\n)|[^A-Za-z0-9_\\-.,:/@\x7F-\xFF]", "${1:?'\n':\\\\$0}");
+	}
+
+	std::vector<std::string> unescape (std::string const& str)
+	{
+		std::vector<std::string> res(1, std::string());
+
+		bool escape = false, singleQuoted = false, doubleQuoted = false;
+		for(char const& ch : str)
+		{
+			if(!escape && ch == '\'')
+			{
+				singleQuoted = !singleQuoted;
+			}
+			else if(!escape && !singleQuoted && ch == '"')
+			{
+				doubleQuoted = !doubleQuoted;
+			}
+			else if(!escape && !singleQuoted && ch == '\\')
+			{
+				escape = true;
+			}
+			else if(!escape && !singleQuoted && !doubleQuoted && ch == ' ')
+			{
+				if(!res.back().empty())
+					res.emplace_back();
+			}
+			else
+			{
+				escape = false;
+				res.back().push_back(ch);
+			}
+		}
+
+		return res;
+	}
+
 	size_t rank (std::string const& path, std::string const& ext)
 	{
 		size_t rank = 0;
@@ -204,7 +244,7 @@ namespace path
 	std::string with_tilde (std::string const& p)
 	{
 		std::string const& base = home();
-		std::string const& path = normalize(p) + (p.size() > 1 && p[p.size()-1] == '/' ? "/" : "");
+		std::string const& path = normalize(p) + (p.size() > 1 && p.back() == '/' ? "/" : "");
 		if(oak::has_prefix(path.begin(), path.end(), base.begin(), base.end()) && (path.size() == base.size() || path[base.size()] == '/'))
 			return "~" + path.substr(base.size());
 		return path;
@@ -385,29 +425,29 @@ namespace path
 	namespace flag
 	{
 		uint32_t
-			meta_self        = (1 <<  0), 
-			meta_parent      = (1 <<  1), 
+			meta_self        = (1 <<  0),
+			meta_parent      = (1 <<  1),
 
-			file_bsd         = (1 <<  2), 
-			file_finder      = (1 <<  3), 
-			directory_bsd    = (1 <<  4), 
-			directory_finder = (1 <<  5), 
+			file_bsd         = (1 <<  2),
+			file_finder      = (1 <<  3),
+			directory_bsd    = (1 <<  4),
+			directory_finder = (1 <<  5),
 			symlink_bsd      = (1 <<  6),
 			symlink_finder   = (1 <<  7),
 			socket_bsd       = (1 <<  8),
 
-			hidden_bsd       = (1 <<  9), 
+			hidden_bsd       = (1 <<  9),
 			hidden_finder    = (1 << 10), /* this is (hidden_bsd|hidden_dotfile) */
-			hidden_dotfile   = (1 << 11), 
-			hidden_volume    = (1 << 12), 
+			hidden_dotfile   = (1 << 11),
+			hidden_volume    = (1 << 12),
 
-			volume_bsd       = (1 << 13), 
-			volume_finder    = (1 << 14), 
+			volume_bsd       = (1 << 13),
+			volume_finder    = (1 << 14),
 
-			alias            = (1 << 15), 
-			package          = (1 << 16), 
+			alias            = (1 << 15),
+			package          = (1 << 16),
 			application      = (1 << 17),
-			stationery_pad   = (1 << 18), 
+			stationery_pad   = (1 << 18),
 			hidden_extension = (1 << 19),
 
 			meta             = (meta_self|meta_parent),
@@ -908,12 +948,16 @@ namespace path
 			}
 			else if((responseFlags & 0x3) == kCFUserNotificationAlternateResponse)
 			{
-				CFURLRef url = CFURLCreateWithString(kCFAllocatorDefault, cf::wrap("http://openradar.appspot.com/10261043"), NULL);
-				CFMutableArrayRef urls = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
-				CFArrayAppendValue(urls, url);
-				LSOpenURLsWithRole(urls, kLSRolesViewer, NULL, NULL, NULL, 0);
-				CFRelease(urls);
-				CFRelease(url);
+				if(CFURLRef url = CFURLCreateWithString(kCFAllocatorDefault, cf::wrap("http://openradar.appspot.com/10261043"), NULL))
+				{
+					if(CFMutableArrayRef urls = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks))
+					{
+						CFArrayAppendValue(urls, url);
+						LSOpenURLsWithRole(urls, kLSRolesViewer, NULL, NULL, NULL, 0);
+						CFRelease(urls);
+					}
+					CFRelease(url);
+				}
 			}
 		}
 		return entry;
@@ -928,43 +972,52 @@ namespace path
 	{
 		FSRef res;
 		FSCatalogInfo info;
-		FSGetCatalogInfo(fsref_t(forPath), kFSCatInfoVolume, &info, 0, 0, 0); 
+		FSGetCatalogInfo(fsref_t(forPath), kFSCatInfoVolume, &info, 0, 0, 0);
 		return FSFindFolder(info.volume, kTrashFolderType, false, &res) == noErr ? to_s(res) : NULL_STR;;
 	}
 
-	static std::string temp_file_in_directory (std::string const& path, std::string const& file)
-	{
-		if(file == NULL_STR)
-			return path;
-
-		std::string res = path::join(path, std::string(getprogname() ?: "untitled") + "_" + file + ".XXXXXX");
-		res.c_str(); // ensure the buffer is zero terminated, should probably move to a better approach
-		mktemp(&res[0]);
-
-		D(DBF_IO_Path, bug("%s\n", res.c_str()););
-		return res;
-	}
-
-	std::string temp (std::string const& file)
+	static std::string system_directory (int name, std::string const& file, std::string const& content)
 	{
 		std::string str(128, ' ');
-		size_t len = confstr(_CS_DARWIN_USER_TEMP_DIR, &str[0], str.size());
+		size_t len = confstr(name, &str[0], str.size());
 		if(0 < len && len < 128) // if length is 128 the path was truncated and unusable
 				str.resize(len - 1);
 		else	str = getenv("TMPDIR") ?: "/tmp";
 
-		return temp_file_in_directory(str, file);
+		if(file != NULL_STR)
+		{
+			str = join(str, std::string(getprogname() ?: "untitled") + "_" + file + ".XXXXXX");
+			str.c_str(); // ensure the buffer is zero terminated, should probably move to a better approach
+
+			if(content != NULL_STR)
+			{
+				int fd = mkstemp(&str[0]);
+				fcntl(fd, F_SETFD, FD_CLOEXEC);
+				fchmod(fd, S_IRWXU);
+				if(write(fd, content.data(), content.size()) != content.size())
+				{
+					perror("write");
+					unlink(str.c_str());
+					str = NULL_STR;
+				}
+				close(fd);
+			}
+			else
+			{
+				mktemp(&str[0]);
+			}
+		}
+		return str;
+	}
+
+	std::string temp (std::string const& file, std::string const& content)
+	{
+		return system_directory(_CS_DARWIN_USER_TEMP_DIR, file, content);
 	}
 
 	std::string cache (std::string const& file)
 	{
-		std::string str(128, ' ');
-		size_t len = confstr(_CS_DARWIN_USER_CACHE_DIR, &str[0], str.size());
-		if(0 < len && len < 128) // if length is 128 the path was truncated and unusable
-				str.resize(len - 1);
-		else	str = path::temp();
-
-		return temp_file_in_directory(str, file);
+		return system_directory(_CS_DARWIN_USER_CACHE_DIR, file, NULL_STR);
 	}
 
 	std::string desktop ()
@@ -972,4 +1025,4 @@ namespace path
 		return home() + "/Desktop";
 	}
 
-} /* path */ 
+} /* path */

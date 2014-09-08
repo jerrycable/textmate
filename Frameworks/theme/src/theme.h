@@ -37,6 +37,7 @@ struct PUBLIC gutter_styles_t
 	~gutter_styles_t ();
 
 	bool is_transparent () const;
+	void clear ();
 
 	CGColorRef divider               = NULL;
 	CGColorRef selectionBorder       = NULL;
@@ -76,7 +77,7 @@ struct PUBLIC theme_t
 	struct color_info_t
 	{
 		color_info_t () : red(-1), green(0), blue(0), alpha(1) { }
-		color_info_t (double red, double green, double blue, double alpha = 1.0) : red(red), green(green), blue(blue), alpha(alpha) { } 
+		color_info_t (double red, double green, double blue, double alpha = 1) : red(red), green(green), blue(blue), alpha(alpha) { }
 
 		bool is_blank () const  { return red < 0; }
 		bool is_opaque () const { return alpha == 1; };

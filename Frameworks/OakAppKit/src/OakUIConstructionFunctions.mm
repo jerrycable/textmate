@@ -11,9 +11,9 @@ NSFont* OakControlFont ()
 	return [NSFont controlContentFontOfSize:[NSFont systemFontSizeForControlSize:NSRegularControlSize]];
 }
 
-NSTextField* OakCreateLabel (NSString* label)
+NSTextField* OakCreateLabel (NSString* label, Class cl)
 {
-	NSTextField* res = [[NSTextField alloc] initWithFrame:NSZeroRect];
+	NSTextField* res = [[cl alloc] initWithFrame:NSZeroRect];
 	[[res cell] setWraps:NO];
 	res.alignment       = NSRightTextAlignment;
 	res.bezeled         = NO;
@@ -26,9 +26,9 @@ NSTextField* OakCreateLabel (NSString* label)
 	return res;
 }
 
-NSTextField* OakCreateSmallLabel (NSString* label)
+NSTextField* OakCreateSmallLabel (NSString* label, Class cl)
 {
-	NSTextField* res = OakCreateLabel(label);
+	NSTextField* res = OakCreateLabel(label, cl);
 	res.alignment = NSLeftTextAlignment;
 	res.font      = [NSFont controlContentFontOfSize:[NSFont smallSystemFontSize]];
 	return res;
@@ -47,6 +47,8 @@ NSButton* OakCreateCheckBox (NSString* label)
 NSButton* OakCreateButton (NSString* label, NSBezelStyle bezel)
 {
 	NSButton* res = [[NSButton alloc] initWithFrame:NSZeroRect];
+	[res setContentHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
+	[res setContentHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationVertical];
 	res.bezelStyle = bezel;
 	res.buttonType = NSMomentaryPushInButton;
 	res.font       = OakControlFont();
@@ -54,28 +56,50 @@ NSButton* OakCreateButton (NSString* label, NSBezelStyle bezel)
 	return res;
 }
 
-NSPopUpButton* OakCreatePopUpButton (BOOL pullsDown, NSString* initialItemTitle)
+NSPopUpButton* OakCreatePopUpButton (BOOL pullsDown, NSString* initialItemTitle, NSObject* accessibilityLabel)
 {
 	NSPopUpButton* res = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:pullsDown];
 	res.font = OakControlFont();
 	if(initialItemTitle)
-		[[res cell] setMenuItem:[[NSMenuItem alloc] initWithTitle:initialItemTitle action:@selector(nop:) keyEquivalent:@""]];
+		[[res cell] setMenuItem:[[NSMenuItem alloc] initWithTitle:initialItemTitle action:NULL keyEquivalent:@""]];
+	OakSetAccessibilityLabel(res, accessibilityLabel);
 	return res;
 }
 
-NSPopUpButton* OakCreateStatusBarPopUpButton (NSString* initialItemTitle)
+NSPopUpButton* OakCreateActionPopUpButton (BOOL bordered)
+{
+	NSPopUpButton* res = [NSPopUpButton new];
+	res.pullsDown = YES;
+	if(!(res.bordered = bordered))
+		[[res cell] setBackgroundStyle:NSBackgroundStyleRaised];
+
+	NSMenuItem* item = [NSMenuItem new];
+	item.title = @"";
+	item.image = [NSImage imageNamed:NSImageNameActionTemplate];
+	[item.image setSize:NSMakeSize(14, 14)];
+
+	[[res cell] setUsesItemFromMenu:NO];
+	[[res cell] setMenuItem:item];
+	OakSetAccessibilityLabel(res, @"Actions");
+
+	return res;
+}
+
+NSPopUpButton* OakCreateStatusBarPopUpButton (NSString* initialItemTitle, NSObject* accessibilityLabel)
 {
 	NSPopUpButton* res = OakCreatePopUpButton(NO, initialItemTitle);
 	[[res cell] setBackgroundStyle:NSBackgroundStyleRaised];
 	res.font     = OakStatusBarFont();
 	res.bordered = NO;
+	OakSetAccessibilityLabel(res, accessibilityLabel);
 	return res;
 }
 
-NSComboBox* OakCreateComboBox ()
+NSComboBox* OakCreateComboBox (NSObject* accessibilityLabel)
 {
 	NSComboBox* res = [[NSComboBox alloc] initWithFrame:NSZeroRect];
 	res.font = OakControlFont();
+	OakSetAccessibilityLabel(res, accessibilityLabel);
 	return res;
 }
 
@@ -112,12 +136,12 @@ NSComboBox* OakCreateComboBox ()
 		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowDidChangeMainOrKey:) name:NSWindowDidResignKeyNotification object:newWindow];
 	}
 
-	self.usePrimaryColor = [newWindow isMainWindow] || [newWindow isKeyWindow];
+	self.usePrimaryColor = ([newWindow styleMask] & NSFullScreenWindowMask) || [newWindow isMainWindow] || [newWindow isKeyWindow];
 }
 
 - (void)windowDidChangeMainOrKey:(NSNotification*)aNotification
 {
-	self.usePrimaryColor = [self.window isMainWindow] || [self.window isKeyWindow];
+	self.usePrimaryColor = ([self.window styleMask] & NSFullScreenWindowMask) || [self.window isMainWindow] || [self.window isKeyWindow];
 }
 
 - (void)setUsePrimaryColor:(BOOL)flag
@@ -138,6 +162,7 @@ NSComboBox* OakCreateComboBox ()
 static OakDividerLineView* OakCreateDividerLineWithColor (NSColor* color, NSColor* secondaryColor)
 {
 	OakDividerLineView* box = [[OakDividerLineView alloc] initWithFrame:NSZeroRect];
+	box.translatesAutoresizingMaskIntoConstraints = NO;
 	box.boxType         = NSBoxCustom;
 	box.borderType      = NSLineBorder;
 	box.borderColor     = color;
@@ -145,13 +170,6 @@ static OakDividerLineView* OakCreateDividerLineWithColor (NSColor* color, NSColo
 	box.secondaryColor  = secondaryColor;
 	box.usePrimaryColor = YES;
 	return box;
-}
-
-NSBox* OakCreateViewWithColor (NSColor* color, NSColor* secondaryColor)
-{
-	OakDividerLineView* res = OakCreateDividerLineWithColor(color, secondaryColor);
-	res.intrinsicContentSize = NSMakeSize(NSViewNoInstrinsicMetric, NSViewNoInstrinsicMetric);
-	return res;
 }
 
 NSBox* OakCreateVerticalLine (NSColor* primaryColor, NSColor* secondaryColor)
@@ -172,11 +190,50 @@ NSBox* OakCreateHorizontalLine (NSColor* primaryColor, NSColor* secondaryColor)
 
 // =============================
 
+@interface OakDisableAccessibilityImageCell : NSImageCell
+@end
+
+@implementation OakDisableAccessibilityImageCell
+- (BOOL)accessibilityIsIgnored
+{
+	return YES;
+}
+@end
+
+@interface OakDisableAccessibilityImageView : NSImageView
+@end
+
+@implementation OakDisableAccessibilityImageView
++ (void)initialize
+{
+	if(self == OakDisableAccessibilityImageView.class)
+	{
+		[OakDisableAccessibilityImageView setCellClass:[OakDisableAccessibilityImageCell class]];
+	}
+}
+@end
+
 NSImageView* OakCreateDividerImageView ()
 {
-	NSImageView* res = [[NSImageView alloc] initWithFrame:NSZeroRect];
+	NSImageView* res = [[OakDisableAccessibilityImageView alloc] initWithFrame:NSZeroRect];
 	[res setImage:[NSImage imageNamed:@"Divider" inSameBundleAsClass:[OakDividerLineView class]]];
 	[res setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
 	[res setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationVertical];
 	return res;
+}
+
+BOOL OakSetAccessibilityLabel (NSObject* element, NSObject* label)
+{
+	if(!(element = NSAccessibilityUnignoredDescendant(element)))
+		return NO;
+
+	NSString* attribute = NSAccessibilityDescriptionAttribute;
+	if(![label isKindOfClass:NSString.class])
+	{
+		attribute = NSAccessibilityTitleUIElementAttribute;
+		if(!(label = NSAccessibilityUnignoredDescendant(label)))
+			return NO;
+	}
+
+	return [element accessibilitySetOverrideValue:label forAttribute:attribute];
 }

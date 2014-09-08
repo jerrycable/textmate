@@ -28,9 +28,9 @@ namespace ng
 		{
 			auto from = it;
 			if(++it != _misspellings.end() && !it->second)
-				return std::make_pair(from->first, it->first);
+				return { from->first, it->first };
 		}
-		return std::make_pair(0, 0);
+		return { 0, 0 };
 	}
 
 	void spelling_t::did_parse (buffer_t const* buffer, size_t from, size_t to)
@@ -73,12 +73,20 @@ namespace ng
 		if(fromIter != toIter && fromIter->first >= to && fromIter->second)
 			fromIter = toIter;
 		_misspellings.remove(fromIter, toIter);
+
+		size_t revision = buffer->revision();
 		for(auto const& r : ranges)
 		{
 			std::string const& text = buffer->substr(r.first, r.second);
 			D(DBF_Buffer_Spelling, bug("check: ‘%s’ (%s)\n", text.c_str(), buffer->spelling_language().c_str()););
 			for(auto const& range : ns::spellcheck(text.data(), text.data() + text.size(), buffer->spelling_language(), buffer->spelling_tag()))
 			{
+				if(revision != buffer->revision())
+				{
+					fprintf(stderr, "*** buffer has changed after ns::spellcheck()\n");
+					break;
+				}
+
 				_misspellings.set(r.first + range.first, true);
 				_misspellings.set(r.first + range.last,  false);
 				D(DBF_Buffer_Spelling, bug("bad: ‘%s’\n", text.substr(range.first, range.last - range.first).c_str()););

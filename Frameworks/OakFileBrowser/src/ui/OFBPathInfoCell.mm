@@ -11,7 +11,7 @@ static CGFloat kCloseButtonRightMargin = 5;
 
 static void DrawSpinner (NSRect cellFrame, BOOL isFlipped, NSColor* color, double value)
 {
-	static const CGFloat deg2rad = 0.017453292519943295;
+	static CGFloat const deg2rad = 0.017453292519943295;
 
 	CGFloat const cellSize = 16;
 	CGFloat const strokeWidth = cellSize*0.08;
@@ -68,7 +68,7 @@ static void DrawSpinner (NSRect cellFrame, BOOL isFlipped, NSColor* color, doubl
 		r.size.height = r.size.width = 16;
 
 	NSGradient* gradient = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithString:startCol[labelColorIndex-1]] endingColor:[NSColor colorWithString:stopCol[labelColorIndex-1]]];
-	NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:r xRadius:8.0 yRadius:8.0];
+	NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:r xRadius:8 yRadius:8];
 	[gradient drawInBezierPath:path angle:90];
 }
 
@@ -161,7 +161,7 @@ static void DrawSpinner (NSRect cellFrame, BOOL isFlipped, NSColor* color, doubl
 
 - (NSUInteger)hitTestForEvent:(NSEvent*)event inRect:(NSRect)cellFrame ofView:(NSView*)controlView
 {
-	NSPoint point = [controlView convertPoint:([event window] ? [event locationInWindow] : [[controlView window] convertScreenToBase:[event locationInWindow]]) fromView:nil];
+	NSPoint point = [controlView convertPoint:([event window] ? [event locationInWindow] : [[controlView window] convertRectFromScreen:(NSRect){ [event locationInWindow], NSZeroSize }].origin) fromView:nil];
 
 	if(NSMouseInRect(point, [self closeButtonRectInFrame:cellFrame], [controlView isFlipped]))
 		return NSCellHitContentArea | NSCellHitTrackableArea | OFBPathInfoCellHitCloseButton;
@@ -275,7 +275,7 @@ static void DrawSpinner (NSRect cellFrame, BOOL isFlipped, NSColor* color, doubl
 		else if([attribute isEqualToString:NSAccessibilityURLAttribute])
 			return item.url;
 		else if([attribute isEqualToString:NSAccessibilityFilenameAttribute])
-			return item.name;
+			return item.displayName;
 	}
 	return [super accessibilityAttributeValue:attribute];
 }

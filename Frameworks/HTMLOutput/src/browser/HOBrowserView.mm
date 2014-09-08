@@ -4,6 +4,18 @@
 #import <OakAppKit/OakUIConstructionFunctions.h>
 #import <OakAppKit/NSColor Additions.h>
 
+static NSString* EscapeHTML (NSString* str)
+{
+	return [[[str stringByReplacingOccurrencesOfString:@"&" withString:@"&amp;"] stringByReplacingOccurrencesOfString:@"<" withString:@"&lt;"] stringByReplacingOccurrencesOfString:@"\"" withString:@"&quot;"];
+}
+
+static void ShowLoadErrorForURL (WebFrame* frame, NSURL* url, NSError* error)
+{
+	NSString* options  = [[url scheme] isEqualToString:@"file"] ? @" -R" : @"";
+	NSString* errorMsg = [NSString stringWithFormat:@"<title>Load Error</title><h1>Load Error</h1><p>WebKit reported <em>%@</em> while loading <tt><a href=\"#\" onClick=\"javascript:TextMate.system('/usr/bin/open%@ &quot;%@&quot;', null)\">%@</a></tt>.</p>", EscapeHTML([error localizedDescription]), options, EscapeHTML([url absoluteString]), EscapeHTML([url absoluteString])];
+	[frame loadHTMLString:errorMsg baseURL:[NSURL fileURLWithPath:NSTemporaryDirectory()]];
+}
+
 @interface HOBrowserView ()
 @property (nonatomic, readwrite) WebView* webView;
 @property (nonatomic, readwrite) HOStatusBar* statusBar;
@@ -27,6 +39,11 @@
 	{
 		_webView = [[WebView alloc] initWithFrame:NSZeroRect];
 
+		NSString* const kHTMLOutputPreferencesIdentifier = @"HTML Output Preferences Identifier";
+		WebPreferences* webViewPrefs = [[WebPreferences alloc] initWithIdentifier:kHTMLOutputPreferencesIdentifier];
+		webViewPrefs.plugInsEnabled = NO;
+		self.webView.preferencesIdentifier = kHTMLOutputPreferencesIdentifier;
+
 		_statusBar = [[HOStatusBar alloc] initWithFrame:NSZeroRect];
 		_statusBar.delegate = _webView;
 
@@ -38,9 +55,9 @@
 		_webView.frameLoadDelegate      = self;
 
 		NSDictionary* views = @{
-			@"webView"   : _webView, 
+			@"webView"   : _webView,
 			@"divider"   : OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.500 alpha:1], [NSColor colorWithCalibratedWhite:0.750 alpha:1]),
-			@"statusBar" : _statusBar	
+			@"statusBar" : _statusBar
 		};
 
 		for(NSView* view in [views allValues])
@@ -102,7 +119,7 @@
 
 - (void)scrollWheel:(NSEvent*)anEvent
 {
-	if(![NSEvent isSwipeTrackingFromScrollEventsEnabled] || [anEvent phase] == NSEventPhaseNone || fabsf([anEvent scrollingDeltaX]) <= fabsf([anEvent scrollingDeltaY]))
+	if(![NSEvent isSwipeTrackingFromScrollEventsEnabled] || [anEvent phase] == NSEventPhaseNone || fabs([anEvent scrollingDeltaX]) <= fabs([anEvent scrollingDeltaY]))
 		return;
 
 	[anEvent trackSwipeEventWithOptions:0 dampenAmountThresholdMin:(_webView.canGoForward ? -1 : 0) max:(_webView.canGoBack ? +1 : 0) usingHandler:^(CGFloat gestureAmount, NSEventPhase phase, BOOL isComplete, BOOL* stop) {
@@ -136,6 +153,18 @@
 {
 	_statusBar.isBusy = YES;
 	[self setUpdatesProgress:YES];
+}
+
+- (void)webView:(WebView*)sender didFailProvisionalLoadWithError:(NSError*)error forFrame:(WebFrame*)frame
+{
+	ShowLoadErrorForURL(frame, [[[frame provisionalDataSource] request] URL], error);
+	[self webView:sender didFinishLoadForFrame:frame];
+}
+
+- (void)webView:(WebView*)sender didFailLoadWithError:(NSError*)error forFrame:(WebFrame*)frame
+{
+	ShowLoadErrorForURL(frame, [[[frame provisionalDataSource] request] URL], error);
+	[self webView:sender didFinishLoadForFrame:frame];
 }
 
 - (void)webView:(WebView*)sender didFinishLoadForFrame:(WebFrame*)frame

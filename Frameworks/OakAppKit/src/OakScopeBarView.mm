@@ -27,6 +27,10 @@ static NSButton* OakCreateScopeButton (NSString* label, NSUInteger tag, SEL acti
 @implementation OakScopeBarView
 - (void)setLabels:(NSArray*)anArray
 {
+	if(_labels == anArray || [_labels isEqualTo:anArray])
+		return;
+	_labels = anArray;
+
 	_selectedIndex = NSNotFound;
 	for(NSView* button in _buttons)
 		[button removeFromSuperview];
@@ -45,7 +49,7 @@ static NSButton* OakCreateScopeButton (NSString* label, NSUInteger tag, SEL acti
 	if(_buttons.count)
 		self.selectedIndex = 0;
 
-	[self setNeedsLayout:YES];
+	[self setNeedsUpdateConstraints:YES];
 }
 
 - (void)updateConstraints
@@ -78,12 +82,12 @@ static NSButton* OakCreateScopeButton (NSString* label, NSUInteger tag, SEL acti
 
 - (void)setSelectedIndex:(NSInteger)newSelectedIndex
 {
+	for(NSButton* button in _buttons)
+		[button setState:[button tag] == newSelectedIndex ? NSOnState : NSOffState];
 	if(_selectedIndex == newSelectedIndex)
 		return;
 
 	_selectedIndex = newSelectedIndex;
-	for(NSButton* button in _buttons)
-		[button setState:[button tag] == _selectedIndex ? NSOnState : NSOffState];
 
 	if(NSDictionary* info = [self infoForBinding:NSValueBinding])
 	{

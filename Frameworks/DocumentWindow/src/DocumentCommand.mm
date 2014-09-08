@@ -63,7 +63,7 @@ ng::range_t delegate_t::write_unit_to_fd (int fd, input::type unit, input::type 
 
 	bool isOpen = _document->is_open();
 	if(!isOpen)
-		_document->open();
+		_document->sync_open();
 	ng::range_t res = ng::write_unit_to_fd(_document->buffer(), ng::editor_for_document(_document)->ranges().last(), _document->buffer().indent().tab_size(), fd, unit, fallbackUnit, format, scopeSelector, variables, inputWasSelection);
 	if(!isOpen)
 		_document->close();
@@ -102,7 +102,7 @@ bool delegate_t::accept_result (std::string const& out, output::type placement, 
 	else
 	{
 		document::document_ptr doc = document::create();
-		doc->open();
+		doc->sync_open();
 		res = ng::editor_for_document(doc)->handle_result(out, placement, format, outputCaret, ng::range_t(0) /* inputRange */, environment);
 		document::show(doc);
 		doc->close();
@@ -127,7 +127,7 @@ void delegate_t::show_document (std::string const& str)
 
 void delegate_t::show_error (bundle_command_t const& command, int rc, std::string const& out, std::string const& err)
 {
-	show_command_error(text::trim(err + out).empty() ? text::format("Command returned status code %d.", rc) : err + out, command.uuid, _controller.window);
+	show_command_error(text::trim(err + out).empty() ? text::format("Command returned status code %d.", rc) : err + out, command.uuid, _controller.window, command.name);
 }
 
 // ==============
@@ -178,12 +178,15 @@ void run_impl (bundle_command_t const& command, ng::buffer_t const& buffer, ng::
 			std::string const tmp = baseEnv["PATH"];
 			for(auto path : text::tokenize(tmp.begin(), tmp.end(), ':'))
 			{
-				if(path != "")
+				if(path != "" && path::is_directory(path))
 					paths.push_back(path::with_tilde(path));
 			}
 
 			std::string const title = text::format("Unable to run “%.*s”.", (int)command.name.size(), command.name.data());
-			std::string const message = text::format("This command requires ‘%1$s’ which wasn’t found on your system.\n\nThe following locations were searched:%2$s\n\nIf ‘%1$s’ is installed elsewhere then you need to set %3$s in Preferences → Variables to the full path of where you installed it.", failedRequirement.command.c_str(), ("\n\u2003• " + text::join(paths, "\n\u2003• ")).c_str(), failedRequirement.variable.c_str());
+			std::string message;
+			if(failedRequirement.variable != NULL_STR)
+					message = text::format("This command requires ‘%1$s’ which wasn’t found on your system.\n\nThe following locations were searched:%2$s\n\nIf ‘%1$s’ is installed elsewhere then you need to set %3$s in Preferences → Variables to the full path of where you installed it.", failedRequirement.command.c_str(), ("\n\u2003• " + text::join(paths, "\n\u2003• ")).c_str(), failedRequirement.variable.c_str());
+			else	message = text::format("This command requires ‘%1$s’ which wasn’t found on your system.\n\nThe following locations were searched:%2$s\n\nIf ‘%1$s’ is installed elsewhere then you need to set PATH in Preferences → Variables to include the folder in which it can be found.", failedRequirement.command.c_str(), ("\n\u2003• " + text::join(paths, "\n\u2003• ")).c_str());
 
 			NSAlert* alert = [[NSAlert alloc] init];
 			[alert setAlertStyle:NSCriticalAlertStyle];
@@ -207,10 +210,11 @@ void run_impl (bundle_command_t const& command, ng::buffer_t const& buffer, ng::
 	runner->wait();
 }
 
-void show_command_error (std::string const& message, oak::uuid_t const& uuid, NSWindow* window)
+void show_command_error (std::string const& message, oak::uuid_t const& uuid, NSWindow* window, std::string commandName)
 {
 	bundles::item_ptr bundleItem = bundles::lookup(uuid);
-	std::string commandName = bundleItem ? bundleItem->name() : "(unknown)";
+	if(commandName == NULL_STR)
+		commandName = bundleItem ? bundleItem->name() : "(unknown)";
 
 	NSAlert* alert = [[NSAlert alloc] init];
 	[alert setAlertStyle:NSCriticalAlertStyle];

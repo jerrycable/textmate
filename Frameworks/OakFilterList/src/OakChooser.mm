@@ -1,7 +1,9 @@
 #import "OakChooser.h"
 #import "ui/TableView.h"
+#import "ui/SearchField.h"
 #import <OakAppKit/OakAppKit.h>
 #import <OakAppKit/OakUIConstructionFunctions.h>
+#import <OakFoundation/OakFoundation.h>
 #import <OakFoundation/NSString Additions.h>
 #import <ns/ns.h>
 #import <text/ranker.h>
@@ -29,8 +31,10 @@ NSMutableAttributedString* CreateAttributedStringWithMarkedUpRanges (std::string
 	return res;
 }
 
-@interface OakChooser () <NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate>
+@interface OakChooser () <NSWindowDelegate, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate>
 @end
+
+static void* kFirstResponderBinding = &kFirstResponderBinding;
 
 @implementation OakChooser
 - (id)init
@@ -39,11 +43,12 @@ NSMutableAttributedString* CreateAttributedStringWithMarkedUpRanges (std::string
 	{
 		_items = @[ ];
 
-		_searchField = [[NSSearchField alloc] initWithFrame:NSZeroRect];
+		_searchField = [[OakLinkedSearchField alloc] initWithFrame:NSZeroRect];
 		[_searchField.cell setScrollable:YES];
-		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(controlTextDidChange:) name:NSControlTextDidChangeNotification object:_searchField];
+		[_searchField.cell setSendsSearchStringImmediately:YES];
 		if(![NSApp isFullKeyboardAccessEnabled])
 			_searchField.focusRingType = NSFocusRingTypeNone;
+		_searchField.delegate = self;
 
 		NSTableColumn* tableColumn = [[NSTableColumn alloc] initWithIdentifier:@"name"];
 		tableColumn.dataCell = [[NSTextFieldCell alloc] initTextCell:@""];
@@ -60,7 +65,8 @@ NSMutableAttributedString* CreateAttributedStringWithMarkedUpRanges (std::string
 		tableView.target                  = self;
 		tableView.dataSource              = self;
 		tableView.delegate                = self;
-		tableView.linkedTextField         = _searchField;
+		if(nil != &NSAccessibilitySharedFocusElementsAttribute)
+			[_searchField.cell accessibilitySetOverrideValue:@[tableView] forAttribute:NSAccessibilitySharedFocusElementsAttribute];
 		_tableView = tableView;
 
 		_scrollView = [[NSScrollView alloc] initWithFrame:NSZeroRect];
@@ -99,17 +105,22 @@ NSMutableAttributedString* CreateAttributedStringWithMarkedUpRanges (std::string
 		[_window setContentBorderThickness:23 forEdge:NSMinYEdge];
 		[[_window standardWindowButton:NSWindowMiniaturizeButton] setHidden:YES];
 		[[_window standardWindowButton:NSWindowZoomButton] setHidden:YES];
-		_window.autorecalculatesKeyViewLoop = YES;
-		_window.delegate                    = self;
-		_window.level                       = NSFloatingWindowLevel;
-		_window.releasedWhenClosed          = NO;
+		_window.delegate           = self;
+		_window.nextResponder      = self;
+		_window.level              = NSFloatingWindowLevel;
+		_window.releasedWhenClosed = NO;
+
+		[_searchField bind:NSValueBinding toObject:self withKeyPath:@"filterString" options:nil];
+		[_window addObserver:self forKeyPath:@"firstResponder" options:NSKeyValueObservingOptionOld|NSKeyValueObservingOptionNew context:kFirstResponderBinding];
 	}
 	return self;
 }
 
 - (void)dealloc
 {
-	[[NSNotificationCenter defaultCenter] removeObserver:self name:NSControlTextDidChangeNotification object:_searchField];
+	_searchField.delegate = nil;
+	[_searchField unbind:NSValueBinding];
+	[_window removeObserver:self forKeyPath:@"firstResponder" context:kFirstResponderBinding];
 
 	_window.delegate      = nil;
 	_tableView.target     = nil;
@@ -117,15 +128,12 @@ NSMutableAttributedString* CreateAttributedStringWithMarkedUpRanges (std::string
 	_tableView.delegate   = nil;
 }
 
-- (void)controlTextDidChange:(NSNotification*)aNotification
-{
-	self.filterString = _searchField.stringValue;
-}
-
 - (void)showWindow:(id)sender
 {
+	[_window recalculateKeyViewLoop];
 	[_window makeKeyAndOrderFront:self];
-	[_window makeFirstResponder:_searchField];
+	if(_searchField.window)
+		[_window makeFirstResponder:_searchField];
 }
 
 - (void)showWindowRelativeToFrame:(NSRect)parentFrame
@@ -148,6 +156,38 @@ NSMutableAttributedString* CreateAttributedStringWithMarkedUpRanges (std::string
 	[_window performClose:self];
 }
 
+// ===============================================================================
+// = Set wether to render table view as active when search field gain/lose focus =
+// ===============================================================================
+
+- (void)observeValueForKeyPath:(NSString*)keyPath ofObject:(id)object change:(NSDictionary*)change context:(void*)context
+{
+	if(context == kFirstResponderBinding)
+	{
+		BOOL oldIsSearchField = change[NSKeyValueChangeOldKey] == _searchField || change[NSKeyValueChangeOldKey] == _searchField.currentEditor;
+		BOOL newIsSearchField = change[NSKeyValueChangeNewKey] == _searchField || change[NSKeyValueChangeNewKey] == _searchField.currentEditor;
+		if(oldIsSearchField != newIsSearchField)
+			[(OakInactiveTableView*)_tableView setDrawAsHighlighted:newIsSearchField];
+	}
+}
+
+// ======================================================
+// = Forward Search Field Movement Actions to TableView =
+// ======================================================
+
+- (BOOL)control:(NSControl*)aControl textView:(NSTextView*)aTextView doCommandBySelector:(SEL)aCommand
+{
+	if(aCommand == @selector(deleteToBeginningOfLine:) && [aTextView.window tryToPerform:@selector(delete:) with:aTextView])
+		return YES;
+
+	NSUInteger res = OakPerformTableViewActionFromSelector(self.tableView, aCommand, aTextView);
+	if(res == OakMoveAcceptReturn)
+		[self performDefaultButtonClick:self];
+	else if(res == OakMoveCancelReturn)
+		[self cancel:self];
+	return res != OakMoveNoActionReturn;
+}
+
 // ==============
 // = Properties =
 // ==============
@@ -158,7 +198,13 @@ NSMutableAttributedString* CreateAttributedStringWithMarkedUpRanges (std::string
 		return;
 
 	_filterString = [aString copy];
-	_searchField.stringValue = aString;
+	_searchField.stringValue = aString ?: @"";
+
+	if([_tableView numberOfRows] != 0)
+	{
+		[_tableView selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+		[_tableView scrollRowToVisible:0];
+	}
 
 	[self updateItems:self];
 }
@@ -186,6 +232,13 @@ NSMutableAttributedString* CreateAttributedStringWithMarkedUpRanges (std::string
 // =================
 // = Action Method =
 // =================
+
+- (void)performDefaultButtonClick:(id)sender
+{
+	if(self.window.defaultButtonCell)
+			[self.window.defaultButtonCell performClick:sender];
+	else	[self accept:sender];
+}
 
 - (void)accept:(id)sender
 {

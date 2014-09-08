@@ -9,8 +9,6 @@
 
 namespace ng
 {
-	struct line_t;
-
 	struct PUBLIC line_record_t
 	{
 		line_record_t (size_t line, size_t softline, CGFloat top, CGFloat bottom, CGFloat baseline) : line(line), softline(softline), top(top), bottom(bottom), baseline(baseline) { }
@@ -22,7 +20,9 @@ namespace ng
 		CGFloat baseline;
 	};
 
-	struct PUBLIC paragraph_t
+	struct line_t;
+
+	struct paragraph_t
 	{
 		size_t length () const;
 
@@ -32,8 +32,8 @@ namespace ng
 		void did_update_scopes (size_t from, size_t to, ng::buffer_t const& buffer, size_t bufferOffset);
 		bool layout (theme_ptr const& theme, bool softWrap, size_t wrapColumn, ct::metrics_t const& metrics, CGRect visibleRect, ng::buffer_t const& buffer, size_t bufferOffset);
 
-		void draw_background (theme_ptr const& theme, ct::metrics_t const& metrics, ng::context_t const& context, bool isFlipped, CGRect visibleRect, ng::invisibles_t const& invisibles, CGColorRef backgroundColor, ng::buffer_t const& buffer, size_t bufferOffset, CGPoint anchor) const;
-		void draw_foreground (theme_ptr const& theme, ct::metrics_t const& metrics, ng::context_t const& context, bool isFlipped, CGRect visibleRect, ng::invisibles_t const& invisibles, ng::buffer_t const& buffer, size_t bufferOffset, ng::ranges_t const& selection, CGPoint anchor) const;
+		void draw_background (theme_ptr const& theme, ct::metrics_t const& metrics, ng::context_t const& context, bool isFlipped, CGRect visibleRect, CGColorRef backgroundColor, ng::buffer_t const& buffer, size_t bufferOffset, CGPoint anchor) const;
+		void draw_foreground (theme_ptr const& theme, ct::metrics_t const& metrics, ng::context_t const& context, bool isFlipped, CGRect visibleRect, ng::buffer_t const& buffer, size_t bufferOffset, ng::ranges_t const& selection, CGPoint anchor) const;
 
 		ng::index_t index_at_point (CGPoint point, ct::metrics_t const& metrics, ng::buffer_t const& buffer, size_t bufferOffset, CGPoint anchor) const;
 		CGRect rect_at_index (ng::index_t const& index, ct::metrics_t const& metrics, ng::buffer_t const& buffer, size_t bufferOffset, CGPoint anchor, bool bol_as_eol = false) const;
@@ -52,7 +52,7 @@ namespace ng
 		ng::range_t range_for_softline (size_t softline, ng::buffer_t const& buffer, size_t bufferOffset, size_t softlineOffset, ct::metrics_t const& metrics, bool softBreaksOnNewline = false) const;
 
 		void set_wrapping (bool softWrap, size_t wrapColumn, ct::metrics_t const& metrics);
-		void set_tab_size (size_t tabSize, ct::metrics_t const& metrics);
+		void set_tab_size (ct::metrics_t const& metrics);
 		void reset_font_metrics (ct::metrics_t const& metrics);
 
 		CGFloat width () const;
@@ -61,7 +61,7 @@ namespace ng
 		bool structural_integrity () const { return true; }
 
 	private:
-		enum node_type_t { kNodeTypeText, kNodeTypeTab, kNodeTypeUnprintable, kNodeTypeFolding, kNodeTypeSoftBreak, kNodeTypeNewline };
+		enum node_type_t { kNodeTypeText, kNodeTypeUnprintable, kNodeTypeFolding, kNodeTypeSoftBreak, kNodeTypeNewline };
 
 		struct node_t
 		{
@@ -71,16 +71,16 @@ namespace ng
 			void erase (size_t from, size_t to);
 			void did_update_scopes (size_t from, size_t to);
 
-			void layout (CGFloat x, CGFloat tabWidth, theme_ptr const& theme, bool softWrap, size_t wrapColumn, ct::metrics_t const& metrics, ng::buffer_t const& buffer, size_t bufferOffset, std::string const& fillStr);
+			void layout (CGFloat x, size_t tabSize, theme_ptr const& theme, bool softWrap, size_t wrapColumn, ct::metrics_t const& metrics, ng::buffer_t const& buffer, size_t bufferOffset, std::string const& fillStr);
 			void reset_font_metrics (ct::metrics_t const& metrics);
-			void draw_background (theme_ptr const& theme, ng::context_t const& context, bool isFlipped, CGRect visibleRect, ng::invisibles_t const& invisibles, CGColorRef backgroundColor, ng::buffer_t const& buffer, size_t bufferOffset, CGPoint anchor, CGFloat lineHeight) const;
-			void draw_foreground (theme_ptr const& theme, ng::context_t const& context, bool isFlipped, CGRect visibleRect, ng::invisibles_t const& invisibles, ng::buffer_t const& buffer, size_t bufferOffset, std::vector< std::pair<size_t, size_t> > const& misspelled, CGPoint anchor, CGFloat baseline) const;
+			void draw_background (theme_ptr const& theme, ng::context_t const& context, bool isFlipped, CGRect visibleRect, CGColorRef backgroundColor, ng::buffer_t const& buffer, size_t bufferOffset, CGPoint anchor, CGFloat lineHeight) const;
+			void draw_foreground (theme_ptr const& theme, ng::context_t const& context, bool isFlipped, CGRect visibleRect, ng::buffer_t const& buffer, size_t bufferOffset, std::vector< std::pair<size_t, size_t> > const& misspelled, CGPoint anchor, CGFloat baseline) const;
 
 			node_type_t type () const                      { return _type; }
 			size_t length () const                         { return _length; }
 			std::shared_ptr<ct::line_t> line () const { return _line; }
 			CGFloat width () const;
-			void update_tab_width (CGFloat x, CGFloat tabWidth, ct::metrics_t const& metrics);
+			void update_tab_width ();
 
 		private:
 			node_type_t _type;
@@ -93,7 +93,6 @@ namespace ng
 		std::vector<node_t>::iterator iterator_at (size_t i);
 
 		void insert_text (size_t i, size_t len);
-		void insert_tab (size_t i);
 		void insert_unprintable (size_t i, size_t len);
 		void insert_newline (size_t i, size_t len);
 
@@ -116,7 +115,7 @@ namespace ng
 		bool _dirty = true;
 	};
 
-	PUBLIC std::string to_s (paragraph_t const& paragraph);
+	std::string to_s (paragraph_t const& paragraph);
 
 } /* ng */
 

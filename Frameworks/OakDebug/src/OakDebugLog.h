@@ -19,8 +19,8 @@ struct PUBLIC OakDebugBaseClass
 
 #define OAK_DEBUG(expr) expr
 
-#define OAK_DEBUG_VAR(name)				\
-	static const struct OakDebug ## name : public OakDebugBaseClass	\
+#define OAK_DEBUG_VAR(name) \
+	static struct OakDebug ## name : public OakDebugBaseClass \
 	{\
 		OakDebug ## name () { }\
 \
@@ -30,14 +30,14 @@ struct PUBLIC OakDebugBaseClass
 			return res;\
 		}\
 \
-	} DBF_ ## name
+	} const DBF_ ## name
 
 #define bug(format, args...) OakPrintF(__FILE__, __FUNCTION__, __LINE__, format , ## args)
 
-#define D(name, code)							\
-	if(name.isEnabled())							\
-	{													\
-		code											\
+#define D(name, code)   \
+	if(name.isEnabled()) \
+	{                    \
+		code              \
 	}
 
 #else

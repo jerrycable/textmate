@@ -14,6 +14,7 @@ extern NSString* const kCommandRunnerURLScheme; // from HTMLOutput.h
 @property (nonatomic) BOOL runningCommand;
 @property (nonatomic) HOAutoScroll* autoScrollHelper;
 @property (nonatomic) std::map<std::string, std::string> environment;
+@property (nonatomic) NSRect pendingVisibleRect;
 @end
 
 @implementation OakHTMLOutputView
@@ -33,6 +34,12 @@ extern NSString* const kCommandRunnerURLScheme; // from HTMLOutput.h
 - (void)stopLoading
 {
 	[self.webView.mainFrame stopLoading];
+}
+
+- (void)loadHTMLString:(NSString*)someHTML
+{
+	self.pendingVisibleRect = [[[[self.webView mainFrame] frameView] documentView] visibleRect];
+	[[self.webView mainFrame] loadHTMLString:someHTML baseURL:[NSURL fileURLWithPath:NSHomeDirectory()]];
 }
 
 // =======================
@@ -67,7 +74,25 @@ extern NSString* const kCommandRunnerURLScheme; // from HTMLOutput.h
 	if(frame == [sender mainFrame])
 		[self webView:sender didClearWindowObject:[frame windowObject] forFrame:frame];
 
+	if(!NSEqualRects(self.pendingVisibleRect, NSZeroRect))
+		[[[[self.webView mainFrame] frameView] documentView] scrollRectToVisible:self.pendingVisibleRect];
+	self.pendingVisibleRect = NSZeroRect;
+
 	[super webView:sender didFinishLoadForFrame:frame];
+}
+
+- (void)webView:(WebView*)sender didFailProvisionalLoadWithError:(NSError*)error forFrame:(WebFrame*)frame
+{
+	self.runningCommand = NO;
+	self.autoScrollHelper = nil;
+	[super webView:sender didFailProvisionalLoadWithError:error forFrame:frame];
+}
+
+- (void)webView:(WebView*)sender didFailLoadWithError:(NSError*)error forFrame:(WebFrame*)frame
+{
+	self.runningCommand = NO;
+	self.autoScrollHelper = nil;
+	[super webView:sender didFailLoadWithError:error forFrame:frame];
 }
 
 // =========================================

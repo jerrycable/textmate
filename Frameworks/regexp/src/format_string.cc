@@ -5,7 +5,6 @@
 
 #include <oak/oak.h>
 #include <oak/compat.h>
-#include <oak/server.h>
 #include <text/case.h>
 #include <text/utf8.h>
 
@@ -80,6 +79,12 @@ struct expand_visitor : boost::static_visitor<void>
 
 			std::map<std::string, std::string> tmp(m.captures());
 			tmp.insert(variables.begin(), variables.end());
+			for(size_t i = 0; i < m.size(); ++i)
+			{
+				if(!m.did_match(i))
+					tmp.erase(std::to_string(i));
+			}
+
 			tmp.swap(variables);
 			traverse(format);
 			tmp.swap(variables);
@@ -138,7 +143,7 @@ struct expand_visitor : boost::static_visitor<void>
 
 	static std::string capitalize (std::string const& src)
 	{
-		return format_string::replace(text::lowercase(src), "^(\\s+)?(\\w+)|\\b((?!(?:else|from|over|then|when)\\b)\\w{4,}|\\w+\\s*$)", "${1:?$1\\u$2:\\u$0}");
+		return format_string::replace(format_string::replace(src, "\\b\\p{Upper}\\p{^Upper}+?\\b", "${0:/downcase}"), "^([\\W\\d]*)(\\w[-\\w]*)|\\b((?!(?:else|from|over|then|when)\\b)\\w[-\\w]{3,}|\\w[-\\w]*[\\W\\d]*$)", "${1:?$1\\u$2:\\u$0}");
 	}
 
 	static std::string asciify (std::string const& src)
@@ -206,7 +211,7 @@ struct expand_visitor : boost::static_visitor<void>
 	// =================
 	// = Snippet Stuff =
 	// =================
-	
+
 	void operator() (parser::placeholder_t const& v)
 	{
 		snippet::pos_t from(res.size(), ++rank_count);
@@ -254,7 +259,7 @@ struct expand_visitor : boost::static_visitor<void>
 		if(callback)
 		{
 			std::string const& str = callback->run_command(v.code, variables);
-			res.insert(res.end(), str.begin(), !str.empty() && str[str.size()-1] == '\n' ? --str.end() : str.end());
+			res.insert(res.end(), str.begin(), !str.empty() && str.back() == '\n' ? --str.end() : str.end());
 		}
 	}
 };
@@ -264,7 +269,7 @@ namespace format_string
 	// ===================
 	// = format_string_t =
 	// ===================
-	
+
 	format_string_t::format_string_t (parser::nodes_t const& n)
 	{
 		nodes = std::make_shared<parser::nodes_t>(n);
@@ -276,7 +281,7 @@ namespace format_string
 		parser::nodes_t const& n = parser::parse_format_string(str, stopChars, &_length);
 		nodes = std::make_shared<parser::nodes_t>(n);
 	}
-	
+
 	std::string format_string_t::expand (std::map<std::string, std::string> const& variables) const
 	{
 		expand_visitor v(variables, NULL);
@@ -288,11 +293,11 @@ namespace format_string
 	// =======
 	// = API =
 	// =======
-	
+
 	std::string replace (std::string const& src, regexp::pattern_t const& ptrn, format_string_t const& format, bool repeat, std::map<std::string, std::string> const& variables)
 	{
 		D(DBF_FormatString, bug("%s\n", src.c_str()););
-		
+
 		expand_visitor v(variables, NULL);
 		v.replace(src, ptrn, *format.nodes, repeat);
 		v.handle_case_changes();
@@ -350,4 +355,4 @@ namespace snippet
 		return snippet_t(v.res, v.fields, v.mirrors, variables, indentString, indent);
 	}
 
-} /* snippet */ 
+} /* snippet */

@@ -6,6 +6,18 @@ static std::string expand (std::string const& str)
 	return text::join(path::expand_braces(str), ":");
 }
 
+static std::vector<std::string> sorted (std::string const& str)
+{
+	auto v = path::expand_braces(str);
+	std::sort(v.begin(), v.end());
+	return v;
+}
+
+void test_empty_glob ()
+{
+	OAK_ASSERT(!path::glob_t("").does_match("foo"));
+}
+
 void test_glob ()
 {
 	OAK_ASSERT( path::glob_t("*.{cc,mm,h}").does_match("test.cc"  ));
@@ -48,6 +60,14 @@ void test_glob ()
 	OAK_ASSERT(!path::glob_t("{*.{cc,h},Makefile}").does_match("Makefile.txt" ));
 	OAK_ASSERT(!path::glob_t("{*.{cc,h},Makefile}").does_match("test.Makefile"));
 	OAK_ASSERT(!path::glob_t("{*.{cc,h},Makefile}").does_match(".test.cc"     ));
+}
+
+void test_glob_case_sensitive ()
+{
+	OAK_ASSERT( path::glob_t("Makefile", false,  true).does_match("Makefile"));
+	OAK_ASSERT(!path::glob_t("Makefile", false,  true).does_match("makefile"));
+	OAK_ASSERT( path::glob_t("Makefile", false, false).does_match("Makefile"));
+	OAK_ASSERT( path::glob_t("Makefile", false, false).does_match("makefile"));
 }
 
 void test_glob_hidden_files ()
@@ -176,16 +196,16 @@ void test_brace_expansion ()
 	OAK_ASSERT_EQ(expand_braces("{a,b{c,d}}")[1],             "bc");
 	OAK_ASSERT_EQ(expand_braces("{a,b{c,d}}")[2],             "bd");
 
-	OAK_ASSERT_EQ(expand_braces("{a,b}{c,d}").size(),         4);
-	OAK_ASSERT_EQ(expand_braces("{a,b}{c,d}")[0],             "ac");
-	OAK_ASSERT_EQ(expand_braces("{a,b}{c,d}")[1],             "ad");
-	OAK_ASSERT_EQ(expand_braces("{a,b}{c,d}")[2],             "bc");
-	OAK_ASSERT_EQ(expand_braces("{a,b}{c,d}")[3],             "bd");
+	OAK_ASSERT_EQ(sorted("{a,b}{c,d}").size(),                4);
+	OAK_ASSERT_EQ(sorted("{a,b}{c,d}")[0],                    "ac");
+	OAK_ASSERT_EQ(sorted("{a,b}{c,d}")[1],                    "ad");
+	OAK_ASSERT_EQ(sorted("{a,b}{c,d}")[2],                    "bc");
+	OAK_ASSERT_EQ(sorted("{a,b}{c,d}")[3],                    "bd");
 }
 
 void test_glob_brace_expansion ()
 {
-	OAK_ASSERT_EQ(expand("{a,b,{c},d}"),     "a,d}:b,d}:{c,d}");
+	OAK_ASSERT_EQ(expand("{a,b,{c},d}"),     "a:b:{c}:d");
 	OAK_ASSERT_EQ(expand("{a,b,\\{c\\},d}"), "a:b:{c}:d");
 }
 
@@ -206,3 +226,53 @@ void test_glob_negating ()
 	OAK_ASSERT( path::glob_t("!html/**/*.txt" ).does_match("/path/to/page/foo/fud.txt"));
 }
 
+void test_glob_exclusion ()
+{
+	OAK_ASSERT( path::glob_t("*.{cc,mm,h}~vendor/**" ).does_match("/path/to/main.cc"));
+	OAK_ASSERT( path::glob_t("*.{cc,mm,h}~vendor/**" ).does_match("/path/to/main.mm"));
+	OAK_ASSERT( path::glob_t("*.{cc,mm,h}~vendor/**" ).does_match("/path/to/main.h"));
+	OAK_ASSERT(!path::glob_t("*.{cc,mm,h}~vendor/**" ).does_match("/path/to/main.txt"));
+	OAK_ASSERT(!path::glob_t("*.{cc,mm,h}~vendor/**" ).does_match("/path/to/vendor/main.cc"));
+	OAK_ASSERT(!path::glob_t("*.{cc,mm,h}~vendor/**" ).does_match("/path/to/vendor/main.mm"));
+	OAK_ASSERT(!path::glob_t("*.{cc,mm,h}~vendor/**" ).does_match("/path/to/vendor/main.h"));
+	OAK_ASSERT(!path::glob_t("*.{cc,mm,h}~vendor/**" ).does_match("/path/to/vendor/src/main.cc"));
+	OAK_ASSERT(!path::glob_t("*.{cc,mm,h}~vendor/**" ).does_match("/path/to/vendor/src/main.mm"));
+	OAK_ASSERT(!path::glob_t("*.{cc,mm,h}~vendor/**" ).does_match("/path/to/vendor/src/main.h"));
+
+	OAK_ASSERT(!path::glob_t("*.{cc,mm,h}~vendor/**" ).does_match("/path/to/src/.main.cc"));
+	OAK_ASSERT(!path::glob_t("*.{cc,mm,h}~vendor/**" ).does_match("/path/to/vendor/src/.main.cc"));
+
+	OAK_ASSERT( path::glob_t("{,.}*.{cc,mm,h}~vendor/**" ).does_match("/path/to/src/.main.cc"));
+	OAK_ASSERT(!path::glob_t("{,.}*.{cc,mm,h}~vendor/**" ).does_match("/path/to/vendor/src/.main.cc"));
+
+	OAK_ASSERT( path::glob_t("src/**~*.o~*.s" ).does_match("/path/to/src/main.cc"));
+	OAK_ASSERT( path::glob_t("src/**~*.o~*.s" ).does_match("/path/to/src/main.h"));
+	OAK_ASSERT(!path::glob_t("src/**~*.o~*.s" ).does_match("/path/to/src/main.o"));
+	OAK_ASSERT(!path::glob_t("src/**~*.o~*.s" ).does_match("/path/to/src/main.s"));
+	OAK_ASSERT(!path::glob_t("src/**~*.o~*.s" ).does_match("/path/to/main.cc"));
+
+	OAK_ASSERT(!path::glob_t("~html"          ).does_match("/path/to/html"));
+	OAK_ASSERT( path::glob_t("~html"          ).does_match("/path/to/html/foo"));
+	OAK_ASSERT(!path::glob_t("~html/*"        ).does_match("/path/to/html/fud.txt"));
+	OAK_ASSERT( path::glob_t("~html/*"        ).does_match("/path/to/html/foo/fud.txt"));
+	OAK_ASSERT(!path::glob_t("~html/**"       ).does_match("/path/to/html/foo/fud.txt"));
+	OAK_ASSERT(!path::glob_t("~html/**/*"     ).does_match("/path/to/html/foo/fud.txt"));
+	OAK_ASSERT(!path::glob_t("~html/**/*.txt" ).does_match("/path/to/html/foo/fud.txt"));
+	OAK_ASSERT( path::glob_t("~html/**/*.txt" ).does_match("/path/to/html/foo/fud.php"));
+	OAK_ASSERT( path::glob_t("~html"          ).does_match("/path/to/page"));
+	OAK_ASSERT( path::glob_t("~html/*"        ).does_match("/path/to/page/fud.txt"));
+	OAK_ASSERT( path::glob_t("~html/**"       ).does_match("/path/to/page/foo/fud.txt"));
+	OAK_ASSERT( path::glob_t("~html/**/*"     ).does_match("/path/to/page/foo/fud.txt"));
+	OAK_ASSERT( path::glob_t("~html/**/*.txt" ).does_match("/path/to/page/foo/fud.txt"));
+}
+
+void test_glob_brace_expansion_match ()
+{
+	OAK_ASSERT(path::glob_t("foo{bar}.txt").does_match("foo{bar}.txt"));
+	OAK_ASSERT(path::glob_t("foo{,bar}.txt").does_match("foo.txt"));
+	OAK_ASSERT(path::glob_t("foo{,bar}.txt").does_match("foobar.txt"));
+	OAK_ASSERT(path::glob_t("foo{\\,bar}.txt").does_match("foo{,bar}.txt"));
+	OAK_ASSERT(path::glob_t("{foo,{bar},baz}.txt").does_match("foo.txt"));
+	OAK_ASSERT(path::glob_t("{foo,{bar},baz}.txt").does_match("{bar}.txt"));
+	OAK_ASSERT(path::glob_t("{foo,{bar},baz}.txt").does_match("baz.txt"));
+}

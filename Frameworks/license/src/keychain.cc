@@ -41,7 +41,7 @@ namespace license
 			}
 			else
 			{
-				perror_keychain("SecItemCopyMatching", err);
+				perror_keychain("find: SecItemCopyMatching", err);
 			}
 			CFRelease(query);
 		}
@@ -57,10 +57,10 @@ namespace license
 
 		if(CFDictionaryRef query = CFDictionaryCreate(kCFAllocatorDefault, keys, vals, sizeofA(keys), &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks))
 		{
-			OSStatus err;
-
 			CFArrayRef results = NULL;
-			if(err = SecItemCopyMatching(query, (CFTypeRef*)&results) == errSecSuccess)
+
+			OSStatus err = SecItemCopyMatching(query, (CFTypeRef*)&results);
+			if(err == errSecSuccess)
 			{
 				for(CFIndex i = 0; i < CFArrayGetCount(results); ++i)
 				{
@@ -75,7 +75,7 @@ namespace license
 						if(err == noErr)
 						{
 							res.emplace_back((char const*)authAttrList->attr->data, ((char const*)authAttrList->attr->data) + authAttrList->attr->length);
-							SecKeychainItemFreeContent(authAttrList, NULL);
+							SecKeychainItemFreeAttributesAndData(authAttrList, NULL);
 						}
 						else
 						{
@@ -87,7 +87,7 @@ namespace license
 			}
 			else
 			{
-				perror_keychain("SecItemCopyMatching", err);
+				perror_keychain("find_all: SecItemCopyMatching", err);
 			}
 			CFRelease(query);
 		}

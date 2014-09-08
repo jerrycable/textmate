@@ -44,7 +44,7 @@
 
 		[self setSelectionHighlightStyle:NSTableViewSelectionHighlightStyleSourceList];
 		[self setRowHeight:16];
-		[self setIntercellSpacing:NSMakeSize(3.0, 2.0)];
+		[self setIntercellSpacing:NSMakeSize(3, 2)];
 	}
 	else
 	{
@@ -139,7 +139,7 @@
 - (BOOL)shouldActivate
 {
 	id firstResponder = [[self window] firstResponder];
-	if(([firstResponder respondsToSelector:@selector(delegate)] && [firstResponder delegate] == self) || fieldEditorWasUp)
+	if(([firstResponder respondsToSelector:@selector(delegate)] && [(NSText*)firstResponder delegate] == self) || fieldEditorWasUp)
 		return YES;
 
 	NSEvent* event = [NSApp currentEvent];
@@ -266,7 +266,7 @@
 	}
 
 	fieldEditorWasUp = YES;
-	[self performSelector:@selector(setFieldEditorWasUp:) withObject:0 afterDelay:0.0];
+	[self performSelector:@selector(setFieldEditorWasUp:) withObject:0 afterDelay:0];
 }
 
 - (void)setFieldEditorWasUp:(id)sender

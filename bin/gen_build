@@ -1,4 +1,4 @@
-#!/System/Library/Frameworks/Ruby.framework/Versions/1.8/usr/bin/ruby -wKU
+#!/System/Library/Frameworks/Ruby.framework/Versions/Current/usr/bin/ruby
 # == Synopsis
 #
 # gen_build: create build.ninja based on target files
@@ -16,9 +16,8 @@
 #
 # --define/-d «name»=«value»:
 #    define a variable that ends up in build.ninja.
-
-require 'getoptlong'
-require 'rdoc/usage'
+$KCODE = 'U' if RUBY_VERSION < "1.9"
+require 'optparse'
 require 'shellwords'
 require 'set'
 require 'pp'
@@ -236,7 +235,6 @@ def sources(target)
         cc  = compiler_for(src)
         dst = build_path("#{base}.o")
         res << "build #{dst}: #{cc} #{esc_path src} | #{pch_for(src, target)}.gch || #{esc_path(headers).join(' ')}\n"
-        res << "  depfile = #{dst}.d\n"
         res << "  PCH_FLAGS = -D#{target[:name].gsub(/[^A-Za-z_]/, '_')}_EXPORTS -include #{pch_for(src, target)}\n"
         res << flags_for_target(target)
 
@@ -251,7 +249,6 @@ def sources(target)
         cc  = compiler_for(dst)
         obj = build_path("#{base}.o")
         res << "build #{obj}: #{cc} #{dst} | #{pch_for(dst, target)}.gch || #{esc_path(headers).join(' ')}\n"
-        res << "  depfile = #{obj}.d\n"
         res << "  PCH_FLAGS = -D#{target[:name].gsub(/[^A-Za-z_]/, '_')}_EXPORTS -include #{pch_for(dst, target)} -iquote#{esc_path File.dirname(src)}\n"
         res << flags_for_target(target)
 
@@ -265,7 +262,6 @@ def sources(target)
         cc  = compiler_for(src)
         dst = build_path("#{base}.o")
         res << "build #{dst}: #{cc} #{esc_path src} | #{pch_for(src, target)}.gch || #{esc_path(headers).join(' ')}\n"
-        res << "  depfile = #{dst}.d\n"
         res << "  PCH_FLAGS = -D#{target[:name].gsub(/[^A-Za-z_]/, '_')}_EXPORTS -include #{pch_for(src, target)}\n"
         res << flags_for_target(target)
 
@@ -304,7 +300,6 @@ def tests(target)
 
     res << "build #{test_src}: gen_oak_test #{src} | bin/gen_test\n"
     res << "build #{dst}.o: #{compiler_for(test_src)} #{test_src} | #{pch_for(test_src, target)}.gch || #{target[:name]}/headers\n"
-    res << "  depfile = #{dst}.o.d\n"
     res << "  PCH_FLAGS = -include #{pch_for(test_src, target)}\n"
     res << flags_for_target(target)
     res << "build #{dst}: link_oak_test #{all_values_for_key(target, :objects).join(' ')} #{dst}.o\n"
@@ -332,7 +327,6 @@ def tests(target)
 
     res << "build #{test_src}: gen_cxx_test #{src}\n"
     res << "build #{dst}.o: #{compiler_for(test_src)} #{test_src} | #{pch_for(test_src, target)}.gch || #{target[:name]}/headers\n"
-    res << "  depfile = #{dst}.o.d\n"
     res << "  PCH_FLAGS = -Ibin/CxxTest -include #{pch_for(test_src, target)}\n"
     res << flags_for_target(target)
     res << "build #{dst}: link_cxx_test #{all_values_for_key(target, :objects).join(' ')} #{dst}.o\n"
@@ -646,7 +640,7 @@ def all_targets(buildfile, builddir)
   Dir.chdir(File.dirname(buildfile)) do
     targets = %x{ ${TM_NINJA:-ninja} -f #{buildfile.shellescape} -t targets all }
     return nil if $? != 0
-    targets.each do |line|
+    targets.each_line do |line|
       if line =~ /.*(?=:(?! phony))/
         path = $&
         res << path if path =~ /^#{Regexp.escape(builddir)}/ # ignore targets outside builddir
@@ -661,28 +655,32 @@ end
 # = Program Starts Here =
 # =======================
 
-opts = GetoptLong.new(
-  [ '--help',            '-h', GetoptLong::NO_ARGUMENT       ],
-  [ '--output',          '-o', GetoptLong::REQUIRED_ARGUMENT ],
-  [ '--build-directory', '-C', GetoptLong::REQUIRED_ARGUMENT ],
-  [ '--define',          '-d', GetoptLong::REQUIRED_ARGUMENT ]
-)
-
 outfile, builddir = '/dev/stdout', File.expand_path('~/build')
 variables = [ ]
 
-opts.each do |opt, arg|
-  case opt
-    when '--help'
-      RDoc::usage
-    when '--output'
-      outfile = arg
-    when '--build-directory'
-      builddir = arg
-    when '--define'
-      variables << [ $1, $2 ] if arg =~ /^(\w+)\s*=\s*(.*)$/
+OptionParser.new do |opts|
+  opts.banner = "Usage: gen_build [options] "
+  opts.separator "Synopsis"
+  opts.separator "gen_build: create build.ninja based on target files"
+  opts.separator "Options:"
+
+  opts.on("-h","--help", "show help.") do |v|
+    puts opts
+    exit
   end
-end
+
+  opts.on("-o","--output FILE", "the «file» to write build info into.") do |v|
+    outfile = v
+  end
+
+  opts.on("-C", "--build-directory DIRECTORY", "where build files should go.") do |v|
+    builddir = v
+  end
+
+  opts.on("-d", "--define NAME=VALUE", "define a variable that ends up in build.ninja") do |v|
+    variables << [  $1, $2 ] if v =~ /^(\w+)\s*=\s*(.*)$/
+  end
+end.parse!
 
 abort "No root target file specified" if ARGV.empty?
 manifest = ARGV[0]
@@ -692,6 +690,8 @@ all_old_targets = all_targets(outfile, builddir)
 
 open(outfile, "w") do |io|
   userfile = "#{ENV['USER']}.ninja"
+  io << "ninja_required_version = 1.5\n"
+  io << "\n"
   io << "###########################################\n"
   io << "# AUTOMATICALLY GENERATED -- DO NOT EDIT! #\n"
   io << "###########################################\n"
@@ -702,21 +702,26 @@ open(outfile, "w") do |io|
 end
 
 open("#{builddir}/build.ninja", "w") do |io|
-  user_variables = TARGETS.root.to_a.reject { |arr| arr[0].class != String || GLOB_KEYS.include?(arr[0]) }.sort { |lhs, rhs| lhs[0] <=> rhs[0] }
+  user_variables = []
+  TARGETS.root.each do |key, value|
+    user_variables << [ key, value.kind_of?(Array) ? value.join(' ') : value ] unless key.class != String || GLOB_KEYS.include?(key)
+  end
+  user_variables.sort! { |lhs, rhs| lhs[0] <=> rhs[0] }
+
   tmp = variables.dup.concat(user_variables) 
   width = tmp.map { |arr| arr[0].length }.max { |lhs, rhs| lhs <=> rhs }
 
-  io << variables.map { |arr| format("%-#{width}s = %s\n", *arr) }
+  variables.each { |arr| io << format("%-#{width}s = %s\n", *arr) }
   io << "\n"
 
-  io << user_variables.map { |arr| format("%-#{width}s = %s\n", *arr) }
+  user_variables.each { |arr| io << format("%-#{width}s = %s\n", *arr) }
   io << "\n"
 
   args = variables.map { |key, value| "-d'#{key}=#{value =~ /\$/ ? value.gsub(/\$/, '$$') :  "$#{key}"}'" }.join(' ')
   io << "rule configure\n"
   io << "  command = bin/gen_build -C \"$builddir\" #{args} -o $out $in\n"
   io << "  depfile = $builddir/$out.d\n"
-  io << "  generator = 1\n"
+  io << "  generator = true\n"
   io << "  description = Generate ‘$out’…\n"
   io << "\n"
   io << "build build.ninja: configure #{manifest} | bin/gen_build\n"
@@ -726,8 +731,8 @@ open("#{builddir}/build.ninja", "w") do |io|
 
   COMPILER_INFO.each do |key, value|
     io << "rule #{value[:rule]}\n"
-    io << "  command = '#{value[:compiler]}' $PCH_FLAGS $FLAGS #{value[:flags]} $RAVE_FLAGS -o $out -MMD -MF $out.d -I$builddir/include $in\n"
-    io << "  depfile = $depfile\n"
+    io << "  command = #{value[:compiler]} $PCH_FLAGS $FLAGS #{value[:flags]} $RAVE_FLAGS -o $out -MMD -MF $out.d -I$builddir/include $in\n"
+    io << "  depfile = $out.d\n"
     io << "  deps = gcc\n"
     io << "  description = Compile ‘$in’…\n\n"
   end
@@ -737,13 +742,11 @@ open("#{builddir}/build.ninja", "w") do |io|
     ext = source_type(src)
     cc = COMPILER_INFO[ext][:compiler]
 
-    io << "build #{pch_for(src, TARGETS.root)}.gch: #{compiler_for(src)} #{src} | #{cc}\n"
-    io << "  depfile = #{pch_for(src, TARGETS.root)}.gch.d\n"
+    io << "build #{pch_for(src, TARGETS.root)}.gch: #{compiler_for(src)} #{src}\n"
     io << "  RAVE_FLAGS = #{type[ext]}\n\n"
 
     if ext =~ /^mm?$/
-      io << "build #{pch_for(src, TARGETS.root)}-no-arc.gch: #{compiler_for(src)} #{src} | #{cc}\n"
-      io << "  depfile = #{pch_for(src, TARGETS.root)}-no-arc.gch.d\n"
+      io << "build #{pch_for(src, TARGETS.root)}-no-arc.gch: #{compiler_for(src)} #{src}\n"
       io << "  RAVE_FLAGS = #{type[ext]} -fno-objc-arc\n\n"
     end
   end
@@ -837,8 +840,7 @@ rule gen_ragel
   description = Generate source from ‘$in’…
 
 rule gen_capnp
-  command = capnp compile -oc++ $in
-  generator = 1
+  command = PATH="$capnp_prefix/bin:$PATH" capnp compile -oc++ $in
   description = Generate source from ‘$in’…
 
 rule gen_cxx_test
@@ -846,7 +848,7 @@ rule gen_cxx_test
   description = Generate test ‘$out’…
 
 rule link_cxx_test
-  command = '$CXX' -o $out $in $LN_FLAGS $RAVE_FLAGS
+  command = $CXX -o $out $in $LN_FLAGS $RAVE_FLAGS
   description = Link test ‘$out’…
 
 rule gen_oak_test
@@ -854,7 +856,7 @@ rule gen_oak_test
   description = Generate test ‘$out’…
 
 rule link_oak_test
-  command = '$CXX' -o $out $in $LN_FLAGS $RAVE_FLAGS
+  command = $CXX -o $out $in $LN_FLAGS $RAVE_FLAGS
   description = Link test ‘$out’…
 
 rule run_test
@@ -874,11 +876,11 @@ rule link_static
   description = Archive objects ‘$out’…
 
 rule link_dynamic
-  command = '$CXX' -o $out $in $LN_FLAGS $RAVE_FLAGS -dynamiclib -current_version 1.0.1 -compatibility_version 1.0.0
+  command = $CXX -o $out $in $LN_FLAGS $RAVE_FLAGS -dynamiclib -current_version 1.0.1 -compatibility_version 1.0.0
   description = Link dynamic library ‘$out’…
 
 rule link_executable
-  command = '$CXX' -o $out $in $LN_FLAGS $RAVE_FLAGS
+  command = $CXX -o $out $in $LN_FLAGS $RAVE_FLAGS
   description = Link executable ‘$out’…
 
 rule run_executable
@@ -886,7 +888,8 @@ rule run_executable
   description = Run ‘$in’…
 
 rule debug_executable
-  command = osascript >/dev/null -e $$'tell app "Terminal" \n activate \n do script "gdb $in" \n end tell'
+  command = lldb $in
+  pool = console
   description = Debug ‘$in’…
 
 rule run_application
@@ -909,16 +912,17 @@ rule run_application
   description = Run ‘$in’…
 
 rule sign_executable
-  command = codesign --timestamp=none --deep -fs "$identity" $in && touch $out
+  command = xcrun codesign --timestamp=none --deep -fs "$identity" $in && touch $out
   description = Sign ‘$in’…
 
 rule tbz_archive
-  command = tar $bzip2_flag -cf $out -C "$$(dirname $in)" "$$(basename $in)"
+  command = tar $bzip2_flag -cf $out~ -C "$$(dirname $in)" "$$(basename $in)" && mv $out~ $out
   generator = true
   description = Archive ‘$in’…
 
 rule upload
   command = bin/upload -k$upload_keyfile -d$upload_destination -t'v$APP_VERSION' -m'{"version":"$APP_VERSION","revision":"$APP_REVISION"}' $in > $out~ && mv $out~ $out
+  pool = console
   generator = true
   description = Upload ‘$in’…
 
@@ -941,13 +945,13 @@ rule dsym
   command = $
     DST=$$(/usr/bin/mktemp -dt dsym); $
     find $in -name rmate -or -type f -perm +0111 -print|while read line; $
-    do dsymutil --flat --out "$$DST/$$(basename "$$line" .dylib).dSYM" "$$line"; $
+    do xcrun dsymutil --flat --out "$$DST/$$(basename "$$line" .dylib).dSYM" "$$line"; $
     done && tar $bzip2_flag -cf $out -C "$$DST" . && rm -rf "$$DST"
   generator = true
   description = Archive dSYM info for ‘$in’…
 
 rule compile_xib
-  command = "$xcodedir/usr/bin/ibtool" --errors --warnings --notices --output-format human-readable-text --compile $out $in
+  command = xcrun ibtool --errors --warnings --notices --output-format human-readable-text --compile $out $in
   description = Compile xib ‘$in’…
 
 rule process_plist
@@ -963,5 +967,5 @@ rule index_help
   description = Index help book ‘$HELP_BOOK’…
 
 rule compile_mom
-  command = "$xcodedir/usr/bin/momc" $in $out
+  command = xcrun momc $in $out
   description = Generate ‘$out’…

@@ -15,9 +15,6 @@ namespace ng
 		static std::string representation_for (uint32_t ch)
 		{
 			static std::set<uint32_t> const SpaceCharacters = {
-				0x200B, // ZERO WIDTH SPACE
-				0x200C, // ZERO WIDTH NON-JOINER
-				0x200D, // ZERO WIDTH JOINER
 				0x2028, // LINE SEPARATOR
 				0x2029, // PARAGRAPH SEPARATOR
 				0x2060, // WORD JOINER
@@ -57,22 +54,25 @@ namespace ng
 		static void draw_line (CGPoint pos, std::string const& text, CGColorRef color, CTFontRef font, CGContextRef context, bool isFlipped)
 		{
 			ASSERT(utf8::is_valid(text.begin(), text.end()));
+			if(CFMutableAttributedStringRef str = CFAttributedStringCreateMutable(kCFAllocatorDefault, 0))
+			{
+				CFAttributedStringReplaceString(str, CFRangeMake(0, 0), cf::wrap(text));
+				CFAttributedStringSetAttribute(str, CFRangeMake(0, CFAttributedStringGetLength(str)), kCTFontAttributeName, font);
+				CFAttributedStringSetAttribute(str, CFRangeMake(0, CFAttributedStringGetLength(str)), kCTForegroundColorAttributeName, color);
 
-			CFMutableAttributedStringRef str = CFAttributedStringCreateMutable(kCFAllocatorDefault, 0);
-			CFAttributedStringReplaceString(str, CFRangeMake(0, 0), cf::wrap(text));
-			CFAttributedStringSetAttribute(str, CFRangeMake(0, CFAttributedStringGetLength(str)), kCTFontAttributeName, font);
-			CFAttributedStringSetAttribute(str, CFRangeMake(0, CFAttributedStringGetLength(str)), kCTForegroundColorAttributeName, color);
-			CTLineRef line = CTLineCreateWithAttributedString(str);
-			CFRelease(str);
+				if(CTLineRef line = CTLineCreateWithAttributedString(str))
+				{
+					CGContextSaveGState(context);
+					if(isFlipped)
+						CGContextConcatCTM(context, CGAffineTransformMake(1, 0, 0, -1, 0, 2 * pos.y));
+					CGContextSetTextPosition(context, pos.x, pos.y);
+					CTLineDraw(line, context);
+					CGContextRestoreGState(context);
 
-			CGContextSaveGState(context);
-			if(isFlipped)
-				CGContextConcatCTM(context, CGAffineTransformMake(1, 0, 0, -1, 0, 2 * pos.y));
-			CGContextSetTextPosition(context, pos.x, pos.y);
-			CTLineDraw(line, context);
-			CGContextRestoreGState(context);
-
-			CFRelease(line);
+					CFRelease(line);
+				}
+				CFRelease(str);
+			}
 		}
 	}
 
@@ -98,7 +98,7 @@ namespace ng
 		_line.reset();
 	}
 
-	void paragraph_t::node_t::layout (CGFloat x, CGFloat tabWidth, theme_ptr const& theme, bool softWrap, size_t wrapColumn, ct::metrics_t const& metrics, ng::buffer_t const& buffer, size_t bufferOffset, std::string const& fillStr)
+	void paragraph_t::node_t::layout (CGFloat x, size_t tabSize, theme_ptr const& theme, bool softWrap, size_t wrapColumn, ct::metrics_t const& metrics, ng::buffer_t const& buffer, size_t bufferOffset, std::string const& fillStr)
 	{
 		if(_line)
 			return;
@@ -107,7 +107,7 @@ namespace ng
 		{
 			case kNodeTypeText:
 			{
-				_line = std::make_shared<ct::line_t>(buffer.substr(bufferOffset, bufferOffset + _length), buffer.scopes(bufferOffset, bufferOffset + _length), theme, nullptr);
+				_line = std::make_shared<ct::line_t>(buffer.substr(bufferOffset, bufferOffset + _length), buffer.scopes(bufferOffset, bufferOffset + _length), theme, tabSize, metrics, nullptr);
 			}
 			break;
 
@@ -115,13 +115,7 @@ namespace ng
 			{
 				scope::scope_t scope = buffer.scope(bufferOffset).right;
 				scope.push_scope("deco.unprintable");
-				_line = std::make_shared<ct::line_t>(representation_for(utf8::to_ch(buffer.substr(bufferOffset, bufferOffset + _length))), std::map<size_t, scope::scope_t>{ { 0, scope } }, theme, nullptr);
-			}
-			break;
-
-			case kNodeTypeTab:
-			{
-				update_tab_width(x, tabWidth, metrics);
+				_line = std::make_shared<ct::line_t>(representation_for(utf8::to_ch(buffer.substr(bufferOffset, bufferOffset + _length))), std::map<size_t, scope::scope_t>{ { 0, scope } }, theme, tabSize, metrics, nullptr);
 			}
 			break;
 
@@ -136,7 +130,7 @@ namespace ng
 				scope::context_t const context = buffer.scope(bufferOffset);
 				scope::scope_t scope = shared_prefix(context.left, context.right);
 				scope.push_scope("deco.indented-wrap");
-				_line = std::make_shared<ct::line_t>(fillStr, std::map<size_t, scope::scope_t>{ { 0, scope } }, theme, nullptr);
+				_line = std::make_shared<ct::line_t>(fillStr, std::map<size_t, scope::scope_t>{ { 0, scope } }, theme, tabSize, metrics, nullptr);
 			}
 			break;
 		}
@@ -152,15 +146,12 @@ namespace ng
 		return _line ? _line->width() : _width;
 	}
 
-	void paragraph_t::node_t::update_tab_width (CGFloat x, CGFloat tabWidth, ct::metrics_t const& metrics)
+	void paragraph_t::node_t::update_tab_width ()
 	{
-		double r = remainder(x, tabWidth);
-		_width = (r < 0 ? 0 : tabWidth) - r;
-		if(_width < 0.5 * metrics.column_width())
-			_width += tabWidth;
+		_line.reset();
 	}
 
-	void paragraph_t::node_t::draw_background (theme_ptr const& theme, ng::context_t const& context, bool isFlipped, CGRect visibleRect, ng::invisibles_t const& invisibles, CGColorRef backgroundColor, ng::buffer_t const& buffer, size_t bufferOffset, CGPoint anchor, CGFloat lineHeight) const
+	void paragraph_t::node_t::draw_background (theme_ptr const& theme, ng::context_t const& context, bool isFlipped, CGRect visibleRect, CGColorRef backgroundColor, ng::buffer_t const& buffer, size_t bufferOffset, CGPoint anchor, CGFloat lineHeight) const
 	{
 		if(_line)
 			_line->draw_background(CGPointMake(anchor.x, anchor.y), lineHeight, context, isFlipped, backgroundColor);
@@ -185,23 +176,19 @@ namespace ng
 		}
 	}
 
-	void paragraph_t::node_t::draw_foreground (theme_ptr const& theme, ng::context_t const& context, bool isFlipped, CGRect visibleRect, ng::invisibles_t const& invisibles, ng::buffer_t const& buffer, size_t bufferOffset, std::vector< std::pair<size_t, size_t> > const& misspelled, CGPoint anchor, CGFloat baseline) const
+	void paragraph_t::node_t::draw_foreground (theme_ptr const& theme, ng::context_t const& context, bool isFlipped, CGRect visibleRect, ng::buffer_t const& buffer, size_t bufferOffset, std::vector< std::pair<size_t, size_t> > const& misspelled, CGPoint anchor, CGFloat baseline) const
 	{
 		if(_line)
-			_line->draw_foreground(CGPointMake(anchor.x, anchor.y + baseline), context, isFlipped, misspelled);
+			_line->draw_foreground(CGPointMake(anchor.x, anchor.y + baseline), context, isFlipped, misspelled, theme);
 
-		if(invisibles.enabled || (_type != kNodeTypeTab && _type != kNodeTypeNewline))
+		if(_type != kNodeTypeNewline || context.newline().size())
 		{
 			std::string str = NULL_STR;
 			scope::scope_t scope = buffer.scope(bufferOffset).right;
 			switch(_type)
 			{
-				case kNodeTypeTab:
-					str = invisibles.tab;
-					scope.push_scope("deco.invisible.tab");
-				break;
 				case kNodeTypeNewline:
-					str = invisibles.newline;
+					str = context.newline();
 					scope.push_scope("deco.invisible.newline");
 				break;
 				case kNodeTypeFolding:
@@ -248,14 +235,12 @@ namespace ng
 		size_t from = 0, i = 0;
 		citerate(ch, diacritics::make_range(str.data(), str.data() + str.size()))
 		{
-			if(*ch == '\t' || *ch == '\n' || representation_for(*ch) != NULL_STR)
+			if(*ch == '\n' || representation_for(*ch) != NULL_STR)
 			{
 				if(from != i)
 					insert_text(pos - bufferOffset + from, i - from);
 
-				if(*ch == '\t')
-					insert_tab(pos - bufferOffset + i);
-				else if(*ch == '\n')
+				if(*ch == '\n')
 					insert_newline(pos - bufferOffset + i, ch.length());
 				else
 					insert_unprintable(pos - bufferOffset + i, ch.length());
@@ -381,7 +366,7 @@ namespace ng
 		size_t i = bufferOffset;
 		for(auto& node : _nodes)
 		{
-			node.layout(x, tabSize * metrics.column_width(), theme, softWrap, wrapColumn, metrics, buffer, i, fillStr);
+			node.layout(x, tabSize, theme, softWrap, wrapColumn, metrics, buffer, i, fillStr);
 			x += node.width();
 			i += node.length();
 		}
@@ -484,11 +469,6 @@ namespace ng
 		_nodes.insert(iterator_at(i), node_t(kNodeTypeText, len));
 	}
 
-	void paragraph_t::insert_tab (size_t i)
-	{
-		_nodes.insert(iterator_at(i), node_t(kNodeTypeTab, 1, 10));
-	}
-
 	void paragraph_t::insert_unprintable (size_t i, size_t len)
 	{
 		_nodes.insert(iterator_at(i), node_t(kNodeTypeUnprintable, len));
@@ -504,20 +484,15 @@ namespace ng
 		_dirty = true;
 	}
 
-	void paragraph_t::set_tab_size (size_t tabSize, ct::metrics_t const& metrics)
+	void paragraph_t::set_tab_size (ct::metrics_t const& metrics)
 	{
-		double const tabWidth = tabSize * metrics.column_width();
+		_dirty = true;
 
 		auto lines = softlines(metrics);
 		for(size_t i = 0; i < lines.size(); ++i)
 		{
-			CGFloat x = lines[i].x;
 			foreach(node, _nodes.begin() + lines[i].first, _nodes.begin() + lines[i].last)
-			{
-				if(node->type() == kNodeTypeTab)
-					node->update_tab_width(x, tabWidth, metrics);
-				x += node->width();
-			}
+				node->update_tab_width();
 		}
 	}
 
@@ -734,7 +709,7 @@ namespace ng
 		return index;
 	}
 
-	void paragraph_t::draw_background (theme_ptr const& theme, ct::metrics_t const& metrics, ng::context_t const& context, bool isFlipped, CGRect visibleRect, ng::invisibles_t const& invisibles, CGColorRef backgroundColor, ng::buffer_t const& buffer, size_t bufferOffset, CGPoint anchor) const
+	void paragraph_t::draw_background (theme_ptr const& theme, ct::metrics_t const& metrics, ng::context_t const& context, bool isFlipped, CGRect visibleRect, CGColorRef backgroundColor, ng::buffer_t const& buffer, size_t bufferOffset, CGPoint anchor) const
 	{
 		auto lines = softlines(metrics);
 		for(size_t i = 0; i < lines.size(); ++i)
@@ -743,14 +718,14 @@ namespace ng
 			size_t offset = lines[i].offset;
 			foreach(node, _nodes.begin() + lines[i].first, _nodes.begin() + lines[i].last)
 			{
-				node->draw_background(theme, context, isFlipped, visibleRect, invisibles, backgroundColor, buffer, bufferOffset + offset, CGPointMake(anchor.x + x, anchor.y + lines[i].y), lines[i].height);
+				node->draw_background(theme, context, isFlipped, visibleRect, backgroundColor, buffer, bufferOffset + offset, CGPointMake(anchor.x + x, anchor.y + lines[i].y), lines[i].height);
 				x += node->width();
 				offset += node->length();
 			}
 		}
 	}
 
-	void paragraph_t::draw_foreground (theme_ptr const& theme, ct::metrics_t const& metrics, ng::context_t const& context, bool isFlipped, CGRect visibleRect, ng::invisibles_t const& invisibles, ng::buffer_t const& buffer, size_t bufferOffset, ng::ranges_t const& selection, CGPoint anchor) const
+	void paragraph_t::draw_foreground (theme_ptr const& theme, ct::metrics_t const& metrics, ng::context_t const& context, bool isFlipped, CGRect visibleRect, ng::buffer_t const& buffer, size_t bufferOffset, ng::ranges_t const& selection, CGPoint anchor) const
 	{
 		CGContextSetTextMatrix(context, CGAffineTransformMake(1, 0, 0, 1, 0, 0));
 
@@ -782,7 +757,7 @@ namespace ng
 					}
 				}
 
-				node->draw_foreground(theme, context, isFlipped, visibleRect, invisibles, buffer, offset, misspelled, CGPointMake(anchor.x + x, anchor.y + lines[i].y), lines[i].baseline);
+				node->draw_foreground(theme, context, isFlipped, visibleRect, buffer, offset, misspelled, CGPointMake(anchor.x + x, anchor.y + lines[i].y), lines[i].baseline);
 				x += node->width();
 				offset += node->length();
 			}

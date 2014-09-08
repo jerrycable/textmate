@@ -8,7 +8,7 @@
 
 OAK_DEBUG_VAR(AuthServer);
 
-static double const AppVersion  = 1.1;
+static double const AppVersion  = 1.2;
 static size_t const AppRevision = APP_REVISION;
 
 extern char* optarg;
@@ -65,7 +65,7 @@ static int setup_socket ()
 	int rc = bind(fd, (sockaddr*)&addr, sizeof(addr));
 	chmod(kAuthSocketPath, S_IRWXU|S_IRWXG|S_IRWXO);
 	assert(rc != -1);
-	rc = listen(fd, 5);
+	rc = listen(fd, SOMAXCONN);
 	assert(rc != -1);
 
 	return fd;
@@ -166,9 +166,9 @@ int main (int argc, char const* argv[])
 			case 's': server = true;    break;
 			case 'i': install = true;   break;
 			case 'u': uninstall = true; break;
-			case 'h': usage();          return 0;
-			case 'v': version();        return 0;
-			default:  usage(stderr);    return 1;
+			case 'h': usage();          return EX_OK;
+			case 'v': version();        return EX_OK;
+			default:  usage(stderr);    return EX_USAGE;
 		}
 	}
 
@@ -206,11 +206,11 @@ int main (int argc, char const* argv[])
 			{
 				D(DBF_AuthServer, bug("new connection\n"););
 				handle_connection(newFd);
-				// _exit(0);
+				// _exit(EXIT_SUCCESS);
 			}
 		}
 	}
 
 	close_socket(fd);
-	return 0;
+	return EX_OK;
 }

@@ -90,6 +90,7 @@ NSString* const kUserDefaultsDisablePersistentClipboardHistory = @"disablePersis
 @interface OakPasteboard ()
 @property (nonatomic) NSString* name;
 @property (nonatomic) NSInteger changeCount;
+@property (nonatomic) BOOL disableSystemPasteboardUpdating;
 @property (nonatomic) BOOL needsSavePasteboardHistory;
 @property (nonatomic) OakPasteboardEntry* primitiveCurrentEntry;
 - (BOOL)avoidsDuplicates;
@@ -155,7 +156,7 @@ static NSMutableDictionary* SharedInstances = [NSMutableDictionary new];
 	BOOL _needsSavePasteboardHistory;
 }
 @dynamic name, currentEntry, auxiliaryOptionsForCurrent, primitiveCurrentEntry;
-@synthesize changeCount;
+@synthesize changeCount, disableSystemPasteboardUpdating;
 
 + (void)initialize
 {
@@ -191,6 +192,7 @@ static NSMutableDictionary* SharedInstances = [NSMutableDictionary new];
 	{
 		managedObjectContext = [[NSManagedObjectContext alloc] init];
 		managedObjectContext.persistentStoreCoordinator = self.persistentStoreCoordinator;
+		managedObjectContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy;
 		managedObjectContext.undoManager = nil;
 	}
 	return managedObjectContext;
@@ -231,9 +233,14 @@ static NSMutableDictionary* SharedInstances = [NSMutableDictionary new];
 		}
 
 		persistentStoreCoordinator = [[NSPersistentStoreCoordinator alloc] initWithManagedObjectModel:self.managedObjectModel];
-		if(![persistentStoreCoordinator addPersistentStoreWithType:NSSQLiteStoreType configuration:nil URL:storeURL options:nil error:&error])
+		while(![persistentStoreCoordinator addPersistentStoreWithType:NSSQLiteStoreType configuration:nil URL:storeURL options:nil error:&error])
 		{
 			NSLog(@"unable to create persistent store ‘%@’: %@", [storeURL path], error);
+			if([error.domain isEqualToString:NSCocoaErrorDomain] && error.code == NSFileReadCorruptFileError)
+			{
+				if([[NSFileManager defaultManager] removeItemAtURL:storeURL error:&error])
+					continue;
+			}
 			[NSApp presentError:error];
 			crash_reporter_info_t crashInfo(to_s(error));
 			abort();
@@ -395,7 +402,11 @@ static NSMutableDictionary* SharedInstances = [NSMutableDictionary new];
 		NSString* inHistory = self.currentEntry.string;
 		self.changeCount = [[self pasteboard] changeCount];
 		if((onClipboard && !inHistory) || (onClipboard && inHistory && ![inHistory isEqualToString:onClipboard]))
+		{
+			self.disableSystemPasteboardUpdating = YES;
 			[self internalAddEntryWithString:onClipboard andOptions:[[self pasteboard] availableTypeFromArray:@[ OakPasteboardOptionsPboardType ]] ? [[self pasteboard] propertyListForType:OakPasteboardOptionsPboardType] : nil];
+			self.disableSystemPasteboardUpdating = NO;
+		}
 	}
 }
 
@@ -408,8 +419,7 @@ static NSMutableDictionary* SharedInstances = [NSMutableDictionary new];
 
 	if(newEntry)
 	{
-		NSString* onClipboard = [[self pasteboard] availableTypeFromArray:@[ NSStringPboardType ]] ? [[self pasteboard] stringForType:NSStringPboardType] : nil;
-		if(!onClipboard || ![newEntry.string isEqualToString:onClipboard])
+		if(!self.disableSystemPasteboardUpdating)
 		{
 			[[self pasteboard] declareTypes:@[ NSStringPboardType, OakPasteboardOptionsPboardType ] owner:nil];
 			[[self pasteboard] setString:newEntry.string forType:NSStringPboardType];
@@ -576,7 +586,7 @@ static NSMutableDictionary* SharedInstances = [NSMutableDictionary new];
 
 - (void)selectItemForControl:(NSView*)controlView
 {
-	NSPoint origin = [[controlView window] convertBaseToScreen:[controlView frame].origin];
+	NSPoint origin = [[controlView window] convertRectToScreen:[controlView frame]].origin;
 	[self selectItemAtPosition:origin withWidth:[controlView frame].size.width respondToSingleClick:YES];
 }
 @end

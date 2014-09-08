@@ -3,7 +3,6 @@
 #include <regexp/regexp.h>
 #include <regexp/format_string.h>
 #include <oak/oak.h>
-#include <oak/server.h>
 #include <text/case.h>
 #include <text/ctype.h>
 #include <text/parse.h>
@@ -66,7 +65,7 @@ namespace transform
 	std::string transpose (std::string const& src)
 	{
 		std::vector< std::pair<char const*, char const*> > v = text::to_lines(src.data(), src.data() + src.size());
-		bool hasNewline = !src.empty() && src[src.size()-1] == '\n';
+		bool hasNewline = !src.empty() && src.back() == '\n';
 
 		std::string res("");
 		if(v.size() == 1 || (v.size() == 2 && v.back().first == v.back().second))
@@ -100,10 +99,13 @@ namespace transform
 	// this is copy/paste from string_ranker.cc
 	static std::string decompose_string (std::string const& src)
 	{
-		CFMutableStringRef tmp = CFStringCreateMutableCopy(kCFAllocatorDefault, 0, cf::wrap(src));
-		CFStringNormalize(tmp, kCFStringNormalizationFormD);
-		std::string const& res = cf::to_s(tmp);
-		CFRelease(tmp);
+		std::string res;
+		if(CFMutableStringRef tmp = CFStringCreateMutableCopy(kCFAllocatorDefault, 0, cf::wrap(src)))
+		{
+			CFStringNormalize(tmp, kCFStringNormalizationFormD);
+			res = cf::to_s(tmp);
+			CFRelease(tmp);
+		}
 		return res;
 	}
 

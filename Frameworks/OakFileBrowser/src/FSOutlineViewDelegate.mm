@@ -265,16 +265,16 @@ static NSSet* VisibleItems (NSOutlineView* outlineView, FSItem* root, NSMutableS
 
 		self.pendingMakeVisibleURL = nil;
 	}
-	
+
 	for(NSInteger i = 0; i < [outlineView numberOfRows] && [pendingExpandURLs count]; ++i)
 	{
 		id item = [outlineView itemAtRow:i];
-		
+
 		if(![pendingExpandURLs containsObject:[item url]])
 			continue;
-		
+
 		[outlineView expandItem:item];
-		
+
 		[pendingExpandURLs removeObject:[item url]];
 	}
 	if([pendingExpandURLs count] == 0)
@@ -289,34 +289,34 @@ static NSSet* VisibleItems (NSOutlineView* outlineView, FSItem* root, NSMutableS
 	self.pendingSelectURLs = [NSSet setWithArray:someURLs];
 	if([someURLs count] == 1)
 		self.pendingMakeVisibleURL = [someURLs lastObject];
-	
+
 	if(expandAncestors)
 	{
 		[expandedURLs removeAllObjects];
 
 		NSMutableSet* ancestors = [NSMutableSet set];
 		NSURL* rootURL = dataSource.rootItem.url;
-		
+
 		for(NSURL* targetURL in someURLs)
 		{
 			NSMutableSet* currentAncestors = [NSMutableSet set];
 			NSURL* currentURL;
-			
+
 			for(currentURL = ParentForURL(targetURL); currentURL; currentURL = ParentForURL(currentURL))
 			{
 				if([currentURL isEqual:rootURL])
 					break;
-				
+
 				[currentAncestors addObject:currentURL];
 			}
-			
+
 			if(currentURL)
 				[ancestors unionSet:currentAncestors];
 		}
-		
+
 		self.pendingExpandURLs = ancestors;
 	}
-	
+
 	[self checkPendingSelectAndEditURLs];
 }
 
@@ -414,7 +414,7 @@ static NSSet* VisibleItems (NSOutlineView* outlineView, FSItem* root, NSMutableS
 			item.icon.modified = [modifiedURLs containsObject:item.url];
 		[cell setImage:item.icon];
 	}
-	cell.stringValue       = item.name;
+	cell.stringValue       = item.displayName;
 	// cell.textColor         = lstat([[item.url path] fileSystemRepresentation], &(struct stat){ 0 }) == 0 ? [NSColor textColor] : [NSColor redColor];
 	// cell.target            = delegate;
 	cell.representedObject = item;
@@ -423,6 +423,12 @@ static NSSet* VisibleItems (NSOutlineView* outlineView, FSItem* root, NSMutableS
 	if([cell respondsToSelector:@selector(setIsOpen:)])
 		((OFBPathInfoCell*)cell).isOpen = [openURLs containsObject:item.url];
 	// cell.isLoading         = item.isLoading;
+
+	if([anOutlineView editedRow] != -1 && item == [anOutlineView itemAtRow:[anOutlineView editedRow]])
+	{
+		if(NSString* path = [[item.url filePathURL] path])
+			cell.stringValue = [NSString stringWithCxxString:path::display_name([path fileSystemRepresentation])];
+	}
 }
 
 - (BOOL)outlineView:(NSOutlineView*)anOutlineView shouldSelectItem:(id)item

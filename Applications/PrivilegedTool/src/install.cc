@@ -4,7 +4,7 @@
 #include <io/io.h>
 #include <authorization/constants.h>
 
-static const char* kPlistFormatString =
+static char const* const kPlistFormatString =
 	"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
 	"<!DOCTYPE plist PUBLIC \"-//Apple Computer//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
 	"<plist version=\"1.0\">\n"
@@ -48,7 +48,7 @@ static void launch_control (char const* command, std::string const& argument)
 	{
 		execl("/bin/launchctl", "/bin/launchctl", command, argument.c_str(), NULL);
 		perror("/bin/launchctl failed");
-		_exit(1);
+		_exit(EXIT_FAILURE);
 	}
 
 	int status = 0;
@@ -98,19 +98,19 @@ int install_tool (std::string const& toolPath)
 	setgid(getegid());
 
 	if(!path::make_dir(path::parent(kAuthToolPath)))
-		return 1;
+		return EX_CANTCREAT;
 	path::remove(kAuthToolPath);
 	if(!path::copy(toolPath, kAuthToolPath))
-		return 1;
+		return EX_IOERR;
    chown(kAuthToolPath, 0, 0);
 	if(path::exists(kAuthPlistPath))
 		launch_control("unload", kAuthPlistPath);
 	if(!path::set_content(kAuthPlistPath, plist_content()))
-		return 1;
+		return EX_IOERR;
 	launch_control("load", kAuthPlistPath);
 
 	add_policy();
-	return 0;
+	return EX_OK;
 }
 
 int uninstall_tool ()
@@ -122,5 +122,5 @@ int uninstall_tool ()
 		path::remove(kAuthPlistPath);
 	}
 	path::remove(kAuthToolPath);
-	return 0;
+	return EX_OK;
 }

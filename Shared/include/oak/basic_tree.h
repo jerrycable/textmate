@@ -100,8 +100,8 @@ namespace oak
 			node_t* _parent;
 			size_t _level = 1;
 
-			_KeyT _relative_key;			// relative to parent->left->_key_offset + parent->_relative_key + left->_key_offset
-			_KeyT _key_offset;			// left->_key_offset + _relative_key + right->_key_offset
+			_KeyT _relative_key;       // relative to parent->left->_key_offset + parent->_relative_key + left->_key_offset
+			_KeyT _key_offset;         // left->_key_offset + _relative_key + right->_key_offset
 			_ValueT _value;
 		};
 
@@ -264,7 +264,7 @@ namespace oak
 				return fprintf(stderr, "parent of %p is %p, should be %p\n", node->_left, node->_left->_parent, node), false;
 			if(!node->_right->is_null() && !eq(node, node->_right->_parent))
 				return fprintf(stderr, "parent of %p is %p, should be %p\n", node->_right, node->_right->_parent, node), false;
-		
+
 			res = res && (node->_level == node->_left->is_null() ? 1 : node->_left->_level+1);
 			res = res && (node->_level - node->_right->_level <= 1);
 			res = res && (node->_level > node->_right->_right->_level);

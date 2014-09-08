@@ -31,7 +31,7 @@ static void CreateHyperLink (NSTextField* textField, NSString* text, NSString* u
 	[textField setAttributedStringValue:attrString];
 }
 
-static bool run_auth_command (AuthorizationRef& auth, std::string const& cmd, ...)
+static bool run_auth_command (AuthorizationRef& auth, std::string const cmd, ...)
 {
 	if(!auth && AuthorizationCreate(NULL, kAuthorizationEmptyEnvironment, kAuthorizationFlagDefaults, &auth) != errAuthorizationSuccess)
 		return false;
@@ -205,7 +205,7 @@ static bool uninstall_mate (std::string const& path)
 
 	[installStatusText setStringValue:[NSString stringWithCxxString:format_string::expand(statusTextFormat, variables)]];
 	[installSummaryText setStringValue:[NSString stringWithCxxString:format_string::expand(summaryTextFormat, variables)]];
-	self.installIndicaitorImage = [NSImage imageNamed:(isInstalled ? @"Light-on" : @"Light-off") inSameBundleAsClass:[self class]];
+	self.installIndicaitorImage = [NSImage imageNamed:(isInstalled ? NSImageNameStatusAvailable : NSImageNameStatusUnavailable)];
 
 	[installPathPopUp setEnabled:isInstalled ? NO : YES];
 	[installButton setAction:isInstalled ? @selector(performUninstallMate:) : @selector(performInstallMate:)];

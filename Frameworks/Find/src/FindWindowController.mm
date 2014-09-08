@@ -18,6 +18,21 @@
 NSString* const kUserDefaultsFolderOptionsKey     = @"Folder Search Options";
 NSString* const kUserDefaultsFindResultsHeightKey = @"findResultsHeight";
 
+NSButton* OakCreateClickableStatusBar ()
+{
+	NSButton* res = [[NSButton alloc] initWithFrame:NSZeroRect];
+	[res.cell setLineBreakMode:NSLineBreakByTruncatingTail];
+	res.alignment  = NSLeftTextAlignment;
+	res.bordered   = NO;
+	res.buttonType = NSToggleButton;
+	res.font       = [NSFont controlContentFontOfSize:[NSFont smallSystemFontSize]];
+	res.title      = @"";
+
+	[res setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+	[res setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
+	return res;
+}
+
 @interface OakAutoSizingTextField : NSTextField
 @property (nonatomic) NSSize myIntrinsicContentSize;
 @end
@@ -38,25 +53,28 @@ NSString* const kUserDefaultsFindResultsHeightKey = @"findResultsHeight";
 }
 @end
 
-static OakAutoSizingTextField* OakCreateTextField (id <NSTextFieldDelegate> delegate)
+static OakAutoSizingTextField* OakCreateTextField (id <NSTextFieldDelegate> delegate, NSObject* accessibilityLabel = nil)
 {
 	OakAutoSizingTextField* res = [[OakAutoSizingTextField alloc] initWithFrame:NSZeroRect];
 	res.font = OakControlFont();
 	[[res cell] setWraps:YES];
+	OakSetAccessibilityLabel(res, accessibilityLabel);
 	res.delegate = delegate;
 	return res;
 }
 
-static NSButton* OakCreateHistoryButton ()
+static NSButton* OakCreateHistoryButton (NSString* toolTip)
 {
 	NSButton* res = [[NSButton alloc] initWithFrame:NSZeroRect];
 	res.bezelStyle = NSRoundedDisclosureBezelStyle;
 	res.buttonType = NSMomentaryLightButton;
 	res.title      = @"";
+	res.toolTip    = toolTip;
+	OakSetAccessibilityLabel(res, toolTip);
 	return res;
 }
 
-static NSOutlineView* OakCreateOutlineView (NSScrollView** scrollViewOut)
+static NSOutlineView* OakCreateOutlineView (NSScrollView** scrollViewOut, NSObject* accessibilityLabel)
 {
 	NSOutlineView* res = [[NSOutlineView alloc] initWithFrame:NSZeroRect];
 	res.focusRingType                      = NSFocusRingTypeNone;
@@ -64,6 +82,7 @@ static NSOutlineView* OakCreateOutlineView (NSScrollView** scrollViewOut)
 	res.autoresizesOutlineColumn           = NO;
 	res.usesAlternatingRowBackgroundColors = YES;
 	res.headerView                         = nil;
+	OakSetAccessibilityLabel(res, accessibilityLabel);
 
 	NSTableColumn* tableColumn = [[NSTableColumn alloc] initWithIdentifier:@"checkbox"];
 	NSButtonCell* dataCell = [NSButtonCell new];
@@ -107,7 +126,7 @@ static NSProgressIndicator* OakCreateProgressIndicator ()
 
 static NSButton* OakCreateStopSearchButton ()
 {
-	NSButton* res     = [[NSButton alloc] initWithFrame:NSZeroRect];
+	NSButton* res = [[NSButton alloc] initWithFrame:NSZeroRect];
 	res.buttonType    = NSMomentaryChangeButton;
 	res.bordered      = NO;
 	res.image         = [NSImage imageNamed:NSImageNameStopProgressFreestandingTemplate];
@@ -116,14 +135,11 @@ static NSButton* OakCreateStopSearchButton ()
 	res.keyEquivalent = @".";
 	res.keyEquivalentModifierMask = NSCommandKeyMask;
 	[res.cell setImageScaling:NSImageScaleProportionallyDown];
+	OakSetAccessibilityLabel(res, res.toolTip);
 	return res;
 }
 
 @interface FindWindowController () <NSTextFieldDelegate, NSWindowDelegate, NSMenuDelegate>
-{
-	BOOL _wrapAround;
-	BOOL _ignoreCase;
-}
 @property (nonatomic) NSTextField*              findLabel;
 @property (nonatomic) OakAutoSizingTextField*   findTextField;
 @property (nonatomic) NSButton*                 findHistoryButton;
@@ -152,7 +168,7 @@ static NSButton* OakCreateStopSearchButton ()
 @property (nonatomic) NSView*                   resultsBottomDivider;
 
 @property (nonatomic) NSProgressIndicator*      progressIndicator;
-@property (nonatomic) NSTextField*              statusTextField;
+@property (nonatomic) NSButton*                 statusTextField;
 
 @property (nonatomic, readwrite) NSButton*      findAllButton;
 @property (nonatomic, readwrite) NSButton*      replaceAllButton;
@@ -190,13 +206,16 @@ static NSButton* OakCreateStopSearchButton ()
 		self.window.restorable         = NO;
 
 		self.findLabel                 = OakCreateLabel(@"Find:");
-		self.findTextField             = OakCreateTextField(self);
-		self.findHistoryButton         = OakCreateHistoryButton();
+		self.findTextField             = OakCreateTextField(self, self.findLabel);
+		self.findHistoryButton         = OakCreateHistoryButton(@"Show Find History");
 		self.countButton               = OakCreateButton(@"Σ", NSSmallSquareBezelStyle);
 
+		self.countButton.toolTip = @"Show Results Count";
+		OakSetAccessibilityLabel(self.countButton, self.countButton.toolTip);
+
 		self.replaceLabel              = OakCreateLabel(@"Replace:");
-		self.replaceTextField          = OakCreateTextField(self);
-		self.replaceHistoryButton      = OakCreateHistoryButton();
+		self.replaceTextField          = OakCreateTextField(self, self.replaceLabel);
+		self.replaceHistoryButton      = OakCreateHistoryButton(@"Show Replace History");
 
 		self.optionsLabel              = OakCreateLabel(@"Options:");
 
@@ -206,22 +225,19 @@ static NSButton* OakCreateStopSearchButton ()
 		self.wrapAroundCheckBox        = OakCreateCheckBox(@"Wrap Around");
 
 		self.whereLabel                = OakCreateLabel(@"In:");
-		self.wherePopUpButton          = OakCreatePopUpButton();
+		self.wherePopUpButton          = OakCreatePopUpButton(NO, nil, self.whereLabel);
 		self.matchingLabel             = OakCreateLabel(@"matching");
-		self.globTextField             = OakCreateComboBox();
-		self.actionsPopUpButton        = OakCreatePopUpButton(YES /* pulls down */);
+		self.globTextField             = OakCreateComboBox(self.matchingLabel);
+		self.actionsPopUpButton        = OakCreateActionPopUpButton(YES /* bordered */);
 
 		NSScrollView* resultsScrollView = nil;
 		self.resultsTopDivider         = OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.500 alpha:1]);
-		self.resultsOutlineView        = OakCreateOutlineView(&resultsScrollView);
+		self.resultsOutlineView        = OakCreateOutlineView(&resultsScrollView, @"Results");
 		self.resultsScrollView         = resultsScrollView;
 		self.resultsBottomDivider      = OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.500 alpha:1]);
 
 		self.progressIndicator         = OakCreateProgressIndicator();
-		self.statusTextField           = OakCreateSmallLabel();
-
-		[self.statusTextField setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
-		[self.statusTextField.cell setLineBreakMode:NSLineBreakByTruncatingTail];
+		self.statusTextField           = OakCreateClickableStatusBar();
 
 		self.findAllButton             = OakCreateButton(@"Find All");
 		self.replaceAllButton          = OakCreateButton(@"Replace All");
@@ -237,11 +253,8 @@ static NSButton* OakCreateStopSearchButton ()
 		// =============================
 
 		NSMenu* actionMenu = self.actionsPopUpButton.menu;
-		[actionMenu removeAllItems];
 
-		NSMenuItem* titleItem = [actionMenu addItemWithTitle:@"" action:@selector(nop:) keyEquivalent:@""];
-		titleItem.image = [NSImage imageNamed:NSImageNameActionTemplate];
-
+		[actionMenu addItemWithTitle:@"Placeholder" action:NULL keyEquivalent:@""];
 		[actionMenu addItemWithTitle:@"Follow Symbolic Links" action:@selector(toggleFollowSymbolicLinks:) keyEquivalent:@""];
 		[actionMenu addItemWithTitle:@"Search Hidden Folders" action:@selector(toggleSearchHiddenFolders:) keyEquivalent:@""];
 		[actionMenu addItem:[NSMenuItem separatorItem]];
@@ -258,6 +271,10 @@ static NSButton* OakCreateStopSearchButton ()
 		[actionMenu addItemWithTitle:@"Copy Matching Parts With Filenames" action:@selector(copyMatchingPartsWithFilename:) keyEquivalent:@""];
 		[actionMenu addItemWithTitle:@"Copy Entire Lines"                  action:@selector(copyEntireLines:)               keyEquivalent:@""];
 		[actionMenu addItemWithTitle:@"Copy Entire Lines With Filenames"   action:@selector(copyEntireLinesWithFilename:)   keyEquivalent:@""];
+
+		[actionMenu addItem:[NSMenuItem separatorItem]];
+		[actionMenu addItemWithTitle:@"Check All" action:@selector(checkAll:) keyEquivalent:@""];
+		[actionMenu addItemWithTitle:@"Uncheck All" action:@selector(uncheckAll:) keyEquivalent:@""];
 
 		// =============================
 
@@ -280,13 +297,11 @@ static NSButton* OakCreateStopSearchButton ()
 		[self.globTextField             bind:NSValueBinding         toObject:_objectController withKeyPath:@"content.globHistoryList.head" options:nil];
 		[self.globTextField             bind:NSContentValuesBinding toObject:_objectController withKeyPath:@"content.globHistoryList.list" options:nil];
 		[self.globTextField             bind:NSEnabledBinding       toObject:_objectController withKeyPath:@"content.folderSearch"         options:nil];
-		[self.actionsPopUpButton        bind:NSEnabledBinding       toObject:_objectController withKeyPath:@"content.folderSearch"         options:nil];
 		[self.ignoreCaseCheckBox        bind:NSValueBinding         toObject:_objectController withKeyPath:@"content.ignoreCase"           options:nil];
 		[self.ignoreWhitespaceCheckBox  bind:NSValueBinding         toObject:_objectController withKeyPath:@"content.ignoreWhitespace"     options:nil];
 		[self.regularExpressionCheckBox bind:NSValueBinding         toObject:_objectController withKeyPath:@"content.regularExpression"    options:nil];
 		[self.wrapAroundCheckBox        bind:NSValueBinding         toObject:_objectController withKeyPath:@"content.wrapAround"           options:nil];
 		[self.ignoreWhitespaceCheckBox  bind:NSEnabledBinding       toObject:_objectController withKeyPath:@"content.canIgnoreWhitespace"  options:nil];
-		[self.statusTextField           bind:NSValueBinding         toObject:_objectController withKeyPath:@"content.statusString"         options:nil];
 		[self.replaceAndFindButton      bind:NSEnabledBinding       toObject:_objectController withKeyPath:@"content.folderSearch"         options:@{ NSValueTransformerNameBindingOption: @"NSNegateBoolean" }];
 
 		NSView* contentView = self.window.contentView;
@@ -316,6 +331,10 @@ static NSButton* OakCreateStopSearchButton ()
 		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(replaceClipboardDidChange:) name:OakPasteboardDidChangeNotification object:[OakPasteboard pasteboardWithName:OakReplacePboard]];
 		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(textViewWillPerformFindOperation:) name:@"OakTextViewWillPerformFindOperation" object:nil];
 
+		// Register to application activation/deactivation notification so we can tweak our collection behavior
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applicationDidActivate:) name:NSApplicationDidBecomeActiveNotification object:nil];
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applicationDidDeactivate:) name:NSApplicationDidResignActiveNotification object:nil];
+
 		[self.window addObserver:self forKeyPath:@"firstResponder" options:0 context:NULL];
 	}
 	return self;
@@ -325,6 +344,16 @@ static NSButton* OakCreateStopSearchButton ()
 {
 	[self.window removeObserver:self forKeyPath:@"firstResponder"];
 	[[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)applicationDidActivate:(NSNotification*)notification
+{
+	self.window.collectionBehavior |= NSWindowCollectionBehaviorMoveToActiveSpace;
+}
+
+- (void)applicationDidDeactivate:(NSNotification*)notification
+{
+	self.window.collectionBehavior &= ~NSWindowCollectionBehaviorMoveToActiveSpace;
 }
 
 - (void)menuNeedsUpdate:(NSMenu*)aMenu
@@ -417,8 +446,10 @@ static NSButton* OakCreateStopSearchButton ()
 	CONSTRAINT(@"V:[replace]-[ignoreWhitespace]-[wrapAround]",                                       0);
 
 	CONSTRAINT(@"H:|-(>=20,==20@75)-[whereLabel]-[where(<=180)]-[matching]", NSLayoutFormatAlignAllBaseline);
-	CONSTRAINT(@"H:[matching]-[glob]",                                       0);
-	CONSTRAINT(@"H:[where]-(>=8)-[glob]-[actions]",                          NSLayoutFormatAlignAllTop);
+	CONSTRAINT(@"H:[matching]-[glob]-[actions]",                             0);
+	[_myConstraints addObject:[NSLayoutConstraint constraintWithItem:self.actionsPopUpButton attribute:NSLayoutAttributeTop relatedBy:NSLayoutRelationEqual toItem:self.globTextField    attribute:NSLayoutAttributeTop multiplier:1 constant:1]];
+	[_myConstraints addObject:[NSLayoutConstraint constraintWithItem:self.actionsPopUpButton attribute:NSLayoutAttributeTop relatedBy:NSLayoutRelationEqual toItem:self.wherePopUpButton attribute:NSLayoutAttributeTop multiplier:1 constant:0]];
+
 	CONSTRAINT(@"V:[ignoreCase]-[where]",                                    NSLayoutFormatAlignAllLeft);
 	[_myConstraints addObject:[NSLayoutConstraint constraintWithItem:self.replaceTextField attribute:NSLayoutAttributeRight relatedBy:NSLayoutRelationEqual toItem:self.globTextField attribute:NSLayoutAttributeRight multiplier:1 constant:0]];
 
@@ -429,11 +460,11 @@ static NSButton* OakCreateStopSearchButton ()
 	if(self.showsResultsOutlineView)
 	{
 		CONSTRAINT(@"H:|[results(==resultsTopDivider,==resultsBottomDivider)]|", 0);
-		[_myConstraints addObjectsFromArray:[NSLayoutConstraint constraintsWithVisualFormat:@"V:[where]-[resultsTopDivider][results(>=50,==height@490)][resultsBottomDivider]-[status]" options:0 metrics:@{ @"height" : @(self.findResultsHeight) } views:views]];
+		[_myConstraints addObjectsFromArray:[NSLayoutConstraint constraintsWithVisualFormat:@"V:[where]-[resultsTopDivider][results(>=50,==height@490)][resultsBottomDivider]-(8)-[status]" options:0 metrics:@{ @"height" : @(self.findResultsHeight) } views:views]];
 	}
 	else
 	{
-		CONSTRAINT(@"V:[where]-[status]", 0);
+		CONSTRAINT(@"V:[where]-(8)-[status]", 0);
 	}
 
 	if(self.isBusy)
@@ -446,19 +477,19 @@ static NSButton* OakCreateStopSearchButton ()
 	}
 
 	CONSTRAINT(@"H:|-[findAll]-[replaceAll]-(>=8)-[replaceAndFind]-[previous]-[next]-|", NSLayoutFormatAlignAllBottom);
-	CONSTRAINT(@"V:[status(==14)]-[findAll]-|", 0);
+	CONSTRAINT(@"V:[status]-(8)-[findAll]-|", 0);
 
 	[self.window.contentView addConstraints:_myConstraints];
 
 	if(self.showsResultsOutlineView)
 	{
-		NSView* keyViewLoop[] = { self.findTextField, self.replaceTextField, self.globTextField, self.actionsPopUpButton, self.countButton, self.regularExpressionCheckBox, self.ignoreWhitespaceCheckBox, self.ignoreCaseCheckBox, self.wrapAroundCheckBox, self.wherePopUpButton, self.resultsOutlineView, self.findAllButton, self.replaceAllButton, self.replaceAndFindButton, self.findPreviousButton, self.findNextButton };
+		NSView* keyViewLoop[] = { self.findTextField, self.replaceTextField, self.countButton, self.regularExpressionCheckBox, self.ignoreWhitespaceCheckBox, self.ignoreCaseCheckBox, self.wrapAroundCheckBox, self.wherePopUpButton, self.globTextField, self.actionsPopUpButton, self.resultsOutlineView, self.findAllButton, self.replaceAllButton, self.replaceAndFindButton, self.findPreviousButton, self.findNextButton };
 		for(size_t i = 0; i < sizeofA(keyViewLoop); ++i)
 			keyViewLoop[i].nextKeyView = keyViewLoop[(i + 1) % sizeofA(keyViewLoop)];
 	}
 	else
 	{
-		NSView* keyViewLoop[] = { self.findTextField, self.replaceTextField, self.globTextField, self.countButton, self.regularExpressionCheckBox, self.ignoreWhitespaceCheckBox, self.ignoreCaseCheckBox, self.wrapAroundCheckBox, self.wherePopUpButton, self.findAllButton, self.replaceAllButton, self.replaceAndFindButton, self.findPreviousButton, self.findNextButton };
+		NSView* keyViewLoop[] = { self.findTextField, self.replaceTextField, self.countButton, self.regularExpressionCheckBox, self.ignoreWhitespaceCheckBox, self.ignoreCaseCheckBox, self.wrapAroundCheckBox, self.wherePopUpButton, self.globTextField, self.actionsPopUpButton, self.findAllButton, self.replaceAllButton, self.replaceAndFindButton, self.findPreviousButton, self.findNextButton };
 		for(size_t i = 0; i < sizeofA(keyViewLoop); ++i)
 			keyViewLoop[i].nextKeyView = keyViewLoop[(i + 1) % sizeofA(keyViewLoop)];
 	}
@@ -538,7 +569,7 @@ static NSButton* OakCreateStopSearchButton ()
 		OakFindFullWordsOption         : @(self.fullWords),
 	};
 
-	if(NSNotEmptyString(_findString))
+	if(OakNotEmptyString(_findString))
 	{
 		OakPasteboardEntry* oldEntry = [[OakPasteboard pasteboardWithName:NSFindPboard] current];
 		if(!oldEntry || ![oldEntry.string isEqualToString:_findString])
@@ -566,6 +597,13 @@ static NSButton* OakCreateStopSearchButton ()
 - (void)windowDidResignKey:(NSNotification*)aNotification
 {
 	[self commitEditing];
+}
+
+- (BOOL)windowShouldClose:(id)sender
+{
+	if([self.nextResponder respondsToSelector:@selector(windowShouldClose:)])
+		return [(id)self.nextResponder windowShouldClose:sender];
+	return YES;
 }
 
 - (void)windowWillClose:(NSNotification*)aNotification
@@ -606,7 +644,7 @@ static NSButton* OakCreateStopSearchButton ()
 	[[whereMenu itemAtIndex:0] setRepresentedObject:FFSearchInDocument];
 	[[whereMenu addItemWithTitle:@"Selection" action:@selector(takeSearchInFrom:) keyEquivalent:@""] setRepresentedObject:FFSearchInSelection];
 	[whereMenu addItem:[NSMenuItem separatorItem]];
-	[[whereMenu addItemWithTitle:@"Open Files" action:@selector(nop:) keyEquivalent:@""] setRepresentedObject:FFSearchInOpenFiles];
+	[[whereMenu addItemWithTitle:@"Open Files" action:@selector(takeSearchInFrom:) keyEquivalent:@""] setRepresentedObject:FFSearchInOpenFiles];
 	[[whereMenu addItemWithTitle:@"Project Folder" action:@selector(orderFrontFindPanel:) keyEquivalent:@"F"] setTag:3];
 	[whereMenu addItemWithTitle:@"Other Folder…" action:@selector(showFolderSelectionPanel:) keyEquivalent:@""];
 
@@ -767,20 +805,12 @@ static NSButton* OakCreateStopSearchButton ()
 	[self.resultsOutlineView setOutlineTableColumn:[self.resultsOutlineView tableColumnWithIdentifier:flag ? @"match" : @"checkbox"]];
 }
 
-- (void)setShowResultsCollapsed:(BOOL)flag
-{
-	if(_showResultsCollapsed = flag)
-			[self.resultsOutlineView collapseItem:nil collapseChildren:YES];
-	else	[self.resultsOutlineView expandItem:nil expandChildren:YES];
-	[self.resultsOutlineView setNeedsDisplay:YES];
-}
-
 - (void)setShowReplacementPreviews:(BOOL)flag
 {
 	if(_showReplacementPreviews != flag)
 	{
 		_showReplacementPreviews = flag;
-		[self.resultsOutlineView reloadData];
+		[self.resultsOutlineView reloadDataForRowIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, [self.resultsOutlineView numberOfRows])] columnIndexes:[NSIndexSet indexSetWithIndex:1]];
 	}
 }
 
@@ -804,6 +834,17 @@ static NSButton* OakCreateStopSearchButton ()
 	[self updateConstraints];
 }
 
+- (void)setStatusString:(NSString*)aString
+{
+	self.statusTextField.title = _statusString = OakIsEmptyString(aString) ? @" " : aString;
+	self.alternateStatusString = nil;
+}
+
+- (void)setAlternateStatusString:(NSString*)aString
+{
+	self.statusTextField.alternateTitle = _alternateStatusString = aString;
+}
+
 - (NSString*)searchFolder
 {
 	return [@[ FFSearchInDocument, FFSearchInSelection, FFSearchInOpenFiles ] containsObject:self.searchIn] ? nil : self.searchIn;
@@ -822,7 +863,7 @@ static NSButton* OakCreateStopSearchButton ()
 	}
 
 	_searchIn = aString;
-	self.folderSearch = self.searchFolder != nil;
+	self.folderSearch = self.searchFolder != nil || [aString isEqualTo:FFSearchInOpenFiles];
 	self.window.title = [self windowTitleForDocumentDisplayName:nil];
 	if(NSString* folder = self.searchFolder)
 		[self.recentFolders addObject:folder];
@@ -899,67 +940,6 @@ static NSButton* OakCreateStopSearchButton ()
 
 - (IBAction)toggleFollowSymbolicLinks:(id)sender { self.followSymbolicLinks = !self.followSymbolicLinks; }
 - (IBAction)toggleSearchHiddenFolders:(id)sender { self.searchHiddenFolders = !self.searchHiddenFolders; }
-- (IBAction)takeLevelToFoldFrom:(id)sender       { self.showResultsCollapsed = !self.showResultsCollapsed; }
-
-- (IBAction)selectNextResult:(id)sender
-{
-	if([self.resultsOutlineView numberOfRows] == 0)
-		return;
-
-	NSInteger row = [self.resultsOutlineView selectedRow];
-	while(true)
-	{
-		if(++row == [self.resultsOutlineView numberOfRows])
-		{
-			if(!self.wrapAround)
-				return;
-			row = -1;
-			continue;
-		}
-
-		if([[self.resultsOutlineView delegate] respondsToSelector:@selector(outlineView:isGroupItem:)] && [[self.resultsOutlineView delegate] outlineView:self.resultsOutlineView isGroupItem:[self.resultsOutlineView itemAtRow:row]])
-		{
-			[self.resultsOutlineView expandItem:[self.resultsOutlineView itemAtRow:row]];
-			continue;
-		}
-
-		[self.resultsOutlineView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
-		[self.resultsOutlineView scrollRowToVisible:row];
-
-		break;
-	}
-}
-
-- (IBAction)selectPreviousResult:(id)sender
-{
-	if([self.resultsOutlineView numberOfRows] == 0)
-		return;
-
-	self.showResultsCollapsed = NO;
-
-	NSInteger row = [self.resultsOutlineView selectedRow];
-	if(row == -1)
-		row = [self.resultsOutlineView numberOfRows];
-
-	while(true)
-	{
-		if(--row == 0)
-		{
-			if(!self.wrapAround)
-				return;
-			row = [self.resultsOutlineView numberOfRows];
-			continue;
-		}
-
-		if([[self.resultsOutlineView delegate] respondsToSelector:@selector(outlineView:isGroupItem:)] && [[self.resultsOutlineView delegate] outlineView:self.resultsOutlineView isGroupItem:[self.resultsOutlineView itemAtRow:row]])
-			continue;
-
-		[self.resultsOutlineView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
-		[self.resultsOutlineView scrollRowToVisible:row];
-
-		break;
-	}
-}
 
 - (BOOL)control:(NSControl*)control textView:(NSTextView*)textView doCommandBySelector:(SEL)command
 {
@@ -989,7 +969,7 @@ static NSButton* OakCreateStopSearchButton ()
 		[textField updateIntrinsicContentSizeToEncompassString:textView.string];
 
 	if(textField == self.replaceTextField && self.showReplacementPreviews)
-		[self.resultsOutlineView reloadData];
+		[self.resultsOutlineView reloadDataForRowIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, [self.resultsOutlineView numberOfRows])] columnIndexes:[NSIndexSet indexSetWithIndex:1]];
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem*)aMenuItem
@@ -999,8 +979,6 @@ static NSButton* OakCreateStopSearchButton ()
 		[aMenuItem setState:self.followSymbolicLinks ? NSOnState : NSOffState];
 	else if(aMenuItem.action == @selector(toggleSearchHiddenFolders:))
 		[aMenuItem setState:self.searchHiddenFolders ? NSOnState : NSOffState];
-	else if(aMenuItem.action == @selector(takeLevelToFoldFrom:) && aMenuItem.tag == -1)
-		[aMenuItem setTitle:self.showResultsCollapsed ? @"Expand Results" : @"Collapse Results"];
 	else if(aMenuItem.action == @selector(goToParentFolder:))
 		res = self.searchFolder != nil;
 	return res;

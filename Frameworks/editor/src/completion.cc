@@ -113,6 +113,9 @@ namespace ng
 			}
 		}
 
+		if(commandResult.empty() && prefix.empty() && suffix.empty())
+			return { };
+
 		for(ssize_t i = 0; i < commandResult.size(); ++i)
 			tmp.push_back(std::make_pair(-commandResult.size() + i, commandResult[i]));
 
@@ -213,7 +216,7 @@ namespace ng
 		if(setup_completion(scopeAttributes))
 		{
 			completion_info_t& info = _completion_info;
-			info.retreat();
+			info.recede();
 
 			std::multimap<range_t, std::string> insertions;
 			for(auto const& range : info.prefix_ranges())

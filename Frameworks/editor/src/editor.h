@@ -195,6 +195,7 @@ namespace ng
 		void set_selections (ranges_t const& r)                               { _selections = r; }
 		bool has_selection () const                                           { return not_empty(_buffer, _selections); }
 		std::string as_string (size_t from = 0, size_t to = SIZE_T_MAX) const { return _buffer.substr(from, to != SIZE_T_MAX ? to : _buffer.size()); }
+		void sanitize_selection ();
 
 		void perform_replacements (std::multimap<std::pair<size_t, size_t>, std::string> const& replacements);
 		bool handle_result (std::string const& out, output::type placement, output_format::type format, output_caret::type outputCaret, ng::range_t input_range, std::map<std::string, std::string> environment);
@@ -249,7 +250,7 @@ namespace ng
 			std::string const& current () const                                { ASSERT_LT(_index, _suggestions.size()); return _suggestions[_index]; }
 
 			void advance ()                                                    { if(++_index >= _suggestions.size()) _index = 0;  }
-			void retreat ()                                                    { if(--_index < 0) _index = _suggestions.size()-1; }
+			void recede ()                                                     { if(--_index < 0) _index = _suggestions.size()-1; }
 
       private:
 			size_t _revision = 0;

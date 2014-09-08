@@ -1,10 +1,12 @@
 #import "BundlesPreferences.h"
 #import <BundlesManager/BundlesManager.h>
+#import <OakFoundation/OakFoundation.h>
 #import <OakFoundation/NSDate Additions.h>
 #import <OakFoundation/NSString Additions.h>
 #import <MGScopeBar/MGScopeBar.h>
 #import <ns/ns.h>
 #import <regexp/format_string.h>
+#import <text/case.h>
 #import <text/ctype.h>
 #import <text/decode.h>
 
@@ -48,7 +50,18 @@ static std::string textify (std::string str)
 	{
 		bundles_db::bundle_ptr bundle = [_bundlesManager bundleAtIndex:i];
 		if(enabledCategories.empty() || enabledCategories.find(bundle->category()) != enabledCategories.end())
-			bundles.push_back(bundle);
+		{
+			if(OakIsEmptyString(filterString))
+			{
+				bundles.push_back(bundle);
+			}
+			else
+			{
+				std::string filter = text::lowercase(to_s(filterString));
+				if(text::lowercase(bundle->name()).find(filter) != std::string::npos)
+					bundles.push_back(bundle);
+			}
+		}
 	}
 	for(NSTableColumn* tableColumn in [bundlesTableView tableColumns])
 		[bundlesTableView setIndicatorImage:nil inTableColumn:tableColumn];
@@ -60,6 +73,8 @@ static std::string textify (std::string str)
 {
 	if(self = [super initWithNibName:@"BundlesPreferences" bundle:[NSBundle bundleForClass:[self class]]])
 	{
+		[MGScopeBar class]; // Ensure that we reference the class so that the linker doesn’t strip the framework
+
 		self.bundlesManager = [BundlesManager sharedInstance];
 		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(bundlesDidChange:) name:BundlesManagerBundlesDidChangeNotification object:_bundlesManager];
 		[self bundlesDidChange:self];
@@ -120,6 +135,17 @@ static std::string textify (std::string str)
 	[self bundlesDidChange:self];
 }
 
+- (NSView*)accessoryViewForScopeBar:(MGScopeBar*)theScopeBar
+{
+	return searchField;
+}
+
+- (IBAction)filterStringDidChange:(id)sender
+{
+	filterString = searchField.stringValue;
+	[self bundlesDidChange:self];
+}
+
 // ========================
 // = NSTableView Delegate =
 // ========================
@@ -148,6 +174,16 @@ static std::string textify (std::string str)
 	[aTableView setIndicatorImage:[NSImage imageNamed:(sortDescending ? @"NSDescendingSortIndicator" : @"NSAscendingSortIndicator")] inTableColumn:aTableColumn];
 
 	[aTableView reloadData];
+}
+
+- (void)tableView:(NSTableView*)aTableView willDisplayCell:(id)aCell forTableColumn:(NSTableColumn*)aTableColumn row:(int)rowIndex
+{
+	if([[aTableColumn identifier] isEqualToString:@"link"])
+	{
+		BOOL enabled = bundles[rowIndex]->html_url() != NULL_STR;
+		[aCell setEnabled:enabled];
+		[aCell setImage:enabled ? [NSImage imageNamed:@"NSFollowLinkFreestandingTemplate"] : nil];
+	}
 }
 
 - (BOOL)tableView:(NSTableView*)aTableView shouldEditTableColumn:(NSTableColumn*)aTableColumn row:(NSInteger)rowIndex

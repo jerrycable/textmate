@@ -13,7 +13,6 @@ extern NSString* const FFSearchInOpenFiles;
 
 @property (nonatomic) BOOL showsResultsOutlineView;
 @property (nonatomic) BOOL disableResultsCheckBoxes;
-@property (nonatomic) BOOL showResultsCollapsed;
 @property (nonatomic) BOOL showReplacementPreviews;
 
 @property (nonatomic) NSString* projectFolder;
@@ -35,10 +34,8 @@ extern NSString* const FFSearchInOpenFiles;
 
 @property (nonatomic, getter = isBusy) BOOL busy;
 @property (nonatomic) NSString* statusString;
+@property (nonatomic) NSString* alternateStatusString;
 
 @property (nonatomic) NSString* findErrorString;
 - (void)updateFindErrorString;
-
-- (IBAction)selectNextResult:(id)sender;
-- (IBAction)selectPreviousResult:(id)sender;
 @end

@@ -2,8 +2,6 @@
 #define COMMAND_RUNNER_H_MW7OSOTP
 
 #include "parser.h"
-#include "process.h"
-#include "reader.h"
 #include <buffer/buffer.h>
 #include <selection/selection.h>
 #include <text/types.h>
@@ -50,9 +48,11 @@ namespace command
 	{
 		runner_t () = delete;
 		runner_t (bundle_command_t const& command, ng::buffer_t const& buffer, ng::ranges_t const& selection, std::map<std::string, std::string> const& environment, std::string const& pwd, delegate_ptr delegate);
+		~runner_t ();
 
-		void launch ();
-		void wait (bool alsoForDetached = false);
+		void launch (dispatch_queue_t queue = dispatch_get_main_queue());
+		void wait ();
+		void wait_for_command ();
 
 		void add_callback (callback_t* callback)    { _callbacks.add(callback); }
 		void remove_callback (callback_t* callback) { _callbacks.remove(callback); }
@@ -61,44 +61,15 @@ namespace command
 		oak::uuid_t const& uuid () const                               { return _command.uuid; }
 		bool auto_scroll_output () const                               { return _command.auto_scroll_output; }
 		output_reuse::type output_reuse () const                       { return _command.output_reuse; }
-		bool running () const                                          { return _process.is_running; }
-		pid_t process_id () const                                      { return _process.process_id; }
+		auto_refresh::type auto_refresh () const                       { return _command.auto_refresh; }
+		bool running () const                                          { return _process_id != -1; }
+		pid_t process_id () const                                      { return _process_id; }
 		std::map<std::string, std::string> const& environment () const { return _environment; }
 
 	private:
-		struct my_process_t : process_t
-		{
-			WATCH_LEAKS(my_process_t);
-
-			my_process_t (runner_t* callback) : _callback(callback) { }
-			void did_exit (int rc);
-		private:
-			runner_t* _callback;
-		};
-
-		struct my_reader_t : reader_t
-		{
-			WATCH_LEAKS(my_reader_t);
-
-			my_reader_t (int fd, runner_ptr callback, bool is_error) : reader_t(fd), _callback(callback), _is_error(is_error) { }
-			void receive_data (char const* bytes, size_t len);
-		private:
-			runner_ptr _callback;
-			bool _is_error;
-		};
-
-		typedef std::shared_ptr<my_reader_t> my_reader_ptr;
-
-		friend struct my_reader_t;
-		void receive_data (char const* bytes, size_t len, bool is_error);
-
-		friend struct my_process_t;
-		void did_exit (int rc);
-
+		void did_exit (int status);
 		void send_html_data (char const* bytes, size_t len);
 		void show_document ();
-		void release ();
-		void finish ();
 
 		bundle_command_t _command;
 		std::map<std::string, std::string> _environment;
@@ -107,17 +78,14 @@ namespace command
 
 		ng::range_t _input_range;     // used when output replaces input
 		bool _input_was_selection;    // used with ‘exit_insert_snippet’ and when ‘output_caret == heuristic’
-		bool _output_is_html;
 		bool _did_send_html = false;
 		bool _did_detach;
-		size_t _retain_count;
 
-		my_process_t _process;
-		my_reader_ptr _output_reader;
-		my_reader_ptr _error_reader;
+		pid_t _process_id = -1;
+		dispatch_group_t _dispatch_group;
+		std::string _temp_path = NULL_STR;
 
 		std::string _out, _err;
-		int _return_code;
 		bool _user_abort = false;
 
 		oak::callbacks_t<callback_t> _callbacks;

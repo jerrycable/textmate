@@ -1,4 +1,3 @@
-#import <cf/callback.h>
 #import <oak/compat.h>
 #import <oak/debug.h>
 #import <OakSystem/application.h>
@@ -62,7 +61,11 @@ int main (int argc, char const* argv[])
 	}
 
 	try {
-		return NSApplicationMain(argc, argv);
+		int res = NSApplicationMain(argc, argv);
+		dispatch_release(sigUsr1Src);
+		dispatch_release(sigIntSrc);
+		dispatch_release(sigTermSrc);
+		return res;
 	}
 	catch(std::exception const& e) {
 		crash_reporter_info_t info(text::format("C++ Exception: %s", e.what()));

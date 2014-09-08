@@ -145,11 +145,17 @@ std::vector<theme_t::decomposed_style_t> theme_t::global_styles (scope::scope_t 
 
 gutter_styles_t::~gutter_styles_t ()
 {
-	CGColorRef colors[] = { divider, selectionBorder, foreground, background, icons, iconsHover, iconsPressed, selectionForeground, selectionBackground, selectionIcons, selectionIconsHover, selectionIconsPressed };
-	for(auto color : colors)
+	clear();
+}
+
+void gutter_styles_t::clear ()
+{
+	CGColorRef* colors[] = { &divider, &selectionBorder, &foreground, &background, &icons, &iconsHover, &iconsPressed, &selectionForeground, &selectionBackground, &selectionIcons, &selectionIconsHover, &selectionIconsPressed };
+	for(CGColorRef* ref : colors)
 	{
-		if(color)
-			CGColorRelease(color);
+		if(*ref)
+			CGColorRelease(*ref);
+		*ref = nullptr;
 	}
 }
 
@@ -220,6 +226,7 @@ theme_t::shared_styles_t::~shared_styles_t ()
 void theme_t::shared_styles_t::setup_styles ()
 {
 	_styles.clear();
+	_gutter_styles.clear();
 
 	if(_color_space)
 	{
@@ -410,11 +417,11 @@ styles_t const& theme_t::styles_for_scope (scope::scope_t const& scope) const
 	return styles->second;
 }
 
-static theme_t::color_info_t read_color (std::string const& str_color ) 
+static theme_t::color_info_t read_color (std::string const& str_color)
 {
 	enum { R, G, B, A };
 	unsigned int col[4] = { 0x00, 0x00, 0x00, 0xFF } ;
-	
+
 	if(3 <= sscanf(str_color.c_str(), "#%02x%02x%02x%02x", &col[R], &col[G], &col[B], &col[A]))
 		return theme_t::color_info_t::color_info_t(col[R]/255.0, col[G]/255.0, col[B]/255.0, col[A]/255.0);
 

@@ -7,7 +7,7 @@
 
 static void grow (char*& outBuf, size_t& outBufSize, std::string& dst, size_t copied)
 {
-	dst.resize(dst.size() * 3 / 2);
+	dst.resize((dst.size() * 3 + 1) / 2);
 	outBuf     = &dst.front() + copied;
 	outBufSize = dst.size() - copied;
 }
@@ -68,12 +68,18 @@ namespace file
 	{
 		_fd = open(_path.c_str(), O_RDONLY|O_CLOEXEC);
 		if(_fd == -1)
-			return io_error("open");
+		{
+			io_error("open");
+			return;
+		}
 
 		char buf[4];
 		ssize_t len = read(_fd, buf, sizeof(buf));
 		if(len == -1)
-			return io_error("read");
+		{
+			io_error("read");
+			return;
+		}
 
 		size_t bomSize = 0;
 		std::string charset = encoding::charset_from_bom(std::begin(buf), std::begin(buf) + len, &bomSize);
@@ -81,7 +87,10 @@ namespace file
 		{
 			set_charset(charset);
 			if(_cd == (iconv_t)-1)
-				return io_error("iconv_open");
+			{
+				io_error("iconv_open");
+				return;
+			}
 		}
 
 		lseek(_fd, bomSize, SEEK_SET);
@@ -164,6 +173,15 @@ namespace file
 
 		std::string dst(buf.size(), ' ');
 		size_t consumed = convert(_cd, buf.data(), buf.size(), dst);
+
+		if(len == 0 && consumed == 0 && !buf.empty())
+		{
+			fprintf(stderr, "error decoding ‘%s’ from %s: unable to continue decoding with %zu byte(s) left\n", _path.c_str(), _encoding.charset().c_str(), buf.size());
+
+			dst = "\uFFFD";
+			consumed = 1;
+		}
+
 		_spillover = std::string(buf.begin() + consumed, buf.end());
 		return std::make_shared<io::bytes_t>(dst);
 	}
@@ -190,13 +208,20 @@ namespace file
 		return _encoding;
 	}
 
-	std::string read_utf8 (std::string const& path, std::string* charset)
+	std::string read_utf8 (std::string const& path, std::string* charset, size_t limit)
 	{
 		reader_t reader(path);
 
 		std::string res;
 		while(auto bytes = reader.next())
+		{
 			res.insert(res.end(), bytes->begin(), bytes->end());
+			if(res.size() > limit)
+			{
+				res.resize(limit);
+				break;
+			}
+		}
 
 		if(charset)
 			*charset = reader.encoding().charset();

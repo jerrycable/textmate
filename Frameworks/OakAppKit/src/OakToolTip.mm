@@ -58,7 +58,7 @@ void OakShowToolTip (NSString* msg, NSPoint location)
 		[self setReleasedWhenClosed:NO];
 		[self setAlphaValue:0.97];
 		[self setOpaque:NO];
-		[self setBackgroundColor:[NSColor colorWithCalibratedRed:1.0 green:0.96 blue:0.76 alpha:1.0]];
+		[self setBackgroundColor:[NSColor colorWithCalibratedRed:1.00 green:0.96 blue:0.76 alpha:1]];
 		[self setHasShadow:YES];
 		[self setLevel:NSStatusWindowLevel];
 		[self setHidesOnDeactivate:YES];
@@ -115,7 +115,7 @@ void OakShowToolTip (NSString* msg, NSPoint location)
 		return YES;
 
 	CGFloat ignorePeriod = [[NSUserDefaults standardUserDefaults] floatForKey:@"OakToolTipMouseMoveIgnorePeriod"];
-	if(-[didOpenAtDate timeIntervalSinceNow] < ignorePeriod)
+	if([[NSDate date] timeIntervalSinceDate:didOpenAtDate] < ignorePeriod)
 		return NO;
 
 	if(NSEqualPoints(mousePositionWhenOpened, NSZeroPoint))
@@ -137,7 +137,7 @@ void OakShowToolTip (NSString* msg, NSPoint location)
 - (void)showUntilUserActivity
 {
 	// since we run a lcoal event loop we wish to ensure that this is not done in the middle of something that can’t handle such thing, e.g. our call stack could be something like lock_buffer() → do_edit_operation() → show_tool_tip() → [here]. Additionally by using performSelector:withObject:afterDelay: we keep ‘self’ retained while the tool tip is up.
-	[self performSelector:@selector(showUntilUserActivityDelayed:) withObject:self afterDelay:0.0];
+	[self performSelector:@selector(showUntilUserActivityDelayed:) withObject:self afterDelay:0];
 }
 
 - (void)showUntilUserActivityDelayed:(id)sender
@@ -219,7 +219,7 @@ void OakShowToolTip (NSString* msg, NSPoint location)
 
 - (void)animationTick:(id)sender
 {
-	CGFloat alpha = 0.97 * (1 - oak::slow_in_out(-1.5 * [self.animationStart timeIntervalSinceNow]));
+	CGFloat alpha = 0.97 * (1 - oak::slow_in_out(1.5 * [[NSDate date] timeIntervalSinceDate:self.animationStart]));
 	if(alpha > 0)
 	{
 		[self setAlphaValue:alpha];

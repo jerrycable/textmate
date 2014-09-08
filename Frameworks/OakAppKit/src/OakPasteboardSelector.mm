@@ -121,11 +121,7 @@ static size_t line_count (std::string const& text)
 
 - (CGFloat)rowHeightForText:(NSString*)text;
 {
-	NSArray* lines = [text componentsSeparatedByString:@"\n"];
-	CGFloat height = [self lineCountForText:text] * [[lines objectAtIndex:0] sizeWithAttributes:[self textAttributes]].height;
-	if(height == 0)
-		height = 15; // FIXME magic number (see commit log for details)
-	return height;
+	return [self lineCountForText:text] * [@"n" sizeWithAttributes:[self textAttributes]].height;
 }
 @end
 
@@ -254,7 +250,7 @@ static size_t line_count (std::string const& text)
 	}
 }
 
-- (int)visibleRows                             { return (int)floorf(NSHeight([tableView visibleRect]) / ([tableView rowHeight]+[tableView intercellSpacing].height)) - 1; }
+- (int)visibleRows                             { return (int)floor(NSHeight([tableView visibleRect]) / ([tableView rowHeight]+[tableView intercellSpacing].height)) - 1; }
 
 - (void)moveUp:(id)sender                      { [self moveSelectedRowByOffset:-1]; }
 - (void)moveDown:(id)sender                    { [self moveSelectedRowByOffset:+1];}

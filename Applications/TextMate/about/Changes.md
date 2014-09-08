@@ -1,10 +1,100 @@
+Title: Release Notes
+
 # Changes
 
-## 2014-03-04 ([v2.0-alpha.9517](https://github.com/textmate/textmate/compare/v2.0-alpha.9515...v2.0-alpha.9517))
+## 2014-09-02 ([v2.0-alpha.9563](https://github.com/textmate/textmate/compare/v2.0-alpha.9559...v2.0-alpha.9563))
 
-* The browser used for clipboard and search history, available using _Edit → Paste → Show History_ (⌃⌥⌘V) and _Edit → Find → Show History_ (⌃⌥⌘F), now support “type to filter”.
-* It is now possible to set the `disableIndentCorrections` to `emptyLines`. This will disable the indent corrections only when typing on empty lines, which has been made default for HTML.
-* Various fixes and improvements, click link above for full details.
+* Folder search results can be pruned using the new remove button shown per file in the list. You can also see how many bytes were searched by clicking the status bar (after a folder search).
+* The bundle item chooser now use a scope bar for the 3 item types it can show. You can move between sources via ⌘{ and ⌘}. The _Settings_ source currently shows settings from bundle items but long-term it should also show settings set via `.tm_properties` or from the settings window. The _Other_ source is currently language grammars and themes but might become _Styles_ with a more fine-grained view of what rules/themes are responsible for the current context.
+* The commit window is now a document modal sheet with the list of items to commit hidden by default. The intent is that one should select the items to commit in the file browser, here the Go → SCM Status (⇧⌘Y) is highly recommended. *[Ronald Wampler]*
+* Files opened via `mate` are now added to the recent menu by default unless the file is a dot-file (hidden), `--wait` or `--no-recent` is specified, or the file is in the system’s temporary folder. Also cleaned up the command options a bit, e.g. `--async` is now `--no-wait`, run `mate -h` for more info.
+* Improved _Text → Titlecase Line / Selection_: Words with mixed case will not be changed and any prefix/suffix that is not a word, will be ignored so that the actual first/last word gets titlecased.
+* When a key equivalent field has focus (and is not recording), escape will now clear the field.
+
+## 2014-08-17 ([v2.0-alpha.9559](https://github.com/textmate/textmate/compare/v2.0-alpha.9555...v2.0-alpha.9559))
+
+* The bundle item chooser (⌃⌘T) now include menu items. This also works with key equivalent searching.
+* In the chooser lists (fuzzy file finder, bundle item chooser, and symbol list) it is now possible to make the selection loop around, that is, move from first to last item with arrow up, etc. This is enabled by running: `defaults write com.macromates.TextMate.preview enableLoopFilterList --bool YES` *[Zete Lui]*
+
+## 2014-07-31 ([v2.0-alpha.9555](https://github.com/textmate/textmate/compare/v2.0-alpha.9551...v2.0-alpha.9555))
+
+* Showing invisible characters will (again) show spaces. As mentioned previously the way to control which glyphs are used are done using the `invisiblesMap` option in `.tm_properties`. Add either `\n`, `\t`, or a space to the string, followed by the glyph that should be used to render the character, or prefix it with `~` to disable rendering of that character. For example to disable rendering of spaces and render tabs as `┊` add this to `.tm_properties`: `invisiblesMap = "~ \t┊"`. *[Steven Clukey]*
+* QuickLook generator will now handle thumbnail generation. *[Nyx0uf]*
+* The bundle item chooser (⌃⌘T) have some new search capabilities, look in its drop-down menu, though still work in progress.
+* Accessibility improvements for the bundle item chooser and key equivalent recorder. *[Boris Dušek]*
+* Previously using ⌘F with a multiline selection would set the _in_ pop-up to _Document_ (unless `findInSelectionByDefault` was set). This is no longer the case, but can be brought back by running: `defaults write alwaysFindInDocument -bool YES`. *[Jeremy Whitlock]*
+* Fixed issue where having the find or HTML output window open in another space and switching focus to TextMate, would bring the window to the active space, rather than switch to TextMate’s space. *[Etienne Samson]*
+
+## 2014-07-12 ([v2.0-alpha.9551](https://github.com/textmate/textmate/compare/v2.0-alpha.9549...v2.0-alpha.9551))
+
+* Reworked the bundle item chooser window. This is work in progress.
+
+## 2014-07-06 ([v2.0-alpha.9549](https://github.com/textmate/textmate/compare/v2.0-alpha.9547...v2.0-alpha.9549))
+
+* TextMate now works with the [Haskell Ligature font](https://github.com/i-tu/Hasklig). If you are using the Mensch font and see `fi` drawn as `ﬁ` then update to [Mensch version 2.0](http://robey.lag.net/2012/08/22/mensch-2.html).
+* You can now use ⌘{ and ⌘} in the file and favorites chooser to cycle between sources. These keys can also be used in Preferences, the About window, and the Find in Folder (to cycle through files with matches). In these windows you can also use ⌘1-⌘n for the n’th “source” (but this is not new).
+* Draw properly rounded corners for tabs on retina displays. *[Adam Strzelecki]*
+* Improve VoiceOver feedback for file and favorite choosers when running on 10.10. *[Boris Dušek]*
+* Visual changes/improvements: tab overflow menu has document icons, the icon for it has multiple states (retina), the variables and bundles list in Preferences now use a smaller font and the latter has a search field to filter the list. *[Ronald Wampler]*
+
+## 2014-05-18 ([v2.0-alpha.9547](https://github.com/textmate/textmate/compare/v2.0-alpha.9545...v2.0-alpha.9547))
+
+* Fix bug where the `PATH` variable would contain a trailing zero byte and thus everything appended to it was ignored.
+
+## 2014-05-18 ([v2.0-alpha.9545](https://github.com/textmate/textmate/compare/v2.0-alpha.9543...v2.0-alpha.9545))
+
+* You can now set `saveOnBlur` in `.tm_properties` to make TextMate save files when focus is lost. Previously the recommended way was to create a command set to “Save Modified Files” with a semantic class of `callback.application.did-deactivate`, though incase of a save error, such command would bring up UI where `saveOnBlur` will ignore errors. Using `.tm_properties` also allows to easily target specific file types, for example one could use:
+
+		[ ui/**.php ]
+		saveOnBlur = true
+
+	This would then only have `.php` files in the `ui` folder auto-save when focus is lost.
+
+* Two new project scopes have been introduced:
+
+	1. `attr.project.vagrant` is set when your project has a `Vagrantfile` and a corresponding Vagrant bundle can be installed from _Preferences → Bundles_ to start up and shut down your [vagrant environment](http://www.vagrantup.com/).
+
+	2. `attr.project.jekyll` is set when your project has a `_config.yml` file (in lack of a better indicator). There are a few [jekyll bundles on GitHub](https://github.com/itspriddle/jekyll-tmbundle/network/members), but we haven’t yet added any of them to the index (shown in _Preferences → Bundles_).
+
+* Allow searching _Open Files_ in the Find in Folder dialog. *[Ronald Wampler]*
+
+## 2014-04-28 ([v2.0-alpha.9543](https://github.com/textmate/textmate/compare/v2.0-alpha.9539...v2.0-alpha.9543))
+
+* Various fixes and improvements.
+
+## 2014-04-18 ([v2.0-alpha.9539](https://github.com/textmate/textmate/compare/v2.0-alpha.9533...v2.0-alpha.9539))
+
+* In file pattern globs the tilde (`~`) and bang (`!`) operators both indicate that what follows must not match the file path. For example: `*.{c,h}~vendor/**` will match `.c` and `.h` files except when under the `vendor/` directory. It’s possible to specify multiple exclusion patterns and also to start the pattern with the exclude operator, e.g. `!build/*!cache/*` will match anything not in `build/` or `cache/`. If the operator is used inside brace expansion (e.g. `{Icon\r,*~.nib}`) then it’ll be treated as a literal match, similarly when used last in the pattern (e.g. `*.txt~`).
+
+## 2014-04-12 ([v2.0-alpha.9533](https://github.com/textmate/textmate/compare/v2.0-alpha.9531...v2.0-alpha.9533))
+
+* You can disable the status bar using `defaults write com.macromates.TextMate.preview hideStatusBar -bool YES`. Be aware that currently not all of the status bar actions have menu equivalents.
+* _Text → Filter Through Command…_ (⌘|) now has a _“New Document”_ (⌘3) output option.
+* _View → Wrap Column_ now remember the last 5 values used.
+
+## 2014-04-05 ([v2.0-alpha.9531](https://github.com/textmate/textmate/compare/v2.0-alpha.9529...v2.0-alpha.9531))
+
+* Rework the commit window (shown e.g. when using ⌘Y and selecting “Commit”) to run as part of TextMate and use its text editing features. *[Ronald Wampler]*
+* Improve accessibility support in find window. Notifications like “no more occurrences” when pressing ⌘G are now broadcast. *[Boris Dušek]*
+
+## 2014-03-31 ([v2.0-alpha.9529](https://github.com/textmate/textmate/compare/v2.0-alpha.9515...v2.0-alpha.9529))
+
+  * With VoiceOver the current item will be announced in the various item choosers: File → Open Favorites… (⇧⌘O), Go → Go to File… (⌘T), and Navigate → Go to Symbol… (⇧⌘T). If you want to hear the first result (which is not automatically spoken), first press arrow up to hear it, then you can use arrows down/up as usual. If you want to browse the results without entering a search string, quickly type any letter and delete it to suppress VoiceOver information about menu command and current window. *[Boris Dušek]*
+
+  * Commands with HTML output can decide how TextMate should act if the same command was previously run and its output window is still showing. This is done by setting the `reuseOutput` key in the `tmCommand` property list. Possible values are:
+
+      1. `reuseAvailable` — re-use existing window unless command is running (default).
+      2. `reuseNone` — always open a new window.
+      3. `reuseBusy` — re-use existing window even if command is running, but warn the user first.
+      4. `reuseBusyAutoAbort` — re-use existing window, killing the running command (if any).
+
+    The third option is suited for something like a build command where you are unlikely to want multiple simultaneous instances running.
+
+  * The browser used for clipboard and search history, available using _Edit → Paste → Show History_ (⌃⌥⌘V) and _Edit → Find → Show History_ (⌃⌥⌘F), now support “type to filter”.
+
+  * It is now possible to set the `disableIndentCorrections` to `emptyLines`. This will disable the indent corrections only when typing on empty lines, which has been made default for HTML.
+
+  * Various fixes and improvements, click link above for full details.
 
 ## 2014-02-23 ([v2.0-alpha.9515](https://github.com/textmate/textmate/compare/v2.0-alpha.9503...v2.0-alpha.9515))
 

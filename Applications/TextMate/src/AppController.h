@@ -1,19 +1,9 @@
-namespace find_tags
-{
-	enum
-	{
-		in_document = 1,
-		in_selection,
-		in_project,
-		in_folder,
-	};
-}
-
 @interface AppController : NSObject <NSMenuDelegate>
 {
 	IBOutlet NSMenu* bundlesMenu;
 	IBOutlet NSMenu* themesMenu;
 	IBOutlet NSMenu* spellingMenu;
+	IBOutlet NSMenu* wrapColumnMenu;
 
 	IBOutlet NSPanel* goToLinePanel;
 	IBOutlet NSTextField* goToLineTextField;

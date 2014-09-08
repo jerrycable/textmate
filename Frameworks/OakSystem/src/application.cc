@@ -30,7 +30,7 @@ namespace oak
 		_app_name      = getenv("OAK_APP_NAME") ?: path::name(argv[0]);
 		_full_app_path = path::join(path::cwd(), argv[0]);
 		_app_path      = _full_app_path;
-		_pid_path      = support(((CFBundleGetMainBundle() && CFBundleGetIdentifier(CFBundleGetMainBundle())) ? cf::to_s(CFBundleGetIdentifier(CFBundleGetMainBundle())) : _app_name) + ".pid");
+		_pid_path      = path::join(path::temp(), (((CFBundleGetMainBundle() && CFBundleGetIdentifier(CFBundleGetMainBundle())) ? cf::to_s(CFBundleGetIdentifier(CFBundleGetMainBundle())) : _app_name) + ".pid"));
 
 		if(redirectStdErr)
 		{
@@ -48,6 +48,8 @@ namespace oak
 			_app_path.erase(_app_path.end() - appBinary.size(), _app_path.end());
 
 		std::string content = path::content(_pid_path);
+		if(content == NULL_STR) // Support updating from 2.0-alpha.9553 or earlier
+			content = path::content(support(((CFBundleGetMainBundle() && CFBundleGetIdentifier(CFBundleGetMainBundle())) ? cf::to_s(CFBundleGetIdentifier(CFBundleGetMainBundle())) : _app_name) + ".pid"));
 		long pid = content != NULL_STR ? strtol(content.c_str(), NULL, 10) : 0;
 		if(pid != 0 && process_name(pid) == _app_name)
 		{
@@ -77,7 +79,7 @@ namespace oak
 					else
 					{
 						D(DBF_Application, bug("timeout expired, terminate\n"););
-						exit(1);
+						exit(EXIT_FAILURE);
 					}
 				}
 				else
@@ -87,7 +89,7 @@ namespace oak
 					if(noErr == GetProcessForPID(pid, &psn))
 					{
 						SetFrontProcess(&psn);
-						exit(0);
+						exit(EXIT_SUCCESS);
 					}
 					// procNotFound
 				}
@@ -226,7 +228,7 @@ namespace oak
 			char const* argv[] = { _full_app_path.c_str(), "-disableSessionRestore", "0", NULL };
 			execve(argv[0], (char* const*)argv, env);
 			perror("relaunch");
-			_exit(-1);
+			_exit(EXIT_FAILURE);
 		}
 		else
 		{

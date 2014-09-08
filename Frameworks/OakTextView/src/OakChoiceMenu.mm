@@ -61,7 +61,7 @@ enum action_t { kActionNop, kActionTab, kActionReturn, kActionCancel, kActionMov
 - (void)viewBoundsDidChange:(NSNotification*)aNotification
 {
 	NSView* aView = [[aNotification object] documentView];
-	[window setFrameTopLeftPoint:[[aView window] convertBaseToScreen:[aView convertPointToBase:topLeftPosition]]];
+	[window setFrameTopLeftPoint:[[aView window] convertRectToScreen:[aView convertRect:(NSRect){ topLeftPosition, NSZeroSize } fromView:nil]].origin];
 }
 
 - (NSString*)selectedChoice
@@ -116,7 +116,7 @@ enum action_t { kActionNop, kActionTab, kActionReturn, kActionCancel, kActionMov
 	[window setReleasedWhenClosed:NO];
 	[window setOpaque:NO];
 	window.alphaValue         = 0.97;
-	window.backgroundColor    = [NSColor colorWithCalibratedRed:1.0 green:0.96 blue:0.76 alpha:1.0];
+	window.backgroundColor    = [NSColor colorWithCalibratedRed:1.00 green:0.96 blue:0.76 alpha:1];
 	window.hasShadow          = YES;
 	window.level              = NSStatusWindowLevel;
 	window.ignoresMouseEvents = YES;
@@ -147,7 +147,7 @@ enum action_t { kActionNop, kActionTab, kActionReturn, kActionCancel, kActionMov
 
 	[self sizeToFit];
 
-	topLeftPosition = [aView convertPointFromBase:[[aView window] convertScreenToBase:aPoint]];
+	topLeftPosition = [aView convertRect:[[aView window] convertRectFromScreen:(NSRect){ aPoint, NSZeroSize }] toView:nil].origin;
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(viewBoundsDidChange:) name:NSViewBoundsDidChangeNotification object:[[aView enclosingScrollView] contentView]];
 	[[aView window] addChildWindow:window ordered:NSWindowAbove];
 

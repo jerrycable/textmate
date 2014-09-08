@@ -24,7 +24,7 @@ static NSTextField* OakCreateTextField (NSString* label)
 	return res;
 }
 
-static NSButton* OakCreateImageToggleButton (NSImage* image)
+static NSButton* OakCreateImageToggleButton (NSImage* image, NSObject* accessibilityLabel)
 {
 	NSButton* res = [NSButton new];
 
@@ -35,7 +35,16 @@ static NSButton* OakCreateImageToggleButton (NSImage* image)
 
 	[res setImage:image];
 	[res setImagePosition:NSImageOnly];
+	OakSetAccessibilityLabel(res, accessibilityLabel);
 
+	return res;
+}
+
+static NSMenuItem* OakCreateIndentMenuItem (NSString* title, SEL action, id target)
+{
+	NSMenuItem* res = [[NSMenuItem alloc] initWithTitle:title action:action keyEquivalent:@""];
+	[res setTarget:target];
+	[res setIndentationLevel:1];
 	return res;
 }
 
@@ -52,23 +61,24 @@ static NSButton* OakCreateImageToggleButton (NSImage* image)
 @end
 
 @implementation OTVStatusBar
++ (BOOL)requiresConstraintBasedLayout
+{
+	return YES;
+}
+
 - (id)initWithFrame:(NSRect)aRect
 {
-	if(self = [super initWithGradient:[[NSGradient alloc] initWithColorsAndLocations: [NSColor colorWithCalibratedWhite:1.000 alpha:0.68], 0.0, [NSColor colorWithCalibratedWhite:1.000 alpha:0.5], 0.0416, [NSColor colorWithCalibratedWhite:1.000 alpha:0.0], 1.0, nil] inactiveGradient:[[NSGradient alloc] initWithColorsAndLocations: [NSColor colorWithCalibratedWhite:1.000 alpha:0.68], 0.0, [NSColor colorWithCalibratedWhite:1.000 alpha:0.5], 0.0416, [NSColor colorWithCalibratedWhite:1.000 alpha:0.0], 1.0, nil]])
+	if(self = [super initWithGradient:[[NSGradient alloc] initWithColorsAndLocations:[NSColor colorWithCalibratedWhite:1 alpha:0.68], 0.0, [NSColor colorWithCalibratedWhite:1 alpha:0.5], 0.0416, [NSColor colorWithCalibratedWhite:1 alpha:0], 1.0, nil] inactiveGradient:[[NSGradient alloc] initWithColorsAndLocations:[NSColor colorWithCalibratedWhite:1 alpha:0.68], 0.0, [NSColor colorWithCalibratedWhite:1 alpha:0.5], 0.0416, [NSColor colorWithCalibratedWhite:1 alpha:0], 1.0, nil]])
 	{
 		self.selectionField               = OakCreateTextField(@"1:1");
-		self.grammarPopUp                 = OakCreateStatusBarPopUpButton(@"");
+		self.grammarPopUp                 = OakCreateStatusBarPopUpButton(@"", @"Grammar");
 		self.tabSizePopUp                 = OakCreateStatusBarPopUpButton();
 		self.tabSizePopUp.pullsDown       = YES;
-		self.bundleItemsPopUp             = OakCreateStatusBarPopUpButton();
-		self.symbolPopUp                  = OakCreateStatusBarPopUpButton(@"");
-		self.macroRecordingButton         = OakCreateImageToggleButton([NSImage imageNamed:@"Recording" inSameBundleAsClass:[self class]]);
+		self.bundleItemsPopUp             = OakCreateStatusBarPopUpButton(nil, @"Bundle Item");
+		self.symbolPopUp                  = OakCreateStatusBarPopUpButton(@"", @"Symbol");
+		self.macroRecordingButton         = OakCreateImageToggleButton([NSImage imageNamed:@"Recording" inSameBundleAsClass:[self class]], @"Record a macro");
 		self.macroRecordingButton.action  = @selector(toggleMacroRecording:);
 		self.macroRecordingButton.toolTip = @"Click to start recording a macro";
-
-		[self.grammarPopUp.cell         accessibilitySetOverrideValue:@"Grammar"        forAttribute:NSAccessibilityDescriptionAttribute];
-		[self.symbolPopUp.cell          accessibilitySetOverrideValue:@"Symbol"         forAttribute:NSAccessibilityDescriptionAttribute];
-		[self.macroRecordingButton.cell accessibilitySetOverrideValue:@"Record a macro" forAttribute:NSAccessibilityDescriptionAttribute];
 
 		[self setupTabSizeMenu:self];
 
@@ -76,11 +86,10 @@ static NSButton* OakCreateImageToggleButton (NSImage* image)
 		// = Wrap/Clip Bundles PopUp =
 		// ===========================
 
-		NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(nop:) keyEquivalent:@""];
+		NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:@"" action:NULL keyEquivalent:@""];
 		item.image = [NSImage imageNamed:NSImageNameActionTemplate];
 		[[self.bundleItemsPopUp cell] setUsesItemFromMenu:NO];
 		[[self.bundleItemsPopUp cell] setMenuItem:item];
-		[[self.bundleItemsPopUp cell] accessibilitySetOverrideValue:@"Bundle Item" forAttribute:NSAccessibilityDescriptionAttribute];
 
 		NSView* wrappedBundleItemsPopUpButton = [NSView new];
 		[wrappedBundleItemsPopUpButton addSubview:self.bundleItemsPopUp];
@@ -117,7 +126,9 @@ static NSButton* OakCreateImageToggleButton (NSImage* image)
 
 		[self.symbolPopUp setContentHuggingPriority:NSLayoutPriorityDefaultLow-1 forOrientation:NSLayoutConstraintOrientationHorizontal];
 		[self.symbolPopUp setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow-1 forOrientation:NSLayoutConstraintOrientationHorizontal];
-		
+
+		[self setTranslatesAutoresizingMaskIntoConstraints:NO];
+
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-10-[line]-[selection(>=50,<=225)]-8-[dividerOne]-(-2)-[grammar(>=125,<=225)]-5-[dividerTwo]-(-2)-[tabSize(<=102)]-4-[dividerThree]-5-[items(==30)]-4-[dividerFour]-(-2)-[symbol(>=125)]-5-[dividerFive]-6-[recording]-7-|" options:0 metrics:nil views:views]];
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:[line]-5-|" options:0 metrics:nil views:views]];
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:[selection]-5-|" options:0 metrics:nil views:views]];
@@ -134,19 +145,19 @@ static NSButton* OakCreateImageToggleButton (NSImage* image)
 {
 	NSMenu* tabSizeMenu = self.tabSizePopUp.menu;
 	[tabSizeMenu removeAllItems];
-	[tabSizeMenu addItemWithTitle:@"Current Indent" action:@selector(nop:) keyEquivalent:@""];
+	[tabSizeMenu addItemWithTitle:@"Current Indent" action:NULL keyEquivalent:@""];
 	[tabSizeMenu addItemWithTitle:@"Indent Size" action:@selector(nop:) keyEquivalent:@""];
 	for(auto size : { 2, 3, 4, 8 })
 	{
-		NSMenuItem* item = [tabSizeMenu addItemWithTitle:[NSString stringWithFormat:@"\u2003%d", size] action:@selector(takeTabSizeFrom:) keyEquivalent:@""];
+		NSMenuItem* item = OakCreateIndentMenuItem([NSString stringWithFormat:@"%d", size], @selector(takeTabSizeFrom:), self.target);
 		[item setTag:size];
-		[item setTarget:self.target];
+		[tabSizeMenu addItem:item];
 	}
-	[[tabSizeMenu addItemWithTitle:@"\u2003Other…" action:@selector(showTabSizeSelectorPanel:) keyEquivalent:@""] setTarget:self.target];
+	[tabSizeMenu addItem:OakCreateIndentMenuItem(@"Other…", @selector(showTabSizeSelectorPanel:), self.target)];
 	[tabSizeMenu addItem:[NSMenuItem separatorItem]];
 	[[tabSizeMenu addItemWithTitle:@"Indent Using" action:@selector(nop:) keyEquivalent:@""] setTarget:self.target];
-	[[tabSizeMenu addItemWithTitle:@"\u2003Tabs" action:@selector(setIndentWithTabs:) keyEquivalent:@""] setTarget:self.target];
-	[[tabSizeMenu addItemWithTitle:@"\u2003Spaces" action:@selector(setIndentWithSpaces:) keyEquivalent:@""] setTarget:self.target];
+	[tabSizeMenu addItem:OakCreateIndentMenuItem(@"Tabs", @selector(setIndentWithTabs:), self.target)];
+	[tabSizeMenu addItem:OakCreateIndentMenuItem(@"Spaces", @selector(setIndentWithSpaces:), self.target)];
 }
 
 - (void)setTarget:(id)newTarget

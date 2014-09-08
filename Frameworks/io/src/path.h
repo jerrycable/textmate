@@ -17,6 +17,9 @@ namespace path
 	PUBLIC std::string extension (std::string const& path);         // /Users/me/foo.html.erb → .erb
 	PUBLIC std::string extensions (std::string const& path);        // /Users/me/foo.html.erb → .html.erb
 
+	PUBLIC std::string escape (std::string const& src);                // Shell escape path
+	PUBLIC std::vector<std::string> unescape (std::string const& src); // Split into “shell words”
+
 	PUBLIC size_t rank (std::string const& path, std::string const& ext); // returns a score for how well the “extension” covers the path (smaller values are better, except 0 means “no match”)
 
 	PUBLIC std::string join (std::string const& base, std::string const& path); // this will normalize the (resulting) path
@@ -96,10 +99,10 @@ namespace path
 	PUBLIC std::string cwd ();
 	PUBLIC std::string home ();
 	PUBLIC std::string trash (std::string const& forPath);
-	PUBLIC std::string temp (std::string const& file = NULL_STR);
+	PUBLIC std::string temp (std::string const& file = NULL_STR, std::string const& content = NULL_STR);
 	PUBLIC std::string cache (std::string const& file = NULL_STR);
 	PUBLIC std::string desktop ();
 
-} /* path */ 
+} /* path */
 
 #endif /* end of include guard: PATH_H_SS5GJIGI */

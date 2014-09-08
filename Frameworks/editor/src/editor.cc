@@ -35,6 +35,11 @@ namespace ng
 					document->remove_callback(this);
 					editors().erase(document->identifier());
 				}
+				else if(event == did_change_content)
+				{
+					for(auto pair : editors())
+						pair.second->sanitize_selection();
+				}
 			}
 
 		} callback;
@@ -48,7 +53,7 @@ namespace ng
 		return editor->second;
 	}
 
-	std::string sanitized_utf8 (std::string str)
+	static std::string sanitized_utf8 (std::string str)
 	{
 		str.erase(utf8::remove_malformed(str.begin(), str.end()), str.end());
 		return str;
@@ -162,7 +167,7 @@ namespace ng
 			_buffer.remove_callback(this);
 		}
 
-		ranges_t get (bool moveToEnd)
+		ranges_t get ()
 		{
 			ranges_t sel;
 			for(size_t i = 0; i < _marks.size(); i += 2)
@@ -170,7 +175,7 @@ namespace ng
 				ASSERT(i+1 < _marks.size() && _marks[i+1].type == mark_t::kEndMark);
 				if(_marks[i].type == mark_t::kUnpairedMark)
 				{
-					sel.push_back(_marks[moveToEnd ? i+1 : i].position);
+					sel.push_back(_marks[i].position);
 				}
 				else
 				{
@@ -279,6 +284,7 @@ namespace ng
 				adjustment += str.size() - (to - from);
 			}
 			res.push_back(original);
+			res.last().color = orgRange.color;
 		}
 		return res;
 	}
@@ -286,7 +292,10 @@ namespace ng
 	template <typename F>
 	ng::ranges_t apply (ng::buffer_t& buffer, ng::ranges_t const& selections, snippet_controller_t& snippets, F op)
 	{
-		return ng::move(buffer, replace_helper(buffer, snippets, map(buffer, selections, op)), kSelectionMoveToEndOfSelection);
+		ng::ranges_t res;
+		for(auto const& range : replace_helper(buffer, snippets, map(buffer, selections, op)))
+			res.push_back(range.color ? range : range.max());
+		return res;
 	}
 
 	// ============
@@ -317,6 +326,11 @@ namespace ng
 	{
 		ASSERT(document->is_open());
 		setup();
+	}
+
+	void editor_t::sanitize_selection ()
+	{
+		_selections = ng::sanitize(_buffer, _selections);
 	}
 
 	struct my_clipboard_entry_t : clipboard_t::entry_t
@@ -398,10 +412,7 @@ namespace ng
 
 				std::string script = cmd;
 				command::fix_shebang(&script);
-
-				std::string scriptPath = path::temp("snippet_command");
-				path::set_content(scriptPath, script);
-				chmod(scriptPath.c_str(), S_IRWXU);
+				std::string scriptPath = path::temp("snippet_command", script);
 
 				if(io::process_t process = io::spawn(std::vector<std::string>{ scriptPath }, environment))
 				{
@@ -487,7 +498,6 @@ namespace ng
 		std::string str                            = entry->content();
 		std::map<std::string, std::string> options = entry->options();
 		str.erase(text::convert_line_endings(str.begin(), str.end(), text::estimate_line_endings(str.begin(), str.end())), str.end());
-		str.erase(utf8::remove_malformed(str.begin(), str.end()), str.end());
 
 		std::string const& indent = options["indent"];
 		bool const complete       = options["complete"] == "1";
@@ -593,10 +603,10 @@ namespace ng
 						while(len > 0 && (str[len-1] == '\t' || str[len-1] == ' '))
 							--len;
 						str = str.substr(0, len);
-						if(!str.empty() && str[str.size()-1] == '\n')
+						if(!str.empty() && str.back() == '\n')
 							str += leftOfCaret;
 					}
-				} 
+				}
 				else if(!pasteBehavior || *pasteBehavior != "disable")
 				{
 					indent::fsm_t fsm = indent::create_fsm(buffer, line, indentSize, tabSize);
@@ -612,7 +622,7 @@ namespace ng
 						break;
 					}
 
-					if(!str.empty() && str[str.size()-1] == '\n')
+					if(!str.empty() && str.back() == '\n')
 						str += leftOfCaret;
 				}
 				return ng::move(buffer, replace_helper(buffer, snippets, map(buffer, range_t(buffer.begin(line), selections.last().max()), transform::replace(str))), kSelectionMoveToEndOfSelection);
@@ -688,7 +698,7 @@ namespace ng
 			{
 				preserve_selection_helper_t helper(_buffer, _editor._selections);
 				_editor.replace(replacements);
-				_editor._selections = helper.get(false);
+				_editor._selections = helper.get();
 			}
 		}
 
@@ -990,7 +1000,7 @@ namespace ng
 				_extend_yank_clipboard = true;
 			}
 			// continue
-         
+
 			case kDeleteSelection:
 			{
 				indent_helper_t indent_helper(*this, _buffer, indentCorrections);
@@ -1200,9 +1210,9 @@ namespace ng
 			case kMoveSelectionRight:      move_selection(+1,  0); break;
 		}
 
-		static std::set<action_t> const preserveSelectionActions = { kCapitalizeWord, kUppercaseWord, kLowercaseWord, kChangeCaseOfLetter, kIndent, kShiftLeft, kShiftRight, kReformatText, kReformatTextAndJustify, kUnwrapText };
+		static std::set<action_t> const preserveSelectionActions = { kCapitalizeWord, kUppercaseWord, kLowercaseWord, kIndent, kShiftLeft, kShiftRight, kReformatText, kReformatTextAndJustify, kUnwrapText };
 		if(preserveSelectionActions.find(action) != preserveSelectionActions.end())
-			_selections = selectionHelper.get(action == kChangeCaseOfLetter || action == kChangeCaseOfWord);
+			_selections = selectionHelper.get();
 	}
 
 	void editor_t::perform_replacements (std::multimap<std::pair<size_t, size_t>, std::string> const& replacements)
@@ -1218,7 +1228,7 @@ namespace ng
 		{
 			preserve_selection_helper_t helper(_buffer, _selections);
 			this->replace(tmp);
-			_selections = helper.get(false);
+			_selections = helper.get();
 		}
 	}
 
@@ -1486,11 +1496,10 @@ namespace ng
 					bool first = true;
 					for(auto const& r : dissect_columnar(_buffer, range))
 					{
-						if(first)
+						if(std::exchange(first, false))
 								map["TM_SELECTED_TEXT"] = "";
 						else	map["TM_SELECTED_TEXT"] += "\n";
 						map["TM_SELECTED_TEXT"] += _buffer.substr(r.min().index, r.max().index);
-						first = false;
 					}
 				}
 				else
@@ -1547,7 +1556,7 @@ namespace ng
 			for(auto const& pair : ng::find_all(_buffer, searchFor, options, searchOnlySelection ? _selections : ranges_t()))
 				replacements.emplace(pair.first, options & find::regular_expression ? format_string::expand(replaceWith, pair.second) : replaceWith);
 			res = this->replace(replacements, true);
-			_selections = helper.get(false);
+			_selections = helper.get();
 		}
 		return res;
 	}

@@ -75,7 +75,7 @@ namespace document
 		// = Doing one-pass reading of file (find in arbitrary files) =
 		// ============================================================
 
-		struct reader_t { virtual io::bytes_ptr next () = 0; virtual ~reader_t () { } };
+		struct reader_t { virtual io::bytes_ptr next () = 0; virtual encoding::type encoding () const = 0; virtual ~reader_t () { } };
 		typedef std::shared_ptr<reader_t> reader_ptr;
 		reader_ptr create_reader () const;
 
@@ -143,6 +143,7 @@ namespace document
 				// did_change_display_name,
 				did_change_marks,
 				// did_change_symbols,
+				did_change_content,
 			};
 
 			virtual ~callback_t () { }
@@ -217,7 +218,7 @@ namespace document
 
 	public:
 		bool try_open (document::open_callback_ptr callback);
-		void open ();
+		void sync_open (CFStringRef runLoopMode = kCFRunLoopDefaultMode);
 		void close ();
 
 		void show ();
@@ -225,7 +226,7 @@ namespace document
 		oak::date_t const& lru () const;
 
 		void try_save (document::save_callback_ptr callback);
-		bool save ();
+		bool sync_save (CFStringRef runLoopMode = kCFRunLoopDefaultMode);
 		bool backup ();
 		void detach_backup () { _backup_path = NULL_STR; }
 
@@ -390,7 +391,7 @@ namespace document
 	};
 
 	typedef std::shared_ptr<scanner_t> scanner_ptr;
-	
+
 } /* document */
 
 #endif /* end of include guard: DOCUMENT_H_MIJOONQT */

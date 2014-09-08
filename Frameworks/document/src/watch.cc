@@ -63,9 +63,11 @@ namespace document
 		void data_from_server ();
 	};
 
-	static watch_server_t& server ()
+	typedef std::shared_ptr<watch_server_t> watch_server_ptr;
+
+	static watch_server_ptr server ()
 	{
-		static watch_server_t instance;
+		static watch_server_ptr instance = std::make_shared<watch_server_t>();
 		return instance;
 	}
 
@@ -80,16 +82,16 @@ namespace document
 	// = watch_base_t =
 	// ================
 
-	watch_base_t::watch_base_t (std::string const& path)
+	watch_base_t::watch_base_t (std::string const& path) : _server(server())
 	{
-		client_id = server().add(path, this);
-		D(DBF_Document_WatchFS, bug("%s, got client key %zu\n", path.c_str(), client_id););
+		_client_id = _server->add(path, this);
+		D(DBF_Document_WatchFS, bug("%s, got client key %zu\n", path.c_str(), _client_id););
 	}
 
 	watch_base_t::~watch_base_t ()
 	{
-		D(DBF_Document_WatchFS, bug("client key %zu\n", client_id););
-		server().remove(client_id);
+		D(DBF_Document_WatchFS, bug("client key %zu\n", _client_id););
+		_server->remove(_client_id);
 	}
 
 	void watch_base_t::callback (int flags, std::string const& newPath)
@@ -119,16 +121,20 @@ namespace document
 
 	watch_server_t::watch_server_t () : next_client_id(1)
 	{
-		io::create_pipe(read_from_server_pipe, write_to_master_pipe, true);
-		io::create_pipe(read_from_master_pipe, write_to_server_pipe, true);
+		std::tie(read_from_server_pipe, write_to_master_pipe) = io::create_pipe();
+		std::tie(read_from_master_pipe, write_to_server_pipe) = io::create_pipe();
 		pthread_create(&server_thread, NULL, &watch_server_t::server_run_stub, this);
 
 		// attach to run-loop
-		CFSocketRef socket = CFSocketCreateWithNative(kCFAllocatorDefault, read_from_server_pipe, kCFSocketReadCallBack, &watch_server_t::data_from_server_stub, NULL);
-		CFRunLoopSourceRef source = CFSocketCreateRunLoopSource(kCFAllocatorDefault, socket, 0);
-		CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopDefaultMode);
-		CFRelease(source);
-		CFRelease(socket);
+		if(CFSocketRef socket = CFSocketCreateWithNative(kCFAllocatorDefault, read_from_server_pipe, kCFSocketReadCallBack, &watch_server_t::data_from_server_stub, NULL))
+		{
+			if(CFRunLoopSourceRef source = CFSocketCreateRunLoopSource(kCFAllocatorDefault, socket, 0))
+			{
+				CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopDefaultMode);
+				CFRelease(source);
+			}
+			CFRelease(socket);
+		}
 	}
 
 	watch_server_t::~watch_server_t ()
@@ -159,14 +165,14 @@ namespace document
 		struct { size_t client_id; std::string* path; } packet = { client_id, NULL };
 		write(write_to_server_pipe, &packet, sizeof(packet));
 	}
-	
+
 	// ====================
 	// = Run-loop related =
 	// ====================
 
 	void watch_server_t::data_from_server_stub (CFSocketRef s, CFSocketCallBackType callbackType, CFDataRef address, void const* data, void* info)
 	{
-		document::server().data_from_server();
+		document::server()->data_from_server();
 	}
 
 	void watch_server_t::data_from_server ()
@@ -185,7 +191,7 @@ namespace document
 	// ============================
 	// = Running in server thread =
 	// ============================
-	
+
 	void watch_server_t::server_add (size_t client_id, std::string const& path)
 	{
 		D(DBF_Document_WatchFS, bug("%zu: %s\n", client_id, path.c_str()););
@@ -238,7 +244,7 @@ namespace document
 		int n = kevent(event_queue, &changeList, 1 /* number of changes */, NULL /* event list */, 0 /* number of events */, &timeout);
 		if(n == -1)
 			perror("watch server, error monitoring pipe");
-		
+
 		struct kevent changed;
 		while(kevent(event_queue, NULL /* change list */, 0 /* number of changes */, &changed /* event list */, 1 /* number of events */, NULL) == 1)
 		{
@@ -261,7 +267,7 @@ namespace document
 			else if(changed.filter == EVFILT_VNODE)
 			{
 				size_t client_id = (size_t)changed.udata;
-				
+
 				std::map<size_t, watch_info_t*>::iterator it = watch_info.find(client_id);
 				if(it != watch_info.end())
 				{

@@ -23,7 +23,6 @@
 #include <text/hexdump.h>
 #include <text/tokenize.h>
 #include <oak/duration.h>
-#include <oak/server.h>
 #include <oak/compat.h>
 #include <io/entries.h>
 #include <io/resource.h>
@@ -557,7 +556,31 @@ namespace document
 	std::string document_t::backup_path () const
 	{
 		if(_backup_path == NULL_STR)
-			_backup_path = ::backup_path(display_name());
+		{
+			std::string suffix = "";
+			if(_path == NULL_STR && _buffer)
+			{
+				if(parse::grammar_ptr grammar = _buffer->grammar())
+				{
+					plist::array_t fileTypes;
+					if(bundles::item_ptr grammarItem = bundles::lookup(grammar->uuid()))
+					{
+						if(plist::get_key_path(grammarItem->plist(), "fileTypes", fileTypes))
+						{
+							for(auto const& type : fileTypes)
+							{
+								if(std::string const* ext = boost::get<std::string>(&type))
+								{
+									suffix = "." + *ext;
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+			_backup_path = ::backup_path(display_name() + suffix);
+		}
 		return _backup_path;
 	}
 
@@ -641,20 +664,6 @@ namespace document
 		if(_file_type == NULL_STR)
 			_file_type = fileType;
 
-		if(_selection == NULL_STR)
-		{
-			std::map<std::string, std::string>::const_iterator sel = attributes.find("com.macromates.selectionRange");
-			std::map<std::string, std::string>::const_iterator idx = attributes.find("com.macromates.visibleIndex");
-			_selection = sel != attributes.end() ? sel->second : NULL_STR;
-
-			if(idx != attributes.end())
-			{
-				size_t index = SIZE_T_MAX, carry = 0;
-				sscanf(idx->second.c_str(), "%zu:%zu", &index, &carry);
-				_visible_index = ng::index_t(index, carry);
-			}
-		}
-
 		_is_on_disk = _path != NULL_STR && access(_path.c_str(), F_OK) == 0;
 		if(_is_on_disk)
 			_file_watcher = std::make_shared<watch_t>(_path, shared_from_this());
@@ -670,7 +679,22 @@ namespace document
 			std::map<std::string, std::string>::const_iterator folded = attributes.find("com.macromates.folded");
 			if(folded != attributes.end())
 				_folded = folded->second;
+
+			if(_selection == NULL_STR)
+			{
+				std::map<std::string, std::string>::const_iterator sel = attributes.find("com.macromates.selectionRange");
+				std::map<std::string, std::string>::const_iterator idx = attributes.find("com.macromates.visibleIndex");
+				_selection = sel != attributes.end() ? sel->second : NULL_STR;
+
+				if(idx != attributes.end())
+				{
+					size_t index = SIZE_T_MAX, carry = 0;
+					sscanf(idx->second.c_str(), "%zu:%zu", &index, &carry);
+					_visible_index = ng::index_t(_buffer->sanitize_index(index), carry);
+				}
+			}
 		}
+		_buffer->set_async_parsing(true);
 		_buffer->bump_revision();
 		check_modified(_buffer->revision(), _buffer->revision());
 		mark_pristine();
@@ -728,7 +752,7 @@ namespace document
 			save_callback_wrapper_t (document::document_ptr doc, document::save_callback_ptr callback) : _document(doc), _callback(callback)
 			{
 				if(_document->is_open())
-						_document->open();
+						_document->sync_open();
 				else	_should_close = false;
 			}
 
@@ -758,7 +782,7 @@ namespace document
 		if(!is_open())
 		{
 			if(!_content && _backup_path == NULL_STR)
-				return callback->did_save(_path, io::bytes_ptr(), encoding::type(_disk_newlines, _disk_encoding, _disk_bom), false, NULL_STR, oak::uuid_t());
+				return callback->did_save_document(shared_from_this(), _path, true, NULL_STR, oak::uuid_t());
 		}
 
 		_file_watcher.reset();
@@ -778,11 +802,11 @@ namespace document
 		file::save(_path, sharedPtr, _authorization, bytes, attributes, _file_type, encoding, std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
 	}
 
-	bool document_t::save ()
+	bool document_t::sync_save (CFStringRef runLoopMode)
 	{
 		struct stall_t : save_callback_t
 		{
-			stall_t (bool& res) : _res(res), _run_loop(CFSTR("OakThreadSignalsRunLoopMode")) { }
+			stall_t (bool& res, CFStringRef runLoopMode) : _res(res), _run_loop(runLoopMode) { }
 
 			void did_save_document (document_ptr document, std::string const& path, bool success, std::string const& message, oak::uuid_t const& filter)
 			{
@@ -798,7 +822,7 @@ namespace document
 		};
 
 		bool res = false;
-		auto cb = std::make_shared<stall_t>(res);
+		auto cb = std::make_shared<stall_t>(res, runLoopMode);
 		try_save(cb);
 		cb->wait();
 
@@ -875,7 +899,9 @@ namespace document
 		_inode = documents.update_document(identifier());
 		if(is_open())
 		{
-			_is_on_disk = access(_path.c_str(), F_OK) == 0;
+			bool wasOnDisk = std::exchange(_is_on_disk, access(_path.c_str(), F_OK) == 0);
+			if(wasOnDisk != _is_on_disk)
+				broadcast(callback_t::did_change_on_disk_status);
 			_file_watcher.reset(_is_on_disk ? new watch_t(_path, shared_from_this()) : NULL);
 
 			std::string newFileType = file::type(_path, std::make_shared<io::bytes_t>(content()), _virtual_path);
@@ -916,11 +942,11 @@ namespace document
 		}
 	}
 
-	void document_t::open ()
+	void document_t::sync_open (CFStringRef runLoopMode)
 	{
 		struct stall_t : document::open_callback_t
 		{
-			stall_t () : _run_loop(CFSTR("OakThreadSignalsRunLoopMode")) { }
+			stall_t (CFStringRef runLoopMode) : _run_loop(runLoopMode) { }
 			void show_document (std::string const& path, document_ptr document)                                                     { _run_loop.stop(); }
 			void show_error (std::string const& path, document_ptr document, std::string const& message, oak::uuid_t const& filter) { _run_loop.stop(); }
 			void wait () { _run_loop.start(); }
@@ -929,7 +955,7 @@ namespace document
 			cf::run_loop_t _run_loop;
 		};
 
-		auto cb = std::make_shared<stall_t>();
+		auto cb = std::make_shared<stall_t>(runLoopMode);
 		if(!try_open(cb))
 			cb->wait();
 	}
@@ -1063,10 +1089,10 @@ namespace document
 						D(DBF_Document_WatchFS, bug("changed on disk and we have no local changes, so reverting to that\n"););
 						_document->undo_manager().begin_undo_group(ng::ranges_t(0));
 						_document->_buffer->replace(0, _document->_buffer->size(), yours);
-						_document->_buffer->bump_revision();
+						_document->undo_manager().end_undo_group(ng::ranges_t(0), true);
 						_document->check_modified(_document->_buffer->revision(), _document->_buffer->revision());
 						_document->mark_pristine();
-						_document->undo_manager().end_undo_group(ng::ranges_t(0));
+						_document->broadcast(callback_t::did_change_content);
 					}
 					else
 					{
@@ -1079,6 +1105,7 @@ namespace document
 							_document->_buffer->replace(0, _document->_buffer->size(), merged);
 							_document->set_revision(_document->_buffer->bump_revision());
 							_document->undo_manager().end_undo_group(ng::ranges_t(0));
+							_document->broadcast(callback_t::did_change_content);
 							// TODO if there was a conflict, we shouldn’t take the merged content (but ask user what to do)
 							// TODO mark_pristine() but using ‘yours’
 						}
@@ -1120,6 +1147,12 @@ namespace document
 
 			auto const settings = settings_for_path(virtual_path(), file_type(), path::parent(_path), document_variables());
 			set_indent(text::indent_t(std::max(1, settings.get(kSettingsTabSizeKey, 4)), SIZE_T_MAX, settings.get(kSettingsSoftTabsKey, false)));
+
+			if(_path == NULL_STR && _backup_path != NULL_STR)
+			{
+				std::string oldBackupPath = std::exchange(_backup_path, NULL_STR);
+				rename(oldBackupPath.c_str(), backup_path().c_str());
+			}
 		}
 	}
 
@@ -1127,7 +1160,7 @@ namespace document
 	{
 		D(DBF_Document, bug("%.*s… (%zu bytes), file type %s\n", std::min<int>(32, str.size()), str.data(), str.size(), _file_type.c_str()););
 		if(_buffer)
-				_buffer->replace(0, _buffer->size(), str); 
+				_buffer->replace(0, _buffer->size(), str);
 		else	_content = std::make_shared<io::bytes_t>(str);
 	}
 
@@ -1167,7 +1200,7 @@ namespace document
 		struct buffer_reader_t : document::document_t::reader_t
 		{
 			WATCH_LEAKS(buffer_reader_t);
-			buffer_reader_t (io::bytes_ptr const& data) : _data(data) { }
+			buffer_reader_t (io::bytes_ptr const& data, encoding::type const& encoding) : _data(data), _encoding(encoding) { }
 
 			io::bytes_ptr next ()
 			{
@@ -1176,15 +1209,21 @@ namespace document
 				return res;
 			}
 
+			encoding::type encoding () const
+			{
+				return _encoding;
+			}
+
 		private:
 			io::bytes_ptr _data;
+			encoding::type _encoding;
 		};
 	}
 
 	document_t::reader_ptr document_t::create_reader () const
 	{
 		if(is_open())
-			return std::make_shared<buffer_reader_t>(std::make_shared<io::bytes_t>(content()));
+			return std::make_shared<buffer_reader_t>(std::make_shared<io::bytes_t>(content()), disk_encoding());
 		return std::make_shared<file_reader_t>(shared_from_this());
 	}
 
@@ -1515,5 +1554,5 @@ namespace document
 			pthread_mutex_unlock(&mutex);
 		}
 	}
-	
+
 } /* document */

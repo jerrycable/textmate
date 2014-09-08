@@ -44,6 +44,12 @@
 	NSInteger row = [variablesTableView selectedRow];
 	if(row != -1)
 	{
+		if([variablesTableView editedColumn] != -1)
+		{
+			[variablesTableView abortEditing];
+			[[[self view] window] makeFirstResponder:variablesTableView];
+		}
+
 		[_variables removeObjectAtIndex:row];
 		[[NSUserDefaults standardUserDefaults] setObject:[_variables copy] forKey:kUserDefaultsEnvironmentVariablesKey];
 		[variablesTableView reloadData];
@@ -72,7 +78,7 @@
 
 - (void)tableViewSelectionDidChange:(NSNotification*)aNotification
 {
-	self.canRemove = [variablesTableView selectedRow] != -1;
+	self.canRemove = [variablesTableView selectedRow] != -1 && [_variables count] != 0;
 }
 
 // ==========================
@@ -93,6 +99,8 @@
 {
 	NSMutableDictionary* newValue = [NSMutableDictionary dictionaryWithDictionary:_variables[rowIndex]];
 	[newValue setObject:anObject forKey:[aTableColumn identifier]];
+	if(![[aTableColumn identifier] isEqualToString:@"enabled"] && ![[newValue objectForKey:@"enabled"] boolValue])
+		[newValue setObject:@YES forKey:@"enabled"];
 	[_variables replaceObjectAtIndex:rowIndex withObject:newValue];
 	[[NSUserDefaults standardUserDefaults] setObject:[_variables copy] forKey:kUserDefaultsEnvironmentVariablesKey];
 }

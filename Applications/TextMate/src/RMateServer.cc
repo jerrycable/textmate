@@ -141,7 +141,7 @@ namespace
 			addr.sun_len = SUN_LEN(&addr);
 			if(bind(fd, (sockaddr*)&addr, sizeof(addr)) == -1)
 				OakRunIOAlertPanel("Could not bind to socket:\n%s", _socket_path);
-			else if(listen(fd, 5) == -1)
+			else if(listen(fd, SOMAXCONN) == -1)
 				OakRunIOAlertPanel("Could not listen to socket");
 
 			_callback = std::make_shared<socket_callback_t>(&rmate_connection_handler_t, fd);
@@ -165,15 +165,15 @@ namespace
 			D(DBF_RMateServer, bug("port %ud, remote clients %s\n", _port, BSTR(_listen_for_remote_clients)););
 
 			static int const on = 1;
-			socket_t fd(socket(AF_INET6, SOCK_STREAM, 0));
+			socket_t fd(socket(PF_INET6, SOCK_STREAM, 0));
 			setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
 
 			fcntl(fd, F_SETFD, FD_CLOEXEC);
 			struct sockaddr_in6 iaddr = { sizeof(sockaddr_in6), AF_INET6, htons(_port) };
-			iaddr.sin6_addr   = listenForRemoteClients ? in6addr_any : in6addr_loopback;
+			iaddr.sin6_addr = listenForRemoteClients ? in6addr_any : in6addr_loopback;
 			if(-1 == bind(fd, (sockaddr*)&iaddr, sizeof(iaddr)))
 				fprintf(stderr, "bind(): %s\n", strerror(errno));
-			if(-1 == listen(fd, 5))
+			if(-1 == listen(fd, SOMAXCONN))
 				fprintf(stderr, "listen(): %s\n", strerror(errno));
 
 			_callback = std::make_shared<socket_callback_t>(&rmate_connection_handler_t, fd);
@@ -448,7 +448,7 @@ struct socket_observer_t
 		{
 			std::string::size_type eol = line.find('\n');
 			std::string str = line.substr(0, eol);
-			if(!str.empty() && str[str.size()-1] == '\r')
+			if(!str.empty() && str.back() == '\r')
 				str.resize(str.size()-1);
 			line.erase(line.begin(), line.begin() + eol + 1);
 

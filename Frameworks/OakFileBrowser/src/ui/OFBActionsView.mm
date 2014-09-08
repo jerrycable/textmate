@@ -23,28 +23,10 @@ static NSButton* OakCreateImageButton (NSImage* image)
 	return res;
 }
 
-static NSPopUpButton* OakCreateActionPopUpButton ()
-{
-	NSPopUpButton* res = [NSPopUpButton new];
-	res.bordered  = NO;
-	res.pullsDown = YES;
-	[[res cell] setBackgroundStyle:NSBackgroundStyleRaised];
-
-	NSMenuItem* item = [NSMenuItem new];
-	item.title = @"";
-	item.image = [NSImage imageNamed:NSImageNameActionTemplate];
-	[item.image setSize:NSMakeSize(14, 14)];
-
-	[[res cell] setUsesItemFromMenu:NO];
-	[[res cell] setMenuItem:item];
-
-	return res;
-}
-
 @implementation OFBActionsView
 - (id)initWithFrame:(NSRect)aRect
 {
-	if(self = [super initWithGradient:[[NSGradient alloc] initWithColorsAndLocations: [NSColor colorWithCalibratedWhite:1.000 alpha:0.68], 0.0, [NSColor colorWithCalibratedWhite:1.000 alpha:0.5], 0.0416, [NSColor colorWithCalibratedWhite:1.000 alpha:0.0], 1.0, nil] inactiveGradient:[[NSGradient alloc] initWithColorsAndLocations: [NSColor colorWithCalibratedWhite:1.000 alpha:0.68], 0.0, [NSColor colorWithCalibratedWhite:1.000 alpha:0.5], 0.0416, [NSColor colorWithCalibratedWhite:1.000 alpha:0.0], 1.0, nil]])
+	if(self = [super initWithGradient:[[NSGradient alloc] initWithColorsAndLocations:[NSColor colorWithCalibratedWhite:1 alpha:0.68], 0.0, [NSColor colorWithCalibratedWhite:1 alpha:0.5], 0.0416, [NSColor colorWithCalibratedWhite:1 alpha:0], 1.0, nil] inactiveGradient:[[NSGradient alloc] initWithColorsAndLocations:[NSColor colorWithCalibratedWhite:1 alpha:0.68], 0.0, [NSColor colorWithCalibratedWhite:1 alpha:0.5], 0.0416, [NSColor colorWithCalibratedWhite:1 alpha:0], 1.0, nil]])
 	{
 		self.createButton       = OakCreateImageButton([NSImage imageNamed:NSImageNameAddTemplate]);
 		self.actionsPopUpButton = OakCreateActionPopUpButton();
@@ -52,7 +34,7 @@ static NSPopUpButton* OakCreateActionPopUpButton ()
 		self.searchButton       = OakCreateImageButton([NSImage imageNamed:@"Search" inSameBundleAsClass:[self class]]);
 		self.favoritesButton    = OakCreateImageButton([NSImage imageNamed:@"Favorites" inSameBundleAsClass:[self class]]);
 		self.scmButton          = OakCreateImageButton([NSImage imageNamed:@"SCM" inSameBundleAsClass:[self class]]);
-		
+
 		self.createButton.toolTip       = @"Create new file";
 		self.reloadButton.toolTip       = @"Reload file browser";
 		self.searchButton.toolTip       = @"Search current folder";
@@ -64,13 +46,6 @@ static NSPopUpButton* OakCreateActionPopUpButton ()
 		[self.searchButton.cell    accessibilitySetOverrideValue:self.searchButton.toolTip    forAttribute:NSAccessibilityDescriptionAttribute];
 		[self.favoritesButton.cell accessibilitySetOverrideValue:self.favoritesButton.toolTip forAttribute:NSAccessibilityDescriptionAttribute];
 		[self.scmButton.cell       accessibilitySetOverrideValue:self.scmButton.toolTip       forAttribute:NSAccessibilityDescriptionAttribute];
-
-		[self.actionsPopUpButton.cell accessibilitySetOverrideValue:@"Actions" forAttribute:NSAccessibilityDescriptionAttribute];
-
-		NSMenu* menu = [NSMenu new];
-		[menu addItemWithTitle:@"Unused" action:@selector(nop:) keyEquivalent:@""];
-		[menu addItemWithTitle:@"Create Folder" action:@selector(nop:) keyEquivalent:@""];
-		self.actionsPopUpButton.menu = menu;
 
 		NSView* wrappedActionsPopUpButton = [NSView new];
 		[wrappedActionsPopUpButton addSubview:self.actionsPopUpButton];

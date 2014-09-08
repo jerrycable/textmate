@@ -39,28 +39,27 @@ static void DrawTextWithOptions (NSString* string, NSRect bounds, uint32_t textO
 	CGContextRef context = (CGContextRef)[[NSGraphicsContext currentContext] graphicsPort];
 	CGContextSetTextMatrix(context, CGAffineTransformIdentity);
 
-	CGMutablePathRef path = CGPathCreateMutable();
-	CGPathAddRect(path, NULL, bounds);
+	if(CGMutablePathRef path = CGPathCreateMutable())
+	{
+		CGPathAddRect(path, NULL, bounds);
+		if(CFAttributedStringRef attrStr = (CFAttributedStringRef)CFBridgingRetain(AttributedStringWithOptions(string, textOptions, bounds.size.width < 12 ? NSLineBreakByClipping : NSLineBreakByTruncatingTail)))
+		{
+			if(CTFramesetterRef framesetter = CTFramesetterCreateWithAttributedString(attrStr))
+			{
+				if(CTFrameRef frame = CTFramesetterCreateFrame(framesetter, CFRangeMake(0, 0), path, NULL))
+				{
+					if(textOptions & layer_t::shadow)
+						CGContextSetShadowWithColor(context, NSMakeSize(0, -0.5), 0.6, [[NSColor colorWithCalibratedWhite:1 alpha:0.6] tmCGColor]);
+					CTFrameDraw(frame, context);
 
-	CFAttributedStringRef attrStr = (CFAttributedStringRef)CFBridgingRetain(AttributedStringWithOptions(string, textOptions, bounds.size.width < 12 ? NSLineBreakByClipping : NSLineBreakByTruncatingTail));
-	if(!attrStr)
-		return;
-	CTFramesetterRef framesetter = CTFramesetterCreateWithAttributedString(attrStr);
-	CFRelease(attrStr);
-	if(!framesetter)
-		return;
-	CTFrameRef frame = CTFramesetterCreateFrame(framesetter, CFRangeMake(0, 0), path, NULL);
-	CFRelease(framesetter);
-	if(!frame)
-		return;
-
-	if(textOptions & layer_t::shadow)
-		CGContextSetShadowWithColor(context, NSMakeSize(0, -1), 1, [[NSColor colorWithCalibratedWhite:1 alpha:0.6] tmCGColor]);
-
-	CTFrameDraw(frame, context);
-
-	CFRelease(frame);
-	CFRelease(path);
+					CFRelease(frame);
+				}
+				CFRelease(framesetter);
+			}
+			CFRelease(attrStr);
+		}
+		CFRelease(path);
+	}
 
 	[NSGraphicsContext restoreGraphicsState];
 }
@@ -95,25 +94,6 @@ OAK_DEBUG_VAR(OakControl);
 
 - (void)setLayers:(std::vector<layer_t> const&)aLayout
 {
-	// Remove views that are no longer in the layout
-	for(auto const& oldLayer : layout)
-	{
-		if(oldLayer.view)
-		{
-			BOOL found = NO;
-			for(auto const& newLayer : aLayout)
-			{
-				if(newLayer.view == oldLayer.view)
-				{
-					found = YES;
-					break;
-				}
-			}
-			if(!found)
-				[oldLayer.view removeFromSuperview];
-		}
-	}
-
 	// TODO this triggers a redraw — may want to consider if we can delta update…
 	layout = aLayout;
 	NSRect coveredRect = NSZeroRect;
@@ -121,18 +101,6 @@ OAK_DEBUG_VAR(OakControl);
 	{
 		if(layer.color || layer.image && layer.requisite == layer_t::no_requisite)
 			coveredRect = NSUnionRect(coveredRect, layer.rect);
-		if(NSView* view = layer.view)
-		{
-			if([view superview] != self)
-				[view removeFromSuperview];
-			NSRect viewFrame = layer.rect;
-			if(view.frame.size.height > 0)
-				viewFrame.size.height = view.frame.size.height;
-			viewFrame.origin.x += layer.content_offset.x;
-			viewFrame.origin.y += layer.content_offset.y;
-			[view setFrame:viewFrame];
-			[self addSubview:view];
-		}
 	}
 	isTransparent = !NSContainsRect(coveredRect, [self bounds]);
 	[self setupTrackingRects];
@@ -205,7 +173,7 @@ OAK_DEBUG_VAR(OakControl);
 		if(states[i].active)
 			res |= states[i].requisite;
 	}
-	if(res & layer_t::window_main || res & layer_t::window_key)
+	if(res & layer_t::window_main || res & layer_t::window_key || [[self window] styleMask] & NSFullScreenWindowMask)
 		res |= layer_t::window_main_or_key;
 	return res;
 }
@@ -215,19 +183,31 @@ OAK_DEBUG_VAR(OakControl);
 	if(aLayer.color)
 	{
 		[aLayer.color set];
-		NSRectFill(aLayer.rect);
+		if(aLayer.cornerRadius > 0.0)
+			[[NSBezierPath bezierPathWithRoundedRect:aLayer.rect xRadius:aLayer.cornerRadius yRadius:aLayer.cornerRadius] fill];
+		else
+			NSRectFill(aLayer.rect);
+	}
+
+	if(aLayer.borderColor)
+	{
+		[aLayer.borderColor set];
+		if(aLayer.cornerRadius > 0.0)
+			[[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(aLayer.rect, -0.5, -0.5) xRadius:aLayer.cornerRadius yRadius:aLayer.cornerRadius] stroke];
+		else
+			[NSBezierPath strokeRect:NSInsetRect(aLayer.rect, -0.5, -0.5)];
 	}
 
 	if(aLayer.image)
 	{
 		if(aLayer.image_options & layer_t::stretch)
 		{
-			[aLayer.image drawInRect:aLayer.rect fromRect:NSZeroRect operation:NSCompositeCopy fraction:1.0];
+			[aLayer.image drawInRect:aLayer.rect fromRect:NSZeroRect operation:NSCompositeCopy fraction:1];
 		}
 		else
 		{
 			NSPoint origin = NSMakePoint(aLayer.rect.origin.x + aLayer.content_offset.x, aLayer.rect.origin.y + aLayer.content_offset.y);
-			[aLayer.image drawAtPoint:origin fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1.0];
+			[aLayer.image drawAtPoint:origin fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
 		}
 	}
 

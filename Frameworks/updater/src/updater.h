@@ -19,7 +19,7 @@ namespace bundles_db
 
 	struct PUBLIC source_t
 	{
-		source_t (std::string const& name, std::string const& identifier, std::string const& url, std::string const& path, int32_t rank, bool disabled) : _name(name), _identifier(identifier), _url(url), _path(path), _rank(rank), _disabled(disabled) { }
+		source_t (std::string const& name, std::string const& identifier, std::string const& url, std::string const& path, int32_t rank = 0, bool disabled = false) : _name(name), _identifier(identifier), _url(url), _path(path), _rank(rank), _disabled(disabled) { }
 
 		std::string name () const       { return _name; }
 		std::string identifier () const { return _identifier; }
@@ -44,11 +44,10 @@ namespace bundles_db
 
 	struct PUBLIC bundle_t
 	{
-		bundle_t () : _name(NULL_STR), _category(NULL_STR), _html_url(NULL_STR), _origin(NULL_STR), _description(NULL_STR), _contact_name(NULL_STR), _contact_email(NULL_STR), _url(NULL_STR), _size(0), _path(NULL_STR) { }
-
 		oak::uuid_t uuid () const              { return _uuid; }
 		std::string origin () const            { return _origin; }
 		std::string name () const              { return _name; }
+		std::string requires () const          { return _requires; }
 		std::string category () const          { return _category; }
 		std::string html_url () const          { return _html_url; }
 		std::string description () const       { return _description; }
@@ -60,6 +59,10 @@ namespace bundles_db
 		oak::date_t path_updated () const      { return _path_updated; }
 		int32_t rank () const                  { return _source ? _source->rank() : 0; }
 		int32_t size () const                  { return _size; }
+		bool is_mandatory () const             { return _is_mandatory; }
+		bool is_default () const               { return _is_default; }
+		bool is_dependency () const            { return _is_dependency; }
+		void set_dependency (bool flag)        { _is_dependency = flag; }
 
 		bool installed () const                { return _path != NULL_STR; }
 		bool has_update () const               { return installed() && _path_updated < _url_updated; }
@@ -80,24 +83,28 @@ namespace bundles_db
 
 		oak::uuid_t _uuid;
 
-		std::string _name;
-		std::string _category;
-		std::string _html_url;
-		std::string _origin;
-		std::string _description;
-		std::string _contact_name;
-		std::string _contact_email;
+		std::string _name          = NULL_STR;
+		std::string _requires      = NULL_STR;
+		std::string _category      = NULL_STR;
+		std::string _html_url      = NULL_STR;
+		std::string _origin        = NULL_STR;
+		std::string _description   = NULL_STR;
+		std::string _contact_name  = NULL_STR;
+		std::string _contact_email = NULL_STR;
 
 		std::vector<grammar_info_ptr> _grammars;
 		std::vector<dependency_info_ptr> _dependencies;
 
 		source_ptr _source;
-		std::string _url;
+		std::string _url = NULL_STR;
 		oak::date_t _url_updated;
-		int32_t _size;
+		int32_t _size = 0;
+		bool _is_default = false;
+		bool _is_mandatory = false;
+		bool _is_dependency = false; // if installed because another bundle depends on it
 
-		std::string _path;
-		oak::date_t	_path_updated;
+		std::string _path = NULL_STR;
+		oak::date_t _path_updated;
 	};
 
 	struct PUBLIC grammar_info_t
@@ -122,7 +129,6 @@ namespace bundles_db
 
 	PUBLIC bool update (source_ptr source, double* progress = NULL, double min = 0, double max = 1);
 	PUBLIC std::vector<source_ptr> sources (std::string const& installDir = NULL_STR);
-	PUBLIC bool save_sources (std::vector<source_ptr> const& sources, std::string const& installDir = NULL_STR);
 
 	PUBLIC std::vector<bundle_ptr> index (std::string const& installDir = NULL_STR);
 	PUBLIC bool save_index (std::vector<bundle_ptr> const& bundles, std::string const& installDir = NULL_STR);

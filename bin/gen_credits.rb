@@ -1,11 +1,10 @@
-#!/System/Library/Frameworks/Ruby.framework/Versions/1.8/usr/bin/ruby -wKU
+#!/System/Library/Frameworks/Ruby.framework/Versions/Current/usr/bin/ruby
 # == Synopsis
 #
 # Module to assist in building the Contributors page using git commit history.
 #
+$KCODE = 'U' if RUBY_VERSION < "1.9"
 
-require 'getoptlong'
-require 'rdoc/usage'
 require 'digest/md5'
 require 'net/https'
 require 'uri'
@@ -58,6 +57,13 @@ class GitHubLookup
     @db['7640cae93abde468b73f35d6620a9b04'] = 'caleb'
     @db['f889181fc58ccb702822b54fe3702d24'] = 'codykrieger'
     @db['571db4b87bd7d2fec3dcd5524cb7d9ae'] = 'rdwampler'
+    @db['a4c0d688809489ab98a162b10c57381c'] = 'dusek'
+    @db['7e9f543f0ffdb7c9a899e628fe76e7f3'] = 'jtbandes'
+    @db['04581c59babdab9788e932ecb79f9617'] = 'zadr'
+    @db['0ee1291a38e3c76fdfaadb2a0fa3428a'] = 'duanemoody'
+    @db['71c216d75354dda636b879dfc95654fb'] = 'charliepark'
+    @db['c8591aebaf7659f1ff429898345f446a'] = 'olegam'
+    @db['f275727e33d63e05cc0abab1bfc41da7'] = 'sudara'
     ObjectSpace.define_finalizer(@db, proc {|id| db.close })
   end
 
@@ -89,7 +95,7 @@ class GitHubLookup
 
 end
 
-def generate_credits(dbm_file)
+def generate_credits(dbm_file, warn=false)
   GitHubLookup.initialize(dbm_file)
   did_warn_db = Set.new
 
@@ -97,7 +103,7 @@ def generate_credits(dbm_file)
   # git hash, author name, email address, author date, commit summary
   cmd = 'git log -z --date=iso --pretty=format:"%H%n%an%n%ae%n%ad%n%s%n%B"'
 
-  `#{cmd}`.split(/\x00/s).each {|commit|
+  `#{cmd}`.split(/\x00/).each {|commit|
     fields = commit.split(/\n/, 6)
 
     # omit commits from Allan; he gets enough credit already ;)
@@ -112,7 +118,7 @@ def generate_credits(dbm_file)
       user = GitHubLookup.user_by_email(fields[2])
       date = DateTime.parse(fields[3])
       subject = CGI.escapeHTML(fields[4])
-      body = CGI.escapeHTML(fields[5].sub(fields[4], '').sub(/[\s\x00]+$/s, '').sub(/^[\s\x00]+/s, ''))
+      body = CGI.escapeHTML(fields[5].sub(fields[4], '').sub(/[\s\x00]+$/, '').sub(/^[\s\x00]+/, ''))
       userpic = "http://www.gravatar.com/avatar/#{emailhash}?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png"
 
       # if we have a github username, populate a link to their
@@ -123,7 +129,9 @@ def generate_credits(dbm_file)
         key = "#{name} <#{fields[2]}>"
         unless did_warn_db.include?(key)
           did_warn_db.add(key)
-          STDERR << "WARNING: failed to find GitHub user for #{key}\n";
+          if warn
+            STDERR << "WARNING: failed to find GitHub user for #{key}\n";
+          end
         end
       end
 
