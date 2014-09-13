@@ -402,6 +402,18 @@ BOOL HasDocumentWindow (NSArray* windows)
 	chooser.scope        = textView ? [textView scopeContext] : scope::wildcard;
 	chooser.hasSelection = [textView hasSelection];
 
+	if(DocumentController* controller = [NSApp targetForAction:@selector(selectedDocument)])
+	{
+		document::document_ptr doc = controller.selectedDocument;
+		chooser.path      = doc ? [NSString stringWithCxxString:doc->path()] : nil;
+		chooser.directory = doc && doc->path() != NULL_STR ? [NSString stringWithCxxString:path::parent(doc->path())] : controller.untitledSavePath;
+	}
+	else
+	{
+		chooser.path      = nil;
+		chooser.directory = nil;
+	}
+
 	[chooser showWindowRelativeToFrame:textView.window ? [textView.window convertRectToScreen:[textView convertRect:[textView visibleRect] toView:nil]] : [[NSScreen mainScreen] visibleFrame]];
 }
 
@@ -461,8 +473,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 	}
 	else if([item action] == @selector(printDocument:))
 	{
-		NSView* webView = [NSApp targetForAction:@selector(print:)];
-		enabled = [webView isKindOfClass:[NSView class]] && [webView conformsToProtocol:@protocol(WebDocumentView)];
+		enabled = [self findPrintableView:[NSApp keyWindow]] != nil;
 	}
 	return enabled;
 }
@@ -474,6 +485,8 @@ BOOL HasDocumentWindow (NSArray* windows)
 
 	if(NSString* uuid = [[[sender selectedItems] lastObject] objectForKey:@"uuid"])
 		[[BundleEditor sharedInstance] revealBundleItem:bundles::lookup(to_s(uuid))];
+	else if(NSString* path = [[[sender selectedItems] lastObject] objectForKey:@"path"])
+		OakOpenDocuments(@[ path ]);
 }
 
 - (void)editBundleItemWithUUIDString:(NSString*)uuidString
@@ -490,12 +503,27 @@ BOOL HasDocumentWindow (NSArray* windows)
 	[[NSPageLayout pageLayout] runModal];
 }
 
+- (NSView*)findPrintableView:(NSWindow*)aWindow
+{
+	NSRect rect = [aWindow.contentView frame];
+	for(NSView* view = [aWindow.contentView hitTest:NSMakePoint(NSMidX(rect), NSMidY(rect))]; view; view = [view superview])
+	{
+		if([view acceptsFirstResponder] && [view respondsToSelector:@selector(printDocument:)] || [view conformsToProtocol:@protocol(WebDocumentView)])
+			return view;
+	}
+	return nil;
+}
+
 - (void)printDocument:(id)sender
 {
-	NSView* webView = [NSApp targetForAction:@selector(print:)];
-	if([webView isKindOfClass:[NSView class]] && [webView conformsToProtocol:@protocol(WebDocumentView)])
+	id view = [self findPrintableView:[NSApp keyWindow]];
+	if([view respondsToSelector:@selector(printDocument:)])
 	{
-		NSPrintOperation* printer = [NSPrintOperation printOperationWithView:webView];
+		[view printDocument:sender];
+	}
+	else if([view conformsToProtocol:@protocol(WebDocumentView)])
+	{
+		NSPrintOperation* printer = [NSPrintOperation printOperationWithView:view];
 		[[printer printPanel] setOptions:[[printer printPanel] options] | NSPrintPanelShowsPaperSize | NSPrintPanelShowsOrientation];
 
 		NSPrintInfo* info = [printer printInfo];
@@ -506,7 +534,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 		info.topMargin    = info.paperSize.height - NSMaxY(display);
 		info.bottomMargin = NSMinY(display);
 
-		[printer runOperationModalForWindow:[webView window] delegate:nil didRunSelector:NULL contextInfo:nil];
+		[printer runOperationModalForWindow:[view window] delegate:nil didRunSelector:NULL contextInfo:nil];
 	}
 }
 @end

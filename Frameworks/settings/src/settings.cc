@@ -85,14 +85,15 @@ namespace
 
 	struct section_t
 	{
-		section_t (path::glob_t const& fileGlob, scope::selector_t const& scopeSelector, std::vector< std::pair<std::string, std::string> > const& variables) : file_glob(fileGlob), scope_selector(scopeSelector), variables(variables) { }
-		section_t (std::vector< std::pair<std::string, std::string> > const& variables) : section_t("", scope::selector_t(), variables) { }
-		section_t (path::glob_t const& fileGlob, std::vector< std::pair<std::string, std::string> > const& variables) : section_t(fileGlob, scope::selector_t(), variables) { has_file_glob = true; }
-		section_t (scope::selector_t const& scopeSelector, std::vector< std::pair<std::string, std::string> > const& variables) : section_t("", scopeSelector, variables) { has_scope_selector = true; }
+		section_t (std::string const& path, path::glob_t const& fileGlob, scope::selector_t const& scopeSelector, std::vector< std::pair<std::string, std::string> > const& variables) : path(path), file_glob(fileGlob), scope_selector(scopeSelector), variables(variables) { }
+		section_t (std::string const& path, std::vector< std::pair<std::string, std::string> > const& variables) : section_t(path, "", scope::selector_t(), variables) { }
+		section_t (std::string const& path, path::glob_t const& fileGlob, std::vector< std::pair<std::string, std::string> > const& variables) : section_t(path, fileGlob, scope::selector_t(), variables) { has_file_glob = true; }
+		section_t (std::string const& path, scope::selector_t const& scopeSelector, std::vector< std::pair<std::string, std::string> > const& variables) : section_t(path, "", scopeSelector, variables) { has_scope_selector = true; }
 
 		bool has_file_glob      = false;
 		bool has_scope_selector = false;
 
+		std::string                                        path;
 		path::glob_t                                       file_glob;
 		scope::selector_t                                  scope_selector;
 		std::vector< std::pair<std::string, std::string> > variables;
@@ -120,15 +121,15 @@ namespace
 
 			if(section.names.empty())
 			{
-				res.emplace_back(variables);
+				res.emplace_back(path, variables);
 			}
 			else
 			{
 				for(auto const& name : section.names)
 				{
 					if(is_scope_selector(name))
-							res.emplace_back(scope::selector_t(name), variables);
-					else	res.emplace_back(path::glob_t(name), variables);
+							res.emplace_back(path, scope::selector_t(name), variables);
+					else	res.emplace_back(path, path::glob_t(name), variables);
 				}
 			}
 		}
@@ -165,14 +166,12 @@ namespace
 		}
 	}
 
-	std::map<std::string, std::string> expanded_variables_for (std::string const& directory, std::string const& path, scope::scope_t const& scope, std::map<std::string, std::string> variables)
+	static void collect (std::string const& directory, std::string const& path, scope::scope_t const& scope, std::function<void(std::string const& key, std::string const& value, section_t const& section, std::string const& name)> filter)
 	{
 		D(DBF_Settings, bug("%s, %s, %s\n", directory.c_str(), path.c_str(), to_s(scope).c_str()););
-		for(auto const& pair : global_variables())
-			expand_variable(pair.first, pair.second, variables);
 
-		static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-		pthread_mutex_lock(&mutex);
+		static std::mutex mutex;
+		std::lock_guard<std::mutex> lock(mutex);
 		sections(NULL_STR); // clear cache if too big
 
 		std::multimap<double, section_t const*> orderScopeMatches;
@@ -189,7 +188,7 @@ namespace
 				else if(!section.has_file_glob)
 				{
 					for(auto const& pair : section.variables)
-						expand_variable(pair.first, pair.second, variables);
+						filter(pair.first, pair.second, section, NULL_STR);
 				}
 			}
 		}
@@ -197,7 +196,7 @@ namespace
 		for(auto const& section : orderScopeMatches)
 		{
 			for(auto const& pair : section.second->variables)
-				expand_variable(pair.first, pair.second, variables);
+				filter(pair.first, pair.second, *section.second, to_s(section.second->scope_selector));
 		}
 
 		for(auto const& file : paths(directory))
@@ -207,15 +206,36 @@ namespace
 				if(section.has_file_glob && section.file_glob.does_match(path == NULL_STR ? directory : path))
 				{
 					for(auto const& pair : section.variables)
-						expand_variable(pair.first, pair.second, variables);
+						filter(pair.first, pair.second, section, to_s(section.file_glob));
 				}
 			}
 		}
+	}
 
-		pthread_mutex_unlock(&mutex);
+	std::map<std::string, std::string> expanded_variables_for (std::string const& directory, std::string const& path, scope::scope_t const& scope, std::map<std::string, std::string> variables)
+	{
+		for(auto const& pair : global_variables())
+			expand_variable(pair.first, pair.second, variables);
+
+		collect(directory, path, scope, [&variables](std::string const& key, std::string const& value, section_t const& section, std::string const& name){
+			expand_variable(key, value, variables);
+		});
 
 		variables.erase("CWD");
 		return variables;
+	}
+
+	std::vector<setting_info_t> settings_info_for (std::string const& directory, std::string const& path, scope::scope_t const& scope)
+	{
+		std::vector<setting_info_t> res;
+
+		collect(directory, path, scope, [&res](std::string const& key, std::string const& value, section_t const& section, std::string const& name){
+			res.emplace_back(key, section.path, name);
+		});
+
+		res.erase(std::remove_if(res.begin(), res.end(), [](auto const& info) { return info.variable == "CWD" || info.variable == "TM_PROPERTIES_PATH"; }), res.end());
+		std::reverse(res.begin(), res.end());
+		return res;
 	}
 }
 
@@ -249,6 +269,11 @@ std::map<std::string, std::string> variables_for_path (std::map<std::string, std
 	}
 
 	return variables;
+}
+
+std::vector<setting_info_t> settings_info_for_path (std::string const& path, scope::scope_t const& scope, std::string const& directory)
+{
+	return settings_info_for(directory, path, scope);
 }
 
 // ===================================
