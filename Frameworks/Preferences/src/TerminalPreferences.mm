@@ -10,6 +10,7 @@
 #import <io/exec.h>
 #import <ns/ns.h>
 #import <regexp/format_string.h>
+#import <version/version.h>
 #import <bundles/bundles.h>
 #import <oak/compat.h>
 
@@ -110,9 +111,14 @@ static bool rm_path (std::string const& path, AuthorizationRef& auth)
 	return false;
 }
 
+static bool cp_requires_admin (std::string const& dst)
+{
+	return access(dst.c_str(), W_OK) != 0 && (access(dst.c_str(), X_OK) == 0 || access(path::parent(dst).c_str(), W_OK) != 0);
+}
+
 static bool cp_path (std::string const& src, std::string const& dst, AuthorizationRef& auth)
 {
-	if(access(dst.c_str(), W_OK) == 0 || access(dst.c_str(), X_OK) != 0 && access(path::parent(dst).c_str(), W_OK) == 0)
+	if(!cp_requires_admin(dst))
 	{
 		if(copyfile(src.c_str(), dst.c_str(), NULL, COPYFILE_ALL | COPYFILE_NOFOLLOW_SRC) == 0)
 			return true;
@@ -311,9 +317,9 @@ static bool uninstall_mate (std::string const& path)
 
 + (void)updateMateIfRequired
 {
-	NSString* oldMate = [[[NSUserDefaults standardUserDefaults] stringForKey:kUserDefaultsMateInstallPathKey] stringByExpandingTildeInPath];
-	double oldVersion = [[NSUserDefaults standardUserDefaults] doubleForKey:kUserDefaultsMateInstallVersionKey];
-	NSString* newMate = [[NSBundle mainBundle] pathForResource:@"mate" ofType:nil];
+	NSString* oldMate    = [[[NSUserDefaults standardUserDefaults] stringForKey:kUserDefaultsMateInstallPathKey] stringByExpandingTildeInPath];
+	NSString* oldVersion = [[NSUserDefaults standardUserDefaults] stringForKey:kUserDefaultsMateInstallVersionKey];
+	NSString* newMate    = [[NSBundle mainBundle] pathForResource:@"mate" ofType:nil];
 
 	if(oldMate && newMate)
 	{
@@ -321,11 +327,28 @@ static bool uninstall_mate (std::string const& path)
 			std::string res = io::exec(to_s(newMate), "--version", NULL);
 			if(regexp::match_t const& m = regexp::search("\\Amate ([\\d.]+)", res))
 			{
-				double newVersion = std::stod(m[1]);
-				if(oldVersion < newVersion)
+				NSString* newVersion = [NSString stringWithCxxString:m[1]];
+				if(version::less(to_s(oldVersion), to_s(newVersion)))
 				{
-					if(install_mate(to_s(newMate), to_s(oldMate)))
-						[[NSUserDefaults standardUserDefaults] setDouble:newVersion forKey:kUserDefaultsMateInstallVersionKey];
+					if(cp_requires_admin(to_s(oldMate)))
+					{
+						dispatch_async(dispatch_get_main_queue(), ^{
+							NSInteger choice = NSRunAlertPanel(@"Update Shell Support", @"Would you like to update the installed version of mate to version %@?", @"Update", @"Cancel", nil, newVersion);
+							if(choice == NSAlertDefaultReturn) // "Update"
+							{
+								if(!install_mate(to_s(newMate), to_s(oldMate)))
+									return;
+							}
+
+							// Avoid asking again by storing the new version number
+							[[NSUserDefaults standardUserDefaults] setObject:newVersion forKey:kUserDefaultsMateInstallVersionKey];
+						});
+					}
+					else
+					{
+						if(install_mate(to_s(newMate), to_s(oldMate)))
+							[[NSUserDefaults standardUserDefaults] setObject:newVersion forKey:kUserDefaultsMateInstallVersionKey];
+					}
 				}
 			}
 		});

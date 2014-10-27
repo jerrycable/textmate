@@ -97,26 +97,10 @@ static void schedule_backup (oak::uuid_t const& docId)
 
 // ==========
 
-static std::multimap<text::range_t, document::document_t::mark_t> parse_marks (std::string const& str)
-{
-	std::multimap<text::range_t, document::document_t::mark_t> marks;
-	if(str != NULL_STR)
-	{
-		plist::any_t const& plist = plist::parse(str);
-		if(plist::array_t const* array = boost::get<plist::array_t>(&plist))
-		{
-			for(auto const& bm : *array)
-			{
-				if(std::string const* str = boost::get<std::string>(&bm))
-					marks.emplace(*str, "bookmark");
-			}
-		}
-	}
-	return marks;
-}
-
 namespace document
 {
+	std::string const kBookmarkIdentifier = "bookmark";
+
 	// ================
 	// = File Watcher =
 	// ================
@@ -504,29 +488,111 @@ namespace document
 
 	static struct mark_tracker_t
 	{
-		typedef std::multimap<text::range_t, document_t::mark_t> marks_t;
-
-		marks_t get (std::string const& path)
+		void move_to_buffer (std::string const& path, ng::buffer_t& buf)
 		{
-			if(path == NULL_STR)
-				return marks_t();
-
-			std::map<std::string, marks_t>::const_iterator it = marks.find(path);
-			if(it == marks.end())
-				it = marks.emplace(path, parse_marks(path::get_attr(path, "com.macromates.bookmarks"))).first;
-			return it->second;
+			for(auto const& type : marks_for(path))
+			{
+				for(auto const& pos : type.second)
+					buf.set_mark(cap(buf, pos.first).index, type.first, pos.second);
+			}
+			_paths.erase(path);
 		}
 
-		void set (std::string const& path, marks_t const& m)
+		void copy_from_buffer (std::string const& path, ng::buffer_t const& buf)
 		{
-			if(m.empty())
-					marks.erase(path);
-			else	marks[path] = m;
+			std::map<std::string, std::map<text::pos_t, std::string>> marks;
+			for(auto const& pair : buf.get_marks(0, buf.size()))
+				marks[pair.second.first].emplace(buf.convert(pair.first), pair.second.second);
+			_paths[path] = marks;
 		}
 
-		std::map<std::string, marks_t> marks;
+		void add (std::string const& path, text::pos_t const& pos, std::string const& mark, std::string const& value)
+		{
+			marks_for(path)[mark].emplace(pos, value);
+		}
+
+		std::map<text::pos_t, std::string> const& get (std::string const& path, std::string const& mark)
+		{
+			return marks_for(path)[mark];
+		}
+
+		void remove (std::string const& path, text::pos_t const& pos, std::string const& mark)
+		{
+			marks_for(path)[mark].erase(pos);
+		}
+
+		void remove_all (std::string const& path, std::string const& mark)
+		{
+			auto marks = _paths.find(path);
+			if(marks != _paths.end())
+			{
+				if(mark != NULL_STR)
+						marks->second.erase(mark);
+				else	marks->second.clear();
+			}
+		}
+
+		void remove_all (std::string const& mark)
+		{
+			for(auto& marks : _paths)
+			{
+				if(mark != NULL_STR)
+						marks.second.erase(mark);
+				else	marks.second.clear();
+			}
+		}
+
+	private:
+		std::map<std::string, std::map<text::pos_t, std::string>>& marks_for (std::string const& path)
+		{
+			auto marks = _paths.find(path);
+			if(marks == _paths.end())
+				marks = _paths.emplace(path, std::map<std::string, std::map<text::pos_t, std::string>>{ { kBookmarkIdentifier, load_bookmarks(path) } }).first;
+			return marks->second;
+		}
+
+		static ng::index_t cap (ng::buffer_t const& buf, text::pos_t const& pos)
+		{
+			size_t line = oak::cap<size_t>(0, pos.line,   buf.lines()-1);
+			size_t col  = oak::cap<size_t>(0, pos.column, buf.eol(line) - buf.begin(line));
+			ng::index_t res = buf.sanitize_index(buf.convert(text::pos_t(line, col)));
+			if(pos.offset && res.index < buf.size() && buf[res.index] == "\n")
+				res.carry = pos.offset;
+			return res;
+		}
+
+		static std::map<text::pos_t, std::string> load_bookmarks (std::string const& path)
+		{
+			std::map<text::pos_t, std::string> res;
+
+			std::string const str = path::get_attr(path, "com.macromates.bookmarks");
+			if(str == NULL_STR)
+				return res;
+
+			plist::any_t const& plist = plist::parse(str);
+			if(plist::array_t const* array = boost::get<plist::array_t>(&plist))
+			{
+				for(auto const& bm : *array)
+				{
+					if(std::string const* str = boost::get<std::string>(&bm))
+						res.emplace(*str, std::string());
+				}
+			}
+
+			return res;
+		}
+
+		// path → mark type → position → mark
+		std::map<std::string, std::map<std::string, std::map<text::pos_t, std::string>>> _paths;
 
 	} marks;
+
+	void remove_marks (std::string const& typeToClear)
+	{
+		for(auto document : scanner_t::open_documents())
+			document->remove_all_marks(typeToClear);
+		marks.remove_all(typeToClear);
+	}
 
 	// ==============
 	// = document_t =
@@ -535,8 +601,6 @@ namespace document
 	document_t::~document_t ()
 	{
 		D(DBF_Document, bug("%s\n", display_name().c_str()););
-		if(_path != NULL_STR && _buffer)
-			document::marks.set(_path, marks());
 		documents.remove(_identifier);
 	}
 
@@ -657,9 +721,8 @@ namespace document
 			return;
 		}
 
-		_disk_encoding = encoding.charset();
-		_disk_newlines = encoding.newlines();
-		_disk_bom      = encoding.byte_order_mark();
+		if(path != NULL_STR)
+			set_disk_encoding(encoding);
 
 		if(_file_type == NULL_STR)
 			_file_type = fileType;
@@ -678,7 +741,11 @@ namespace document
 
 			std::map<std::string, std::string>::const_iterator folded = attributes.find("com.macromates.folded");
 			if(folded != attributes.end())
-				_folded = folded->second;
+			{
+				auto crc32 = attributes.find("com.macromates.crc32");
+				if(crc32 != attributes.end() && crc32->second == text::format("%04x", content->crc32()))
+					_folded = folded->second;
+			}
 
 			if(_selection == NULL_STR)
 			{
@@ -715,9 +782,7 @@ namespace document
 				broadcast(callback_t::did_change_on_disk_status);
 			}
 
-			_disk_encoding = encoding.charset();
-			_disk_bom      = encoding.byte_order_mark();
-			_disk_newlines = encoding.newlines();
+			set_disk_encoding(encoding);
 
 			check_modified(revision(), revision());
 			mark_pristine();
@@ -726,23 +791,6 @@ namespace document
 
 		if(_is_on_disk)
 			_file_watcher = std::make_shared<watch_t>(_path, shared_from_this());
-	}
-
-	encoding::type document_t::encoding_for_save_as_path (std::string const& path)
-	{
-		encoding::type res = disk_encoding();
-
-		settings_t const& settings = settings_for_path(path);
-		if(!is_on_disk() || res.charset() == kCharsetNoEncoding)
-		{
-			res.set_charset(settings.get(kSettingsEncodingKey, kCharsetUTF8));
-			res.set_byte_order_mark(settings.get(kSettingsUseBOMKey, res.byte_order_mark()));
-		}
-
-		if(!is_on_disk() || res.newlines() == NULL_STR)
-			res.set_newlines(settings.get(kSettingsLineEndingsKey, "\n"));
-
-		return res;
 	}
 
 	void document_t::try_save (document::save_callback_ptr callback)
@@ -787,18 +835,34 @@ namespace document
 
 		_file_watcher.reset();
 
+		auto sharedPtr = std::make_shared<save_callback_wrapper_t>(shared_from_this(), callback);
+		auto bytes = std::make_shared<io::bytes_t>(content());
+
 		std::map<std::string, std::string> attributes;
 		if(volume::settings(_path).extended_attributes())
 		{
 			attributes["com.macromates.selectionRange"] = _selection;
 			attributes["com.macromates.visibleIndex"]   = _visible_index ? to_s(_visible_index) : NULL_STR;
-			attributes["com.macromates.bookmarks"]      = marks_as_string();
+			attributes["com.macromates.bookmarks"]      = bookmarks_as_string();
 			attributes["com.macromates.folded"]         = _folded;
+			attributes["com.macromates.crc32"]          = text::format("%04x", bytes->crc32());
 		}
 
-		auto sharedPtr = std::make_shared<save_callback_wrapper_t>(shared_from_this(), callback);
-		auto bytes = std::make_shared<io::bytes_t>(content());
-		encoding::type const encoding = encoding_for_save_as_path(_path);
+		encoding::type encoding = disk_encoding();
+		if(encoding.charset() == kCharsetNoEncoding || encoding.newlines() == NULL_STR)
+		{
+			settings_t const& settings = settings_for_path(_path);
+
+			if(encoding.charset() == kCharsetNoEncoding)
+			{
+				encoding.set_charset(settings.get(kSettingsEncodingKey, kCharsetUTF8));
+				encoding.set_byte_order_mark(settings.get(kSettingsUseBOMKey, encoding.byte_order_mark()));
+			}
+
+			if(encoding.newlines() == NULL_STR)
+				encoding.set_newlines(settings.get(kSettingsLineEndingsKey, "\n"));
+		}
+
 		file::save(_path, sharedPtr, _authorization, bytes, attributes, _file_type, encoding, std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
 	}
 
@@ -847,7 +911,7 @@ namespace document
 			path::set_attr(dst, "com.macromates.backup.custom-name",    _custom_name);
 			path::set_attr(dst, "com.macromates.backup.tab-size",       std::to_string(_indent.tab_size()));
 			path::set_attr(dst, "com.macromates.backup.soft-tabs",      _indent.soft_tabs() ? "YES" : "NO");
-			path::set_attr(dst, "com.macromates.bookmarks",             marks_as_string());
+			path::set_attr(dst, "com.macromates.bookmarks",             bookmarks_as_string());
 			path::set_attr(dst, "com.macromates.folded",                NULL_STR);
 			if(is_modified())
 				path::set_attr(dst, "com.macromates.backup.modified", "YES");
@@ -974,8 +1038,11 @@ namespace document
 			path::set_attr(_path, "com.macromates.selectionRange", _selection);
 			path::set_attr(_path, "com.macromates.visibleRect",    NULL_STR); // clear legacy attribute
 			path::set_attr(_path, "com.macromates.visibleIndex",   _visible_index ? to_s(_visible_index) : NULL_STR);
-			path::set_attr(_path, "com.macromates.bookmarks",      marks_as_string());
+			path::set_attr(_path, "com.macromates.bookmarks",      bookmarks_as_string());
 		}
+
+		if(_path != NULL_STR)
+			document::marks.copy_from_buffer(_path, *_buffer);
 
 		if(_backup_path != NULL_STR && access(_backup_path.c_str(), F_OK) == 0)
 			unlink(_backup_path.c_str());
@@ -1159,9 +1226,12 @@ namespace document
 	void document_t::set_content (std::string const& str)
 	{
 		D(DBF_Document, bug("%.*s… (%zu bytes), file type %s\n", std::min<int>(32, str.size()), str.data(), str.size(), _file_type.c_str()););
-		if(_buffer)
-				_buffer->replace(0, _buffer->size(), str);
-		else	_content = std::make_shared<io::bytes_t>(str);
+		if(str == NULL_STR)
+			_content.reset();
+		else if(_buffer)
+			_buffer->replace(0, _buffer->size(), str);
+		else
+			_content = std::make_shared<io::bytes_t>(str);
 	}
 
 	std::string document_t::content () const
@@ -1231,149 +1301,94 @@ namespace document
 	// = Replace =
 	// ===========
 
-	void document_t::replace (std::multimap<std::pair<size_t, size_t>, std::string> const& replacements)
+	bool document_t::replace (std::multimap<std::pair<size_t, size_t>, std::string> const& replacements, uint32_t crc32)
 	{
 		ASSERT(!is_open());
 
 		if(replacements.empty())
-			return;
+			return false;
 
 		ASSERT(_path != NULL_STR);
 		ASSERT(!_buffer);
 
 		ng::buffer_t buf;
 
+		boost::crc_32_type check;
 		file_reader_t reader(shared_from_this());
 		while(io::bytes_ptr bytes = reader.next())
+		{
+			check.process_bytes(bytes->get(), bytes->size());
 			buf.insert(buf.size(), std::string(bytes->begin(), bytes->end()));
+		}
 
+		if(crc32 != check.checksum())
+			return false;
+
+		document::marks.move_to_buffer(_path, buf);
 		riterate(pair, replacements)
 		{
 			D(DBF_Document_Replace, bug("replace range %zu-%zu with ‘%s’\n", pair->first.first, pair->first.second, pair->second.c_str()););
 			buf.replace(pair->first.first, pair->first.second, pair->second);
 		}
+		document::marks.copy_from_buffer(_path, buf);
 
 		_content = std::make_shared<io::bytes_t>(buf.substr(0, buf.size()));
 		set_disk_encoding(reader.encoding());
-	}
 
-	static ng::index_t cap (ng::buffer_t const& buf, text::pos_t const& pos)
-	{
-		size_t line = oak::cap<size_t>(0, pos.line,   buf.lines()-1);
-		size_t col  = oak::cap<size_t>(0, pos.column, buf.eol(line) - buf.begin(line));
-		ng::index_t res = buf.sanitize_index(buf.convert(text::pos_t(line, col)));
-		if(pos.offset && res.index < buf.size() && buf[res.index] == "\n")
-			res.carry = pos.offset;
-		return res;
+		return true;
 	}
 
 	// =========
 	// = Marks =
 	// =========
 
-	void document_t::load_marks (std::string const& src) const
+	void document_t::setup_marks (std::string const& src, ng::buffer_t& buf)
 	{
-		if(_did_load_marks)
-			return;
-
-		if(src != NULL_STR)
-		{
-			_marks = document::marks.get(src);
-			document::marks.set(src, std::multimap<text::range_t, document_t::mark_t>());
-		}
-
-		_did_load_marks = true;
+		document::marks.move_to_buffer(src, buf);
 	}
 
-	static void copy_marks (ng::buffer_t& buf, std::multimap<text::range_t, document_t::mark_t> const& marks)
-	{
-		for(auto const& pair : marks)
-			buf.set_mark(cap(buf, pair.first.from).index, pair.second.type);
-	}
-
-	void document_t::setup_marks (std::string const& src, ng::buffer_t& buf) const
-	{
-		if(_did_load_marks)
-		{
-			copy_marks(buf, _marks);
-		}
-		else if(src != NULL_STR)
-		{
-			copy_marks(buf, document::marks.get(src));
-			document::marks.set(src, std::multimap<text::range_t, document_t::mark_t>());
-		}
-	}
-
-	std::multimap<text::range_t, document_t::mark_t> document_t::marks () const
+	void document_t::add_mark (text::pos_t const& pos, std::string const& mark, std::string const& value)
 	{
 		if(_buffer)
-		{
-			std::multimap<text::range_t, document_t::mark_t> res;
-			for(auto const& pair : _buffer->get_marks(0, _buffer->size()))
-				res.emplace(_buffer->convert(pair.first), pair.second);
-			return res;
-		}
-		return document::marks.get(_path);
+			_buffer->set_mark(_buffer->convert(pos), mark, value);
+		else if(_path != NULL_STR)
+			document::marks.add(_path, pos, mark, value);
+		broadcast(callback_t::did_change_marks);
 	}
 
-	void document_t::add_mark (text::range_t const& range, mark_t const& mark)
+	void document_t::remove_mark (text::pos_t const& pos, std::string const& mark)
 	{
+		if(pos == text::pos_t::undefined)
+			return remove_all_marks(mark);
+
 		if(_buffer)
-		{
-			_buffer->set_mark(_buffer->convert(range.from), mark.type);
-		}
-		else
-		{
-			load_marks(_path);
-			_marks.emplace(range, mark);
-		}
+			_buffer->remove_mark(_buffer->convert(pos), mark);
+		else if(_path != NULL_STR)
+			document::marks.remove(_path, pos, mark);
 		broadcast(callback_t::did_change_marks);
 	}
 
 	void document_t::remove_all_marks (std::string const& typeToClear)
 	{
 		if(_buffer)
-		{
 			_buffer->remove_all_marks(typeToClear);
-		}
-		else
-		{
-			load_marks(_path);
-
-			std::multimap<text::range_t, mark_t> newMarks;
-			if(typeToClear != NULL_STR)
-			{
-				for(auto const& it : _marks)
-				{
-					if(it.second.type != typeToClear)
-						newMarks.insert(it);
-				}
-			}
-
-			_marks.swap(newMarks);
-		}
+		else if(_path != NULL_STR)
+			document::marks.remove_all(_path, typeToClear);
 		broadcast(callback_t::did_change_marks);
 	}
 
-	std::string document_t::marks_as_string () const
+	std::string document_t::bookmarks_as_string () const
 	{
 		std::vector<std::string> v;
 		if(_buffer)
 		{
-			for(auto const& pair : _buffer->get_marks(0, _buffer->size()))
-			{
-				if(pair.second == "bookmark")
-					v.push_back(text::format("'%s'", std::string(_buffer->convert(pair.first)).c_str()));
-			}
+			for(auto const& mark : _buffer->get_marks(0, _buffer->size(), kBookmarkIdentifier))
+				v.push_back(text::format("'%s'", std::string(_buffer->convert(mark.first)).c_str()));
 		}
 		else
 		{
-			load_marks(_path);
-			for(auto const& mark : _marks)
-			{
-				if(mark.second.type == "bookmark")
-					v.push_back(text::format("'%s'", std::string(mark.first).c_str()));
-			}
+			for(auto const& mark : document::marks.get(_path, kBookmarkIdentifier))
+				v.push_back(text::format("'%s'", std::string(mark.first).c_str()));
 		}
 		return v.empty() ? NULL_STR : "( " + text::join(v, ", ") + " )";
 	}
@@ -1407,19 +1422,10 @@ namespace document
 		return res;
 	}
 
-	scanner_t::scanner_t (std::string const& path, path::glob_list_t const& glob, bool follow_links, bool depth_first, bool includeUntitled) : path(path), glob(glob), follow_links(follow_links), depth_first(depth_first), is_running_flag(true), should_stop_flag(false)
+	scanner_t::scanner_t (std::string const& path, path::glob_list_t const& glob) : path(path), glob(glob)
 	{
-		D(DBF_Document_Scanner, bug("%s, links %s\n", path.c_str(), BSTR(follow_links)););
-
-		if(includeUntitled)
-		{
-			auto docs = document::documents.all_documents();
-			std::copy_if(docs.begin(), docs.end(), back_inserter(documents), [](document::document_ptr doc){ return doc->path() == NULL_STR; });
-		}
-
-		struct bootstrap_t { static void* main (void* arg) { ((scanner_t*)arg)->thread_main(); return NULL; } };
+		D(DBF_Document_Scanner, bug("%s\n", path.c_str()););
 		pthread_mutex_init(&mutex, NULL);
-		pthread_create(&thread, NULL, &bootstrap_t::main, this);
 	}
 
 	scanner_t::~scanner_t ()
@@ -1428,6 +1434,21 @@ namespace document
 		stop();
 		wait();
 		pthread_mutex_destroy(&mutex);
+	}
+
+	void scanner_t::start ()
+	{
+		is_running_flag = true;
+
+		if(include_untitled)
+		{
+			auto docs = document::documents.all_documents();
+			std::copy_if(docs.begin(), docs.end(), back_inserter(documents), [](document::document_ptr doc){ return doc->path() == NULL_STR; });
+		}
+
+		struct bootstrap_t { static void* main (void* arg) { ((scanner_t*)arg)->thread_main(); return NULL; } };
+		pthread_mutex_init(&mutex, NULL);
+		pthread_create(&thread, NULL, &bootstrap_t::main, this);
 	}
 
 	std::vector<document_ptr> scanner_t::accept_documents ()
@@ -1506,7 +1527,7 @@ namespace document
 							files.emplace(path, inode_t(buf.st_dev, it->d_ino, path));
 					else	D(DBF_Document_Scanner, bug("skip known path: ‘%s’\n", path.c_str()););
 				}
-				else if(it->d_type == DT_LNK)
+				else if(it->d_type == DT_LNK && (follow_directory_links || follow_file_links))
 				{
 					links.push_back(path); // handle later since link may point to another device plus if link is “local” and will be seen later, we reported the local path rather than this link
 				}
@@ -1522,7 +1543,7 @@ namespace document
 					std::string path = path::resolve(link);
 					if(lstat(path.c_str(), &buf) != -1)
 					{
-						if(S_ISDIR(buf.st_mode) && follow_links && seen_paths.emplace(buf.st_dev, buf.st_ino).second)
+						if(S_ISDIR(buf.st_mode) && follow_directory_links && seen_paths.emplace(buf.st_dev, buf.st_ino).second)
 						{
 							if(glob.exclude(path, path::kPathItemDirectory))
 								continue;
@@ -1530,7 +1551,7 @@ namespace document
 							D(DBF_Document_Scanner, bug("follow link: %s → %s\n", link.c_str(), path.c_str()););
 							dirs.push_back(path);
 						}
-						else if(S_ISREG(buf.st_mode))
+						else if(S_ISREG(buf.st_mode) && follow_file_links)
 						{
 							if(glob.exclude(path, path::kPathItemFile))
 								continue;

@@ -325,10 +325,11 @@ namespace ng
 	// = Marks =
 	// =========
 
-	void buffer_t::set_mark (size_t index, std::string const& markType)                                           { return _marks->set(index, markType); }
+	void buffer_t::set_mark (size_t index, std::string const& markType, std::string const& value)                 { return _marks->set(index, markType, value); }
 	void buffer_t::remove_mark (size_t index, std::string const& markType)                                        { return _marks->remove(index, markType); }
 	void buffer_t::remove_all_marks (std::string const& markType)                                                 { return _marks->remove_all(markType); }
 	std::string buffer_t::get_mark (size_t index, std::string const& markType) const                              { return _marks->get(index, markType); }
+	std::multimap<size_t, std::pair<std::string, std::string>> buffer_t::get_marks (size_t from, size_t to) const { return _marks->get_range(from, to); }
 	std::map<size_t, std::string> buffer_t::get_marks (size_t from, size_t to, std::string const& markType) const { return _marks->get_range(from, to, markType); }
 	std::pair<size_t, std::string> buffer_t::next_mark (size_t index, std::string const& markType) const          { return _marks->next(index, markType); }
 	std::pair<size_t, std::string> buffer_t::prev_mark (size_t index, std::string const& markType) const          { return _marks->prev(index, markType); }

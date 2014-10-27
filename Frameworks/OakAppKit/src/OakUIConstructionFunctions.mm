@@ -3,34 +3,26 @@
 
 NSFont* OakStatusBarFont ()
 {
-	return [NSFont controlContentFontOfSize:[NSFont smallSystemFontSize]];
+	return [NSFont messageFontOfSize:11];
 }
 
 NSFont* OakControlFont ()
 {
-	return [NSFont controlContentFontOfSize:[NSFont systemFontSizeForControlSize:NSRegularControlSize]];
+	return [NSFont messageFontOfSize:0];
 }
 
-NSTextField* OakCreateLabel (NSString* label, Class cl)
+NSTextField* OakCreateLabel (NSString* label)
 {
-	NSTextField* res = [[cl alloc] initWithFrame:NSZeroRect];
+	NSTextField* res = [[NSTextField alloc] initWithFrame:NSZeroRect];
 	[[res cell] setWraps:NO];
 	res.alignment       = NSRightTextAlignment;
 	res.bezeled         = NO;
 	res.bordered        = NO;
 	res.drawsBackground = NO;
 	res.editable        = NO;
-	res.font            = [NSFont controlContentFontOfSize:[NSFont systemFontSize]];
+	res.font            = OakControlFont();
 	res.selectable      = NO;
 	res.stringValue     = label;
-	return res;
-}
-
-NSTextField* OakCreateSmallLabel (NSString* label, Class cl)
-{
-	NSTextField* res = OakCreateLabel(label, cl);
-	res.alignment = NSLeftTextAlignment;
-	res.font      = [NSFont controlContentFontOfSize:[NSFont smallSystemFontSize]];
 	return res;
 }
 
@@ -59,7 +51,6 @@ NSButton* OakCreateButton (NSString* label, NSBezelStyle bezel)
 NSPopUpButton* OakCreatePopUpButton (BOOL pullsDown, NSString* initialItemTitle, NSObject* accessibilityLabel)
 {
 	NSPopUpButton* res = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:pullsDown];
-	res.font = OakControlFont();
 	if(initialItemTitle)
 		[[res cell] setMenuItem:[[NSMenuItem alloc] initWithTitle:initialItemTitle action:NULL keyEquivalent:@""]];
 	OakSetAccessibilityLabel(res, accessibilityLabel);
@@ -103,23 +94,30 @@ NSComboBox* OakCreateComboBox (NSObject* accessibilityLabel)
 	return res;
 }
 
-// =============================
-// = NSBox-based Divider Lines =
-// =============================
+// =========================
+// = OakBackgroundFillView =
+// =========================
 
-@interface OakDividerLineView : NSBox
-@property (nonatomic) NSColor* primaryColor;
-@property (nonatomic) NSColor* secondaryColor;
-@property (nonatomic) BOOL     usePrimaryColor;
-@property (nonatomic) NSSize   intrinsicContentSize;
-@end
+@implementation OakBackgroundFillView
+{
+	id _activeBackgroundValue;
+	id _inactiveBackgroundValue;
+}
 
-@implementation OakDividerLineView
+- (void)setupHeaderBackground
+{
+	self.activeBackgroundGradient   = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithCalibratedWhite:0.915 alpha:1] endingColor:[NSColor colorWithCalibratedWhite:0.760 alpha:1]];
+	self.inactiveBackgroundGradient = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithCalibratedWhite:0.915 alpha:1] endingColor:[NSColor colorWithCalibratedWhite:0.915 alpha:1]];
+}
+
+- (void)setupStatusBarBackground
+{
+	self.activeBackgroundGradient   = [[NSGradient alloc] initWithColorsAndLocations:[NSColor colorWithCalibratedWhite:1 alpha:0.68], 0.0, [NSColor colorWithCalibratedWhite:1 alpha:0.5], 0.0416, [NSColor colorWithCalibratedWhite:1 alpha:0], 1.0, nil];
+	self.inactiveBackgroundGradient = [[NSGradient alloc] initWithColorsAndLocations:[NSColor colorWithCalibratedWhite:1 alpha:0.68], 0.0, [NSColor colorWithCalibratedWhite:1 alpha:0.5], 0.0416, [NSColor colorWithCalibratedWhite:1 alpha:0], 1.0, nil];
+}
+
 - (void)viewWillMoveToWindow:(NSWindow*)newWindow
 {
-	if(!self.secondaryColor)
-		return;
-
 	if(self.window)
 	{
 		[[NSNotificationCenter defaultCenter] removeObserver:self name:NSWindowDidBecomeMainNotification object:self.window];
@@ -136,89 +134,121 @@ NSComboBox* OakCreateComboBox (NSObject* accessibilityLabel)
 		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowDidChangeMainOrKey:) name:NSWindowDidResignKeyNotification object:newWindow];
 	}
 
-	self.usePrimaryColor = ([newWindow styleMask] & NSFullScreenWindowMask) || [newWindow isMainWindow] || [newWindow isKeyWindow];
+	self.active = ([newWindow styleMask] & NSFullScreenWindowMask) || [newWindow isMainWindow] || [newWindow isKeyWindow];
 }
 
 - (void)windowDidChangeMainOrKey:(NSNotification*)aNotification
 {
-	self.usePrimaryColor = ([self.window styleMask] & NSFullScreenWindowMask) || [self.window isMainWindow] || [self.window isKeyWindow];
+	self.active = ([self.window styleMask] & NSFullScreenWindowMask) || [self.window isMainWindow] || [self.window isKeyWindow];
 }
 
-- (void)setUsePrimaryColor:(BOOL)flag
+- (void)setActive:(BOOL)flag
 {
-	if(_usePrimaryColor != flag)
+	if(_active == flag)
+		return;
+	_active = flag;
+	self.needsDisplay = YES;
+}
+
+- (void)setActiveBackgroundValue:(id)value
+{
+	if(value == _activeBackgroundValue || [value isEqualTo:_activeBackgroundValue])
+		return;
+	_activeBackgroundValue = value;
+	if(_active)
+		self.needsDisplay = YES;
+}
+
+- (void)setInactiveBackgroundValue:(id)value
+{
+	if(value == _inactiveBackgroundValue || [value isEqualTo:_inactiveBackgroundValue])
+		return;
+	_inactiveBackgroundValue = value;
+	if(!_active)
+		self.needsDisplay = YES;
+}
+
+- (void)setActiveBackgroundColor:(NSColor*)aColor             { self.activeBackgroundValue = aColor;    }
+- (void)setActiveBackgroundImage:(NSImage*)anImage            { self.activeBackgroundValue = anImage;   }
+- (void)setActiveBackgroundGradient:(NSGradient*)aGradient    { self.activeBackgroundValue = aGradient; }
+- (void)setInactiveBackgroundColor:(NSColor*)aColor           { self.inactiveBackgroundValue = aColor;    }
+- (void)setInactiveBackgroundImage:(NSImage*)anImage          { self.inactiveBackgroundValue = anImage;   }
+- (void)setInactiveBackgroundGradient:(NSGradient*)aGradient  { self.inactiveBackgroundValue = aGradient; }
+
+- (NSColor*)activeBackgroundColor          { return [_activeBackgroundValue isKindOfClass:[NSColor class]]      ? _activeBackgroundValue   : nil; }
+- (NSImage*)activeBackgroundImage          { return [_activeBackgroundValue isKindOfClass:[NSImage class]]      ? _activeBackgroundValue   : nil; }
+- (NSGradient*)activeBackgroundGradient    { return [_activeBackgroundValue isKindOfClass:[NSGradient class]]   ? _activeBackgroundValue   : nil; }
+- (NSColor*)inactiveBackgroundColor        { return [_inactiveBackgroundValue isKindOfClass:[NSColor class]]    ? _inactiveBackgroundValue : nil; }
+- (NSImage*)inactiveBackgroundImage        { return [_inactiveBackgroundValue isKindOfClass:[NSImage class]]    ? _inactiveBackgroundValue : nil; }
+- (NSGradient*)inactiveBackgroundGradient  { return [_inactiveBackgroundValue isKindOfClass:[NSGradient class]] ? _inactiveBackgroundValue : nil; }
+
+- (NSSize)intrinsicContentSize
+{
+	if(NSImage* image = self.activeBackgroundImage ?: self.inactiveBackgroundImage)
+			return image.size;
+	else	return NSMakeSize(NSViewNoInstrinsicMetric, NSViewNoInstrinsicMetric);
+}
+
+- (void)drawRect:(NSRect)aRect
+{
+	id value = _active || !_inactiveBackgroundValue ? _activeBackgroundValue : _inactiveBackgroundValue;
+	if([value isKindOfClass:[NSGradient class]])
 	{
-		_usePrimaryColor = flag;
-		self.borderColor = flag ? self.primaryColor : self.secondaryColor;
+		NSGradient* gradient = value;
+		[gradient drawInRect:self.bounds angle:270];
+	}
+	else if([value isKindOfClass:[NSImage class]])
+	{
+		NSImage* image = value;
+		[[NSColor colorWithPatternImage:image] set];
+		CGContextRef context = (CGContextRef)[[NSGraphicsContext currentContext] graphicsPort];
+		CGAffineTransform affineTransform = CGContextGetCTM(context);
+		CGContextSetPatternPhase(context, CGSizeMake(affineTransform.tx, affineTransform.ty));
+		NSRectFillUsingOperation(aRect, NSCompositeSourceOver);
+	}
+	else if([value isKindOfClass:[NSColor class]])
+	{
+		NSColor* color = value;
+		[color set];
+		NSRectFill(aRect);
 	}
 }
-
-- (BOOL)isOpaque
-{
-	return YES;
-}
 @end
 
-static OakDividerLineView* OakCreateDividerLineWithColor (NSColor* color, NSColor* secondaryColor)
+OakBackgroundFillView* OakCreateVerticalLine (NSColor* primaryColor, NSColor* secondaryColor)
 {
-	OakDividerLineView* box = [[OakDividerLineView alloc] initWithFrame:NSZeroRect];
-	box.translatesAutoresizingMaskIntoConstraints = NO;
-	box.boxType         = NSBoxCustom;
-	box.borderType      = NSLineBorder;
-	box.borderColor     = color;
-	box.primaryColor    = color;
-	box.secondaryColor  = secondaryColor;
-	box.usePrimaryColor = YES;
-	return box;
+	OakBackgroundFillView* view = [[OakBackgroundFillView alloc] initWithFrame:NSZeroRect];
+	view.activeBackgroundColor   = primaryColor;
+	view.inactiveBackgroundColor = secondaryColor;
+	[view addConstraint:[NSLayoutConstraint constraintWithItem:view attribute:NSLayoutAttributeWidth relatedBy:NSLayoutRelationEqual toItem:nil attribute:NSLayoutAttributeNotAnAttribute multiplier:1 constant:1]];
+	view.translatesAutoresizingMaskIntoConstraints = NO;
+	return view;
 }
 
-NSBox* OakCreateVerticalLine (NSColor* primaryColor, NSColor* secondaryColor)
+OakBackgroundFillView* OakCreateHorizontalLine (NSColor* primaryColor, NSColor* secondaryColor)
 {
-	OakDividerLineView* res = OakCreateDividerLineWithColor(primaryColor, secondaryColor);
-	res.intrinsicContentSize = NSMakeSize(1, NSViewNoInstrinsicMetric);
-	[res setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
-	return res;
+	OakBackgroundFillView* view = [[OakBackgroundFillView alloc] initWithFrame:NSZeroRect];
+	view.activeBackgroundColor   = primaryColor;
+	view.inactiveBackgroundColor = secondaryColor;
+	[view addConstraint:[NSLayoutConstraint constraintWithItem:view attribute:NSLayoutAttributeHeight relatedBy:NSLayoutRelationEqual toItem:nil attribute:NSLayoutAttributeNotAnAttribute multiplier:1 constant:1]];
+	view.translatesAutoresizingMaskIntoConstraints = NO;
+	return view;
 }
 
-NSBox* OakCreateHorizontalLine (NSColor* primaryColor, NSColor* secondaryColor)
+NSView* OakCreateDividerImageView ()
 {
-	OakDividerLineView* res = OakCreateDividerLineWithColor(primaryColor, secondaryColor);
-	res.intrinsicContentSize = NSMakeSize(NSViewNoInstrinsicMetric, 1);
-	[res setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
-	return res;
-}
+	OakBackgroundFillView* divider = [[OakBackgroundFillView alloc] initWithFrame:NSZeroRect];
+	divider.activeBackgroundImage = [NSImage imageNamed:@"Divider" inSameBundleAsClass:[OakBackgroundFillView class]];
+	divider.translatesAutoresizingMaskIntoConstraints = NO;
+	[divider setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
 
-// =============================
+	NSView* res = [[NSView alloc] initWithFrame:NSZeroRect];
+	[res addSubview:divider];
 
-@interface OakDisableAccessibilityImageCell : NSImageCell
-@end
+	[res addConstraint:[NSLayoutConstraint constraintWithItem:divider attribute:NSLayoutAttributeCenterX relatedBy:NSLayoutRelationEqual toItem:res attribute:NSLayoutAttributeCenterX multiplier:1 constant:0]];
+	[res addConstraint:[NSLayoutConstraint constraintWithItem:divider attribute:NSLayoutAttributeCenterY relatedBy:NSLayoutRelationEqual toItem:res attribute:NSLayoutAttributeCenterY multiplier:1 constant:0]];
+	[res addConstraint:[NSLayoutConstraint constraintWithItem:res attribute:NSLayoutAttributeWidth relatedBy:NSLayoutRelationEqual toItem:divider attribute:NSLayoutAttributeWidth multiplier:1 constant:0]];
 
-@implementation OakDisableAccessibilityImageCell
-- (BOOL)accessibilityIsIgnored
-{
-	return YES;
-}
-@end
-
-@interface OakDisableAccessibilityImageView : NSImageView
-@end
-
-@implementation OakDisableAccessibilityImageView
-+ (void)initialize
-{
-	if(self == OakDisableAccessibilityImageView.class)
-	{
-		[OakDisableAccessibilityImageView setCellClass:[OakDisableAccessibilityImageCell class]];
-	}
-}
-@end
-
-NSImageView* OakCreateDividerImageView ()
-{
-	NSImageView* res = [[OakDisableAccessibilityImageView alloc] initWithFrame:NSZeroRect];
-	[res setImage:[NSImage imageNamed:@"Divider" inSameBundleAsClass:[OakDividerLineView class]]];
-	[res setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
-	[res setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationVertical];
 	return res;
 }
 

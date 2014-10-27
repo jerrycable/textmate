@@ -131,10 +131,10 @@ namespace scope
 		old->release();
 	}
 
-	std::string scope_t::back () const
+	std::string const& scope_t::back () const
 	{
 		ASSERT(node);
-		return node->c_str();
+		return node->_atoms;
 	}
 
 	size_t scope_t::size () const
@@ -153,23 +153,23 @@ namespace scope
 	bool scope_t::operator== (scope_t const& rhs) const
 	{
 		auto n1 = node, n2 = rhs.node;
-		while(n1 && n2 && strcmp(n1->c_str(), n2->c_str()) == 0)
+		while(n1 != n2 && n1 && n2 && n1->_atoms == n2->_atoms)
 		{
 			n1 = n1->parent();
 			n2 = n2->parent();
 		}
-		return !n1 && !n2;
+		return n1 == n2;
 	}
 
 	bool scope_t::operator< (scope_t const& rhs) const
 	{
 		auto n1 = node, n2 = rhs.node;
-		while(n1 && n2 && strcmp(n1->c_str(), n2->c_str()) == 0)
+		while(n1 != n2 && n1 && n2 && n1->_atoms == n2->_atoms)
 		{
 			n1 = n1->parent();
 			n2 = n2->parent();
 		}
-		return (!n1 && n2) || (n1 && n2 && strcmp(n1->c_str(), n2->c_str()) < 0);
+		return (!n1 && n2) || (n1 && n2 && n1->_atoms < n2->_atoms);
 	}
 
 	bool scope_t::operator!= (scope_t const& rhs) const   { return !(*this == rhs); }
@@ -185,7 +185,7 @@ namespace scope
 		for(size_t i = lhsSize; i < rhsSize; ++i)
 			n2 = n2->parent();
 
-		while(n1 && n2 && strcmp(n1->c_str(), n2->c_str()) != 0)
+		while(n1 && n2 && n1->_atoms != n2->_atoms)
 		{
 			n1 = n1->parent();
 			n2 = n2->parent();
@@ -214,22 +214,32 @@ namespace scope
 		return res;
 	}
 
-	std::string to_s (scope_t const& s)
+	void scope_t::to_s_helper (scope_t::node_t* n, std::string& out) const
+	{
+		if(scope_t::node_t* p = n->parent())
+		{
+			to_s_helper(p, out);
+			out.append(1, ' ');
+		}
+		out.append(n->_atoms);
+	}
+
+	scope_t::operator std::string () const
 	{
 		std::string res = "";
-		for(scope_t tmp = s; !tmp.empty(); tmp.pop_scope())
-		{
-			if(!res.empty())
-				res.append(1, ' ');
-			std::string const str = tmp.back();
-			res.insert(res.end(), str.rbegin(), str.rend());
-		}
-		return std::string(res.rbegin(), res.rend());
+		if(node)
+			to_s_helper(node, res);
+		return res;
+	}
+
+	std::string to_s (scope_t const& s)
+	{
+		return (std::string)s;
 	}
 
 	std::string to_s (context_t const& c)
 	{
-		return c.left == c.right ? text::format("(l/r ‘%s’)", to_s(c.left).c_str()) : text::format("(left ‘%s’, right ‘%s’)", to_s(c.left).c_str(), to_s(c.right).c_str());
+		return c.left == c.right ? to_s(c.left) : to_s(c.left) + "\037" + to_s(c.right);
 	}
 
 	// ============

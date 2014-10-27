@@ -47,10 +47,17 @@ struct socket_callback_t
 		helper = std::make_shared<helper_t<F>>(f, fd, this);
 
 		CFSocketContext const context = { 0, helper.get(), NULL, NULL, NULL };
-		socket = CFSocketCreateWithNative(kCFAllocatorDefault, fd, kCFSocketReadCallBack, callback, &context);
-		CFSocketSetSocketFlags(socket, CFSocketGetSocketFlags(socket) & ~kCFSocketCloseOnInvalidate);
-		run_loop_source = CFSocketCreateRunLoopSource(kCFAllocatorDefault, socket, 0);
-		CFRunLoopAddSource(CFRunLoopGetCurrent(), run_loop_source, kCFRunLoopDefaultMode);
+		if(socket = CFSocketCreateWithNative(kCFAllocatorDefault, fd, kCFSocketReadCallBack, callback, &context))
+		{
+			CFSocketSetSocketFlags(socket, CFSocketGetSocketFlags(socket) & ~kCFSocketCloseOnInvalidate);
+			if(run_loop_source = CFSocketCreateRunLoopSource(kCFAllocatorDefault, socket, 0))
+					CFRunLoopAddSource(CFRunLoopGetCurrent(), run_loop_source, kCFRunLoopDefaultMode);
+			else	fprintf(stderr, "*** CFSocketCreateRunLoopSource() failed\n");
+		}
+		else
+		{
+			fprintf(stderr, "*** CFSocketCreateWithNative() failed: fd = %d\n", (int)fd);
+		}
 	}
 
 	~socket_callback_t ()
@@ -58,10 +65,16 @@ struct socket_callback_t
 		D(DBF_RMateServer, bug("%p\n", this););
 		ASSERT(CFRunLoopContainsSource(CFRunLoopGetCurrent(), run_loop_source, kCFRunLoopDefaultMode));
 
-		CFRunLoopRemoveSource(CFRunLoopGetCurrent(), run_loop_source, kCFRunLoopDefaultMode);
-		CFSocketInvalidate(socket);
-		CFRelease(run_loop_source);
-		CFRelease(socket);
+		if(socket)
+		{
+			CFSocketInvalidate(socket);
+			if(run_loop_source)
+			{
+				CFRunLoopRemoveSource(CFRunLoopGetCurrent(), run_loop_source, kCFRunLoopDefaultMode);
+				CFRelease(run_loop_source);
+			}
+			CFRelease(socket);
+		}
 	}
 
 	static void callback (CFSocketRef s, CFSocketCallBackType callbackType, CFDataRef address, void const* data, void* info)
@@ -417,7 +430,7 @@ struct socket_observer_t
 				if(records.empty() || records.begin()->command == "open") // we treat no command as ‘open’ to bring our application to front
 					open_documents(socket);
 				else
-					fprintf(stderr, "*** error unsupported command: %s\n", records.begin()->command.c_str());
+					handle_marks(socket);
 				return false;
 			}
 		}
@@ -589,6 +602,40 @@ struct socket_observer_t
 		if(documents.empty())
 				SetFrontProcess(&(ProcessSerialNumber){ 0, kCurrentProcess });
 		else	document::show(documents);
+	}
+
+	void handle_marks (socket_t const& socket)
+	{
+		for(auto& record : records)
+		{
+			if(record.command != "clear-mark" && record.command != "set-mark")
+				continue;
+
+			auto& args = record.arguments;
+
+			document::document_ptr doc;
+			if(args.find("uuid") != args.end())
+				doc = document::find(args["uuid"]);
+			else if(args.find("path") != args.end())
+				doc = document::create(args["path"]);
+
+			text::pos_t line = args.find("line") != args.end() ? text::pos_t(args["line"]) : text::pos_t::undefined;
+			std::string mark = args.find("mark") != args.end() ? args["mark"] : NULL_STR;
+
+			if(record.command == "clear-mark")
+			{
+				if(doc)
+						doc->remove_mark(line, mark);
+				else	document::remove_marks(mark);
+			}
+			else if(record.command == "set-mark")
+			{
+				std::string::size_type n = mark.find(':');
+				if(doc)
+						doc->add_mark(line, n == std::string::npos ? mark : mark.substr(0, n), n == std::string::npos ? std::string() : mark.substr(n+1));
+				else	fprintf(stderr, "set-mark: no document\n");
+			}
+		}
 	}
 };
 

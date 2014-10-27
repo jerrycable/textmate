@@ -15,9 +15,9 @@ namespace ng
 		}
 	}
 
-	void marks_t::set (size_t index, std::string const& markType)
+	void marks_t::set (size_t index, std::string const& markType, std::string const& value)
 	{
-		_marks[markType].set(index, markType);
+		_marks[markType].set(index, value);
 	}
 
 	void marks_t::remove (size_t index, std::string const& markType)
@@ -54,7 +54,7 @@ namespace ng
 
 	std::pair<size_t, std::string> marks_t::prev (size_t index, std::string const& markType) const
 	{
-		std::map< std::string, tree_t>::const_iterator m = _marks.find(markType);
+		std::map<std::string, tree_t>::const_iterator m = _marks.find(markType);
 		if(m == _marks.end())
 			return std::pair<size_t, std::string>(0, NULL_STR);
 
@@ -67,28 +67,25 @@ namespace ng
 		return *(--(it == m->second.begin() ? m->second.end() : it));
 	}
 
+	std::multimap<size_t, std::pair<std::string, std::string>> marks_t::get_range (size_t from, size_t to) const
+	{
+		ASSERT_LE(from, to);
+		std::multimap<size_t, std::pair<std::string, std::string>> res;
+		for(auto const& m : _marks)
+		{
+			foreach(it, m.second.lower_bound(from), m.second.upper_bound(to))
+				res.emplace(it->first, std::make_pair(m.first, it->second));
+		}
+		return res;
+	}
+
 	std::map<size_t, std::string> marks_t::get_range (size_t from, size_t to, std::string const& markType) const
 	{
 		ASSERT_LE(from, to);
 		std::map<size_t, std::string> res;
-
-		if(markType == NULL_STR)
-		{
-			for(auto const& m : _marks)
-			{
-				foreach(it, m.second.lower_bound(from), m.second.upper_bound(to))
-					res[it->first - from] = it->second;
-			}
-		}
-		else
-		{
-			std::map< std::string, tree_t>::const_iterator m = _marks.find(markType);
-			if(m != _marks.end())
-			{
-				foreach(it, m->second.lower_bound(from), m->second.upper_bound(to))
-					res[it->first - from] = it->second;
-			}
-		}
+		std::map<std::string, tree_t>::const_iterator m = _marks.find(markType);
+		if(m != _marks.end())
+			std::copy(m->second.lower_bound(from), m->second.upper_bound(to), std::inserter(res, res.end()));
 		return res;
 	}
 

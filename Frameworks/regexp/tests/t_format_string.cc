@@ -3,6 +3,7 @@
 void test_format_string ()
 {
 	using format_string::replace;
+	OAK_ASSERT_EQ(replace("Résumé",   ".+", "»${0:/asciify}«"),            "»Resume«");
 	OAK_ASSERT_EQ(replace("æbleGRØD", ".+", "»${0:/upcase}«"),             "»ÆBLEGRØD«");
 	OAK_ASSERT_EQ(replace("æbleGRØD", ".+", "»${0:/downcase}«"),           "»æblegrød«");
 	OAK_ASSERT_EQ(replace("æbleGRØD", ".+", "»${0:/asciify}«"),            "»aebleGROD«");
@@ -19,6 +20,8 @@ void test_capitalize ()
 	OAK_ASSERT_EQ(replace("# 2014-08-22: it works now again #", ".+", "${0:/capitalize}"), "# 2014-08-22: It Works now Again #");
 	OAK_ASSERT_EQ(replace("my NSTableView subclass", ".+", "${0:/capitalize}"),            "My NSTableView Subclass");
 	OAK_ASSERT_EQ(replace("This Is The Wrong", ".+", "${0:/capitalize}"),                  "This is the Wrong");
+	OAK_ASSERT_EQ(replace("THIS IS THE WRONG", ".+", "${0:/capitalize}"),                  "This is the Wrong");
+	OAK_ASSERT_EQ(replace("RSA", ".+", "${0:/capitalize}"),                                "Rsa");
 }
 
 void test_variables ()

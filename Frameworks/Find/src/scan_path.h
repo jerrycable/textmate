@@ -15,9 +15,10 @@ namespace find
 		WATCH_LEAKS(find::match_t);
 
 		match_t () { }
-		match_t (document::document_ptr document, size_t first, size_t last, text::range_t const& range, std::map<std::string, std::string> const& captures) : document(document), first(first), last(last), range(range), captures(captures) { }
+		match_t (document::document_ptr document, uint32_t crc32, size_t first, size_t last, text::range_t const& range, std::map<std::string, std::string> const& captures) : document(document), crc32(crc32), first(first), last(last), range(range), captures(captures) { }
 
 		document::document_ptr document;
+		uint32_t crc32;
 		size_t first, last;
 		text::range_t range;
 		std::map<std::string, std::string> captures;
@@ -37,7 +38,9 @@ namespace find
 		void set_options (find::options_t searchOptions)    { ASSERT(!is_running()); _options = searchOptions; }
 		void set_path (std::string const& path)             { ASSERT(!is_running()); _path = _current_path = path; }
 		void set_glob_list (path::glob_list_t const& globs) { ASSERT(!is_running()); _glob_list = globs; }
-		void set_follow_links (bool follow_links)           { ASSERT(!is_running()); _follow_links = follow_links; }
+		void set_follow_links (bool followLinks)            { ASSERT(!is_running()); _follow_links = followLinks; }
+		void set_search_links (bool searchLinks)            { ASSERT(!is_running()); _search_links = searchLinks; }
+		void set_search_binaries (bool searchBinaries)      { ASSERT(!is_running()); _search_binaries = searchBinaries; }
 
 		void start ();
 		void stop ();
@@ -61,6 +64,8 @@ namespace find
 		std::string _path;
 		path::glob_list_t _glob_list = path::glob_list_t("*");
 		bool _follow_links = false;
+		bool _search_links = true;
+		bool _search_binaries = false;
 
 		std::string _current_path;
 		std::vector<match_t> _matches;

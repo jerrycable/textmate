@@ -78,7 +78,12 @@ namespace find
 			return;
 		}
 
-		document::scanner_t scanner(_path, _glob_list, _follow_links, true /* depth first */);
+		document::scanner_t scanner(_path, _glob_list);
+		scanner.set_follow_directory_links(_follow_links);
+		scanner.set_follow_file_links(_search_links);
+		scanner.set_include_untitled(true);
+		scanner.set_depth_first(true);
+		scanner.start();
 
 		bool isRunning = true;
 		while(isRunning && !_should_stop)
@@ -134,6 +139,7 @@ namespace find
 		D(DBF_Find_Scan_Path, bug("%s (%s)\n", document->path().c_str(), document->display_name().c_str()););
 		update_current_path(document->path());
 
+		boost::crc_32_type crc32;
 		if(document::document_t::reader_ptr reader = document->create_reader())
 		{
 			find::find_t f(_search_string, _options);
@@ -148,6 +154,9 @@ namespace find
 				char const* buf = data->get();
 				size_t len      = data->size();
 
+				if(!_search_binaries && memchr(buf, '\0', len))
+					return;
+
 				for(ssize_t offset = 0; offset < len; )
 				{
 					std::map<std::string, std::string> captures;
@@ -157,6 +166,8 @@ namespace find
 					ASSERT_NE(m.second, 0); ASSERT_LE(m.second, len - offset);
 					offset += m.second;
 				}
+
+				crc32.process_bytes(buf, len);
 				total += len;
 			}
 
@@ -185,7 +196,9 @@ namespace find
 				}
 
 				// Document has changed, should probably re-scan
-				if(text.size() < ranges.back().to)
+				boost::crc_32_type doubleCheck;
+				doubleCheck.process_bytes(text.data(), text.size());
+				if(crc32.checksum() != doubleCheck.checksum())
 					return;
 
 				std::vector<match_t> results;
@@ -231,7 +244,7 @@ namespace find
 							++eol;
 					}
 
-					match_t res(document, it.from, it.to, text::range_t(from, to), it.captures);
+					match_t res(document, crc32.checksum(), it.from, it.to, text::range_t(from, to), it.captures);
 					res.excerpt        = text.substr(fromLine, eol - fromLine);
 					res.excerpt_offset = fromLine;
 					res.line_number    = from.line;

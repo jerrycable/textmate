@@ -94,7 +94,7 @@ static bool is_installed (oak::uuid_t const& uuid)
 	all = installed;
 
 	// Exclude uninstalled grammars when offline
-	if(network::can_reach_host([[[NSURL URLWithString:[NSString stringWithUTF8String:REST_API]] host] UTF8String]))
+	if(network::can_reach_host([[[NSURL URLWithString:@(REST_API)] host] UTF8String]))
 	{
 		for(auto const& bundle : bundles_db::index())
 		{
@@ -208,7 +208,7 @@ static bool is_installed (oak::uuid_t const& uuid)
 			{
 				[installingBundleActivityTextField bind:NSValueBinding toObject:[BundlesManager sharedInstance] withKeyPath:@"activityText" options:nil];
 				[installingBundleProgressIndicator bind:NSValueBinding toObject:[BundlesManager sharedInstance] withKeyPath:@"progress" options:nil];
-				[installingBundleProgressIndicator bind:NSIsIndeterminateBinding toObject:[BundlesManager sharedInstance] withKeyPath:@"determinateProgress" options:@{ NSValueTransformerNameBindingOption: @"NSNegateBoolean" }];
+				[installingBundleProgressIndicator bind:NSIsIndeterminateBinding toObject:[BundlesManager sharedInstance] withKeyPath:@"determinateProgress" options:@{ NSValueTransformerNameBindingOption: NSNegateBooleanTransformerName }];
 				[installingBundleProgressIndicator startAnimation:self];
 
 				OakShowSheetForWindow(installingBundleWindow, aWindow, ^(NSInteger returnCode){ });

@@ -107,11 +107,11 @@ static NSImage* IconImage (NSURL* url, NSSize size = NSMakeSize(16, 16))
 @interface OakFileBrowser () <OFBOutlineViewMenuDelegate, NSMenuDelegate>
 {
 	OBJC_WATCH_LEAKS(OakFileBrowser);
+	OFBHeaderView* _headerView;
 	NSUInteger _historyIndex;
 	NSUndoManager* _localUndoManager;
 }
 @property (nonatomic, readwrite)         OakFileBrowserView* view;
-@property (nonatomic)                    OFBHeaderView* headerView;
 @property (nonatomic)                    OFBOutlineView* outlineView;
 @property (nonatomic)                    OFBActionsView* actionsView;
 
@@ -252,7 +252,6 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 
 	NSDictionary* views = @{
 		@"header"         : _headerView,
-		@"headerDivider"  : OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.500 alpha:1], [NSColor colorWithCalibratedWhite:0.750 alpha:1]),
 		@"browser"        : scrollView,
 		@"actionsDivider" : OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.500 alpha:1], [NSColor colorWithCalibratedWhite:0.750 alpha:1]),
 		@"actions"        : _actionsView,
@@ -264,8 +263,8 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 		[_view addSubview:view];
 	}
 
-	[_view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[browser(==header,==headerDivider,==actionsDivider,==actions)]|" options:0 metrics:nil views:views]];
-	[_view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[header][headerDivider][browser][actionsDivider][actions]|"      options:NSLayoutFormatAlignAllLeft metrics:nil views:views]];
+	[_view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[browser(==header,==actionsDivider,==actions)]|" options:0 metrics:nil views:views]];
+	[_view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[header][browser][actionsDivider][actions]|"     options:NSLayoutFormatAlignAllLeft metrics:nil views:views]];
 }
 
 - (void)setupViewWithState:(NSDictionary*)fileBrowserState

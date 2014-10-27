@@ -27,16 +27,12 @@ static NSTextField* OakCreateTextField (NSString* label)
 static NSButton* OakCreateImageToggleButton (NSImage* image, NSObject* accessibilityLabel)
 {
 	NSButton* res = [NSButton new];
-
 	[[res cell] setBackgroundStyle:NSBackgroundStyleRaised];
 	[res setButtonType:NSToggleButton];
-	[res setBezelStyle:NSRecessedBezelStyle];
 	[res setBordered:NO];
-
 	[res setImage:image];
 	[res setImagePosition:NSImageOnly];
 	OakSetAccessibilityLabel(res, accessibilityLabel);
-
 	return res;
 }
 
@@ -68,8 +64,10 @@ static NSMenuItem* OakCreateIndentMenuItem (NSString* title, SEL action, id targ
 
 - (id)initWithFrame:(NSRect)aRect
 {
-	if(self = [super initWithGradient:[[NSGradient alloc] initWithColorsAndLocations:[NSColor colorWithCalibratedWhite:1 alpha:0.68], 0.0, [NSColor colorWithCalibratedWhite:1 alpha:0.5], 0.0416, [NSColor colorWithCalibratedWhite:1 alpha:0], 1.0, nil] inactiveGradient:[[NSGradient alloc] initWithColorsAndLocations:[NSColor colorWithCalibratedWhite:1 alpha:0.68], 0.0, [NSColor colorWithCalibratedWhite:1 alpha:0.5], 0.0416, [NSColor colorWithCalibratedWhite:1 alpha:0], 1.0, nil]])
+	if(self = [super initWithFrame:aRect])
 	{
+		[self setupStatusBarBackground];
+
 		self.selectionField               = OakCreateTextField(@"1:1");
 		self.grammarPopUp                 = OakCreateStatusBarPopUpButton(@"", @"Grammar");
 		self.tabSizePopUp                 = OakCreateStatusBarPopUpButton();
@@ -129,10 +127,12 @@ static NSMenuItem* OakCreateIndentMenuItem (NSString* title, SEL action, id targ
 
 		[self setTranslatesAutoresizingMaskIntoConstraints:NO];
 
-		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-10-[line]-[selection(>=50,<=225)]-8-[dividerOne]-(-2)-[grammar(>=125,<=225)]-5-[dividerTwo]-(-2)-[tabSize(<=102)]-4-[dividerThree]-5-[items(==30)]-4-[dividerFour]-(-2)-[symbol(>=125)]-5-[dividerFive]-6-[recording]-7-|" options:0 metrics:nil views:views]];
-		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:[line]-5-|" options:0 metrics:nil views:views]];
-		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:[selection]-5-|" options:0 metrics:nil views:views]];
-		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[grammar(==dividerOne,==dividerTwo,==dividerThree,==dividerFour,==dividerFive,==items,==tabSize,==symbol,==recording)]|" options:0 metrics:nil views:views]];
+		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-10-[line]-[selection(>=50,<=225)]-8-[dividerOne]-(-2)-[grammar(>=125@400,>=50,<=225)]-5-[dividerTwo]-(-2)-[tabSize(<=102)]-4-[dividerThree]-5-[items(==30)]-4-[dividerFour]-(-2)-[symbol(>=125@450,>=50)]-5-[dividerFive]-6-[recording]-7-|" options:0 metrics:nil views:views]];
+		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[dividerOne(==dividerTwo,==dividerThree,==dividerFour,==dividerFive)]|" options:0 metrics:nil views:views]];
+		// Baseline align text-controls
+		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[line]-[selection]-(>=1)-[grammar]-(>=1)-[tabSize]-(>=1)-[symbol]" options:NSLayoutFormatAlignAllBaseline metrics:nil views:views]];
+		// Center non-text control
+		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[selection]-(>=1)-[dividerOne]-(>=1)-[items]-(>=1)-[recording]" options:NSLayoutFormatAlignAllCenterY metrics:nil views:views]];
 
 		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(grammarPopUpButtonWillPopUp:) name:NSPopUpButtonWillPopUpNotification object:self.grammarPopUp];
 		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(bundleItemsPopUpButtonWillPopUp:) name:NSPopUpButtonWillPopUpNotification object:self.bundleItemsPopUp];

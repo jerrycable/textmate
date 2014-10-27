@@ -976,15 +976,9 @@ doScroll:
 	{
 		NSRect rect = NSMakeRect(0, 0, width, height);
 		if(CGImageRef img = [pdfImage CGImageForProposedRect:&rect context:[NSGraphicsContext currentContext] hints:nil])
-		{
-			if(CGImageRef res = CGImageMaskCreate(CGImageGetWidth(img), CGImageGetHeight(img), CGImageGetBitsPerComponent(img), CGImageGetBitsPerPixel(img), CGImageGetBytesPerRow(img), CGImageGetDataProvider(img), NULL, false))
-				return res;
-			NSLog(@"Unable to create CGImageMask (%zu × %zu) from CGImage", CGImageGetWidth(img), CGImageGetHeight(img));
-		}
-		else
-		{
-			NSLog(@"Unable to create CGImage (%.1f × %.1f) from %@", width, height, pdfImage);
-		}
+			return CGImageRetain(img);
+
+		NSLog(@"Unable to create CGImage (%.1f × %.1f) from %@", width, height, pdfImage);
 		return NULL;
 	};
 
@@ -1779,7 +1773,7 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 
 - (BOOL)readSelectionFromPasteboard:(NSPasteboard*)pboard
 {
-	if(NSString* str = [pboard stringForType:[pboard availableTypeFromArray:@[ @"public.plain-text" ]]])
+	if(NSString* str = [pboard stringForType:[pboard availableTypeFromArray:@[ NSStringPboardType ]]])
 	{
 		AUTO_REFRESH;
 		editor->insert(to_s(str));
@@ -2372,6 +2366,9 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 
 						if(doc)
 						{
+							if(!doc->is_open())
+								doc->set_recent_tracking(false);
+
 							NSString* range = [info objectForKey:(options & find::backwards) ? @"lastMatchRange" : @"firstMatchRange"];
 							document::show(doc, document::kCollectionAny, to_s(range));
 							return;

@@ -33,4 +33,11 @@ namespace io
 		memcpy(_bytes, str.data(), _size);
 	}
 
+	uint32_t bytes_t::crc32 () const
+	{
+		boost::crc_32_type result;
+		result.process_bytes(_bytes, _size);
+		return result.checksum();
+	}
+
 } /* io */

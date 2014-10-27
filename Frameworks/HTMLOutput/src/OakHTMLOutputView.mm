@@ -72,7 +72,23 @@ extern NSString* const kCommandRunnerURLScheme; // from HTMLOutput.h
 
 	// Sending goBack:/goForward: to a WebView does not call this WebFrameLoadDelegate method
 	if(frame == [sender mainFrame])
+	{
 		[self webView:sender didClearWindowObject:[frame windowObject] forFrame:frame];
+
+		// This happens when we redirect to a PDF file
+		if(self.window.firstResponder == self.window)
+		{
+			NSRect rect = [sender frame];
+			for(NSView* view = [sender hitTest:NSMakePoint(NSMidX(rect), NSMidY(rect))]; view; view = [view superview])
+			{
+				if([view acceptsFirstResponder])
+				{
+					[self.window makeFirstResponder:view];
+					break;
+				}
+			}
+		}
+	}
 
 	if(!NSEqualRects(self.pendingVisibleRect, NSZeroRect))
 		[[[[self.webView mainFrame] frameView] documentView] scrollRectToVisible:self.pendingVisibleRect];
@@ -121,5 +137,25 @@ extern NSString* const kCommandRunnerURLScheme; // from HTMLOutput.h
 			[[NSWorkspace sharedWorkspace] openURL:url];
 		}
 	}
+}
+
+// ====================
+// = Printing Support =
+// ====================
+
+- (IBAction)printDocument:(id)sender
+{
+	NSPrintOperation* printer = [NSPrintOperation printOperationWithView:self.webView.mainFrame.frameView.documentView];
+	[[printer printPanel] setOptions:[[printer printPanel] options] | NSPrintPanelShowsPaperSize | NSPrintPanelShowsOrientation];
+
+	NSPrintInfo* info = [printer printInfo];
+
+	NSRect display = NSIntersectionRect(info.imageablePageBounds, (NSRect){ NSZeroPoint, info.paperSize });
+	info.leftMargin   = NSMinX(display);
+	info.rightMargin  = info.paperSize.width - NSMaxX(display);
+	info.topMargin    = info.paperSize.height - NSMaxY(display);
+	info.bottomMargin = NSMinY(display);
+
+	[printer runOperationModalForWindow:self.window delegate:nil didRunSelector:NULL contextInfo:nil];
 }
 @end

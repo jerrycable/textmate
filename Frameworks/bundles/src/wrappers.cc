@@ -187,17 +187,45 @@ namespace bundles
 
 	plist::any_t value_for_setting (std::string const& setting, scope::context_t const& scope, item_ptr* match)
 	{
-		for(auto const& item : query(kFieldSettingName, setting, scope, kItemTypeSettings))
+		struct cache_t : bundles::callback_t
 		{
-			plist::any_t res;
-			if(plist::get_key_path(item->plist(), "settings." + setting, res))
+			cache_t ()
 			{
-				if(match)
-					*match = item;
-				return res;
+				bundles::add_callback(this);
 			}
+
+			void bundles_did_change ()
+			{
+				std::lock_guard<std::mutex> lock(mutex);
+				map.clear();
+			}
+
+			std::map<std::string, item_ptr> map;
+			std::mutex mutex;
+		};
+
+		static cache_t cache;
+		std::lock_guard<std::mutex> lock(cache.mutex);
+
+		std::string const key = setting + "\037" + to_s(scope);
+		auto iter = cache.map.find(key);
+		if(iter == cache.map.end())
+		{
+			if(cache.map.size() > 1000)
+				cache.map.clear();
+
+			auto items = query(kFieldSettingName, setting, scope, kItemTypeSettings);
+			iter = cache.map.emplace(key, items.empty() ? item_ptr() : items.front()).first;
 		}
-		return plist::any_t();
+
+		plist::any_t res;
+		if(item_ptr item = iter->second)
+		{
+			if(match)
+				*match = item;
+			plist::get_key_path(item->plist(), "settings." + setting, res);
+		}
+		return res;
 	}
 
 	std::vector<item_ptr> drag_commands_for_path (std::string const& path, scope::context_t const& scope)

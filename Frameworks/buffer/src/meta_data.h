@@ -37,10 +37,11 @@ namespace ng
 
 	struct marks_t : meta_data_t
 	{
-		void set (size_t index, std::string const& markType);
+		void set (size_t index, std::string const& markType, std::string const& value);
 		void remove (size_t index, std::string const& markType);
 		void remove_all (std::string const& markType);
 		std::string get (size_t index, std::string const& markType) const;
+		std::multimap<size_t, std::pair<std::string, std::string>> get_range (size_t from, size_t to) const;
 		std::map<size_t, std::string> get_range (size_t from, size_t to, std::string const& markType) const;
 
 		std::pair<size_t, std::string> next (size_t index, std::string const& markType) const;

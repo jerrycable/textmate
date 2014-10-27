@@ -91,9 +91,9 @@ static void* kOakCommitWindowIncludeItemBinding = &kOakCommitWindowIncludeItemBi
 @property (nonatomic) NSScrollView*                      scrollView;
 @property (nonatomic) NSTableView*                       tableView;
 
-@property (nonatomic) NSBox*                             topDivider;
-@property (nonatomic) NSBox*                             middleDivider;
-@property (nonatomic) NSBox*                             bottomDivider;
+@property (nonatomic) NSView*                            topDivider;
+@property (nonatomic) NSView*                            middleDivider;
+@property (nonatomic) NSView*                            bottomDivider;
 
 @property (nonatomic) NSButton*                          showTableButton;
 @property (nonatomic) NSButton*                          commitButton;
@@ -360,6 +360,8 @@ static void* kOakCommitWindowIncludeItemBinding = &kOakCommitWindowIncludeItemBi
 	}
 
 	document::document_ptr commitMessage = document::from_content("", fileType);
+	commitMessage->set_custom_name("Commit Message"); // release ‘untitled’ token
+	commitMessage->set_virtual_path(path::join(_environment["TM_PROJECT_DIRECTORY"], "commit-message.txt"));
 
 	if(NSString* logArgument = [self.options objectForKey:@"--log"])
 		commitMessage->set_content(to_s(logArgument));
@@ -520,7 +522,7 @@ static void* kOakCommitWindowIncludeItemBinding = &kOakCommitWindowIncludeItemBi
 
 		std::transform(diffCmd.begin(), diffCmd.end(), diffCmd.begin(), &path::escape);
 
-		std::string const cmdString = text::format("cd \"${TM_PROJECT_DIRECTORY}\" && %s|\"$TM_MATE\" --async  --name \"---/+++ %s\"", text::join(diffCmd, " ").c_str(), path::display_name(to_s(filePath)).c_str());
+		std::string const cmdString = text::format("cd \"${TM_PROJECT_DIRECTORY}\" && %s|\"$TM_MATE\" --no-wait --name \"---/+++ %s\"", text::join(diffCmd, " ").c_str(), path::display_name(to_s(filePath)).c_str());
 		dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
 			bool success = io::exec(_environment, "/bin/sh", "-c", cmdString.c_str(), NULL) != NULL_STR;
 			if(!success)
@@ -667,16 +669,12 @@ static void* kOakCommitWindowIncludeItemBinding = &kOakCommitWindowIncludeItemBi
 - (NSView*)tableView:(NSTableView*)aTableView viewForTableColumn:(NSTableColumn*)aTableColumn row:(NSInteger)row
 {
 	CWTableCellView* cellView = [aTableView makeViewWithIdentifier:aTableColumn.identifier owner:self];
+
 	if(!cellView)
 	{
-		NSViewController* viewController = [[NSViewController alloc] initWithNibName:@"CWTableCellView" bundle:[NSBundle bundleForClass:[self class]]];
-		cellView = (CWTableCellView*)viewController.view;
+		cellView = [CWTableCellView new];
 		cellView.identifier = aTableColumn.identifier;
 	}
-
-	[cellView.textField bind:NSValueBinding toObject:cellView withKeyPath:@"objectValue.path" options:0];
-	[cellView.commitCheckBox bind:NSValueBinding toObject:cellView withKeyPath:@"objectValue.commit" options:0];
-	[cellView.statusTextField bind:NSValueBinding toObject:cellView withKeyPath:@"objectValue.scmStatus" options:@{ NSValueTransformerNameBindingOption : @"CWStatusStringTransformer" }];
 
 	[cellView.diffButton setAction:@selector(didDoubleClickTableView:)];
 	[cellView.diffButton setTarget:self];
@@ -685,6 +683,10 @@ static void* kOakCommitWindowIncludeItemBinding = &kOakCommitWindowIncludeItemBi
 
 	return cellView;
 }
+@end
+
+@protocol OakProjectIdentifier
+- (NSString*)identifier;
 @end
 
 @interface OakCommitWindowServer ()
@@ -712,7 +714,23 @@ static void* kOakCommitWindowIncludeItemBinding = &kOakCommitWindowIncludeItemBi
 
 - (void)connectFromClientWithOptions:(NSDictionary*)someOptions
 {
+	NSWindow* projectWindow = [NSApp mainWindow];
+	if(NSString* identifier = [someOptions valueForKeyPath:@"environment.TM_PROJECT_UUID"])
+	{
+		for(NSWindow* window in [NSApp orderedWindows])
+		{
+			if([window.delegate respondsToSelector:@selector(identifier)])
+			{
+				if([identifier isEqualToString:[id <OakProjectIdentifier>(window.delegate) identifier]])
+				{
+					projectWindow = window;
+					break;
+				}
+			}
+		}
+	}
+
 	OakCommitWindow* commitWindow = [[OakCommitWindow alloc] initWithOptions:someOptions];
-	[commitWindow beginSheetModalForWindow:[NSApp mainWindow] completionHandler:^(NSInteger returnCode){ }];
+	[commitWindow beginSheetModalForWindow:projectWindow completionHandler:^(NSInteger returnCode){ }];
 }
 @end

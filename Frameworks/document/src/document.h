@@ -18,6 +18,8 @@
 
 namespace document
 {
+	PUBLIC extern std::string const kBookmarkIdentifier;
+
 	struct watch_t;
 	struct document_t;
 	typedef std::shared_ptr<watch_t>          watch_ptr;
@@ -65,7 +67,7 @@ namespace document
 	{
 		WATCH_LEAKS(document_t);
 
-		document_t () : _did_load_marks(false), _selection(NULL_STR), _folded(NULL_STR), _disable_callbacks(false), _revision(0), _disk_revision(0), _modified(false), _path(NULL_STR), _open_count(0), _has_lru(false), _is_on_disk(false), _recent_tracking(true), _backup_path(NULL_STR), _backup_revision(0), _virtual_path(NULL_STR), _custom_name(NULL_STR), _untitled_count(0), _file_type(NULL_STR), /*_folder(NULL_STR),*/ _disk_encoding(NULL_STR), _disk_newlines(NULL_STR), _disk_bom(false) { }
+		document_t () : _selection(NULL_STR), _folded(NULL_STR), _disable_callbacks(false), _revision(0), _disk_revision(0), _modified(false), _path(NULL_STR), _open_count(0), _has_lru(false), _is_on_disk(false), _recent_tracking(true), _backup_path(NULL_STR), _backup_revision(0), _virtual_path(NULL_STR), _custom_name(NULL_STR), _untitled_count(0), _file_type(NULL_STR), /*_folder(NULL_STR),*/ _disk_encoding(NULL_STR), _disk_newlines(NULL_STR), _disk_bom(false) { }
 		~document_t ();
 
 		bool operator== (document_t const& rhs) const { return _identifier == rhs._identifier; }
@@ -83,33 +85,19 @@ namespace document
 		// = Performing replacements (from outside a text view) =
 		// ======================================================
 
-		void replace (std::multimap<std::pair<size_t, size_t>, std::string> const& replacements);
+		bool replace (std::multimap<std::pair<size_t, size_t>, std::string> const& replacements, uint32_t crc32);
 
 		// ===================================================================
 		// = Controlling marks (bookmarks, warnings, errors, search matches) =
 		// ===================================================================
 
-		struct mark_t
-		{
-			WATCH_LEAKS(document_t::mark_t);
-
-			mark_t (char const* type = "bookmark") : type(type), info("") { }
-			mark_t (std::string const& type, std::string const& info = "") : type(type), info(info) { }
-			bool operator== (mark_t const& rhs) const { return type == rhs.type && info == rhs.info; }
-			bool operator!= (mark_t const& rhs) const { return type != rhs.type || info != rhs.info; }
-			std::string type, info;
-		};
-
-		void add_mark (text::range_t const& range, mark_t const& mark = mark_t());
+		void add_mark (text::pos_t const& pos, std::string const& mark, std::string const& value = std::string());
+		void remove_mark (text::pos_t const& pos, std::string const& mark);
 		void remove_all_marks (std::string const& typeToClear = NULL_STR);
-		std::multimap<text::range_t, mark_t> marks () const;
 
 	private:
-		void load_marks (std::string const& src) const;
-		void setup_marks (std::string const& src, ng::buffer_t& buf) const;
-		std::string marks_as_string () const;
-		mutable std::multimap<text::range_t, mark_t> _marks;
-		mutable bool _did_load_marks;
+		static void setup_marks (std::string const& src, ng::buffer_t& buf);
+		std::string bookmarks_as_string () const;
 
 		std::string _selection;
 		std::string _folded;
@@ -247,8 +235,6 @@ namespace document
 		void set_indent (text::indent_t const& indent);
 		text::indent_t const& indent () const;
 
-		encoding::type encoding_for_save_as_path (std::string const& path);
-
 		bool recent_tracking () const         { return _recent_tracking && _path != NULL_STR; }
 		void set_recent_tracking (bool flag)  { _recent_tracking = flag; }
 
@@ -353,6 +339,8 @@ namespace document
 	PUBLIC document_ptr find (oak::uuid_t const& uuid, bool searchBackups = false);
 	PUBLIC document_ptr from_content (std::string const& content, std::string fileType = NULL_STR);
 
+	PUBLIC void remove_marks (std::string const& typeToClear = NULL_STR);
+
 	// ====================
 	// = Document scanner =
 	// ====================
@@ -361,11 +349,17 @@ namespace document
 	{
 		WATCH_LEAKS(scanner_t);
 
-		scanner_t (std::string const& path, path::glob_list_t const& glob, bool follow_links = false, bool depth_first = false, bool includeUntitled = true);
+		scanner_t (std::string const& path, path::glob_list_t const& glob);
 		~scanner_t ();
 
-		bool is_running () const { return is_running_flag; }
+		void set_follow_directory_links (bool flag) { follow_directory_links = flag; }
+		void set_follow_file_links (bool flag)      { follow_file_links = flag; }
+		void set_include_untitled (bool flag)       { include_untitled = flag; }
+		void set_depth_first (bool flag)            { depth_first = flag; }
+
+		void start ();
 		void stop ()             { should_stop_flag = true; }
+		bool is_running () const { return is_running_flag; }
 		void wait () const       { pthread_join(thread, NULL); }
 
 		static std::vector<document_ptr> open_documents ();
@@ -376,11 +370,15 @@ namespace document
 	private:
 		std::string path;
 		path::glob_list_t glob;
-		bool follow_links, depth_first;
+		bool follow_directory_links = false;
+		bool follow_file_links      = true;
+		bool include_untitled       = false;
+		bool depth_first            = false;
 
 		pthread_t thread;
 		mutable pthread_mutex_t mutex;
-		volatile bool is_running_flag, should_stop_flag;
+		volatile bool is_running_flag  = false;
+		volatile bool should_stop_flag = false;
 
 		void thread_main ();
 		void scan_dir (std::string const& dir);

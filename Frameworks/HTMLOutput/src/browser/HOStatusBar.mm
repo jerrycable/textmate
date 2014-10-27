@@ -5,17 +5,11 @@
 static NSButton* OakCreateImageButton (NSImage* image)
 {
 	NSButton* res = [NSButton new];
-
 	[[res cell] setBackgroundStyle:NSBackgroundStyleRaised];
 	[res setButtonType:NSMomentaryChangeButton];
-	[res setBezelStyle:NSRecessedBezelStyle];
 	[res setBordered:NO];
-
-	image = [image copy];
-	[image setTemplate:YES];
 	[res setImage:image];
 	[res setImagePosition:NSImageOnly];
-
 	return res;
 }
 
@@ -33,7 +27,7 @@ static NSTextField* OakCreateTextField ()
 }
 
 @interface HOStatusBar ()
-@property (nonatomic) NSImageView*         divider;
+@property (nonatomic) NSView*              divider;
 @property (nonatomic) NSButton*            goBackButton;
 @property (nonatomic) NSButton*            goForwardButton;
 @property (nonatomic) NSTextField*         statusTextField;
@@ -46,8 +40,9 @@ static NSTextField* OakCreateTextField ()
 @implementation HOStatusBar
 - (id)initWithFrame:(NSRect)frame
 {
-	if(self = [super initWithGradient:[[NSGradient alloc] initWithColorsAndLocations:[NSColor colorWithCalibratedWhite:1 alpha:0.68], 0.0, [NSColor colorWithCalibratedWhite:1 alpha:0.5], 0.0416, [NSColor colorWithCalibratedWhite:1 alpha:0], 1.0, nil] inactiveGradient:[[NSGradient alloc] initWithColorsAndLocations:[NSColor colorWithCalibratedWhite:1 alpha:0.68], 0.0, [NSColor colorWithCalibratedWhite:1 alpha:0.5], 0.0416, [NSColor colorWithCalibratedWhite:1 alpha:0], 1.0, nil]])
+	if(self = [super initWithFrame:frame])
 	{
+		[self setupStatusBarBackground];
 		_indeterminateProgress = YES;
 
 		_divider                  = OakCreateDividerImageView();

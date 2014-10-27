@@ -19,6 +19,8 @@ OAK_DEBUG_VAR(OakToolTip);
 - (void)showAtLocation:(NSPoint)aPoint forScreen:(NSScreen*)aScreen;
 @end
 
+static __unsafe_unretained OakToolTip* LastToolTip;
+
 @implementation OakToolTip
 + (void)initialize
 {
@@ -49,6 +51,7 @@ OAK_DEBUG_VAR(OakToolTip);
 		[field setBordered:NO];
 		[field setDrawsBackground:NO];
 		[field setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+		[field setFont:[NSFont toolTipsFontOfSize:0]];
 		[field setStringValue:@"This is a nice little code block"];
 
 		[self setContentView:field];
@@ -62,6 +65,7 @@ OAK_DEBUG_VAR(OakToolTip);
 - (void)dealloc
 {
 	D(DBF_OakToolTip, bug("\n"););
+	LastToolTip = nil;
 }
 
 - (void)setFont:(NSFont*)aFont
@@ -130,6 +134,7 @@ OAK_DEBUG_VAR(OakToolTip);
 	BOOL didAcceptMouseMovedEvents = [keyWindow acceptsMouseMovedEvents];
 	[keyWindow setAcceptsMouseMovedEvents:YES];
 
+	BOOL slowFadeOut = NO;
 	while(NSEvent* event = [NSApp nextEventMatchingMask:NSAnyEventMask untilDate:[NSDate distantFuture] inMode:NSDefaultRunLoopMode dequeue:YES])
 	{
 		[NSApp sendEvent:event];
@@ -144,6 +149,7 @@ OAK_DEBUG_VAR(OakToolTip);
 		if([event type] == NSMouseMoved && [self shouldCloseForMousePosition:[NSEvent mouseLocation]])
 		{
 			D(DBF_OakToolTip, bug("close because mouse was moved\n"););
+			slowFadeOut = YES;
 			break;
 		}
 
@@ -155,7 +161,7 @@ OAK_DEBUG_VAR(OakToolTip);
 	}
 
 	[keyWindow setAcceptsMouseMovedEvents:didAcceptMouseMovedEvents];
-	[self fadeOut:self];
+	[self fadeOutSlowly:slowFadeOut];
 }
 
 - (void)showAtLocation:(NSPoint)aPoint forScreen:(NSScreen*)aScreen
@@ -177,11 +183,11 @@ OAK_DEBUG_VAR(OakToolTip);
 	[self showUntilUserActivity];
 }
 
-- (void)fadeOut:(id)sender
+- (void)fadeOutSlowly:(BOOL)slowly
 {
 	[NSAnimationContext beginGrouping];
 
-	[NSAnimationContext currentContext].duration = 0.5;
+	[NSAnimationContext currentContext].duration = slowly ? 0.5 : 0.25;
 	[NSAnimationContext currentContext].completionHandler = ^{
 		[self orderOut:self];
 	};
@@ -220,9 +226,8 @@ void OakShowToolTip (NSString* msg, NSPoint location)
 
 		[toolTip showAtLocation:location forScreen:screen];
 
-		static __weak OakToolTip* LastToolTip;
-		if(OakToolTip* toolTip = LastToolTip)
-			[toolTip performSelector:@selector(orderOut:) withObject:nil afterDelay:0];
+		if(OakToolTip* lastToolTip = LastToolTip)
+			[lastToolTip performSelector:@selector(orderOut:) withObject:nil afterDelay:0];
 		LastToolTip = toolTip;
 	}
 }
