@@ -48,7 +48,7 @@ class Targets
     targets.each do |target|
       next if target['SOURCES'].to_a.empty?
       @all << target
-      if linked.include?(target[:name]) || target['BUILD'] == 'lib'
+      if target['EXPORT'] || linked.include?(target[:name]) || target['BUILD'] == 'lib'
         target[:type] = :library
       else
         has_info_plist = target['CP_Resources'].to_a.find { |path| path =~ /\bInfo\.plist$/ }
@@ -235,7 +235,7 @@ def sources(target)
         cc  = compiler_for(src)
         dst = build_path("#{base}.o")
         res << "build #{dst}: #{cc} #{esc_path src} | #{pch_for(src, target)}.gch || #{esc_path(headers).join(' ')}\n"
-        res << "  PCH_FLAGS = -D#{target[:name].gsub(/[^A-Za-z_]/, '_')}_EXPORTS -include #{pch_for(src, target)}\n"
+        res << "  PCH_FLAGS = -include #{pch_for(src, target)}\n"
         res << flags_for_target(target)
 
         objects << dst
@@ -249,7 +249,7 @@ def sources(target)
         cc  = compiler_for(dst)
         obj = build_path("#{base}.o")
         res << "build #{obj}: #{cc} #{dst} | #{pch_for(dst, target)}.gch || #{esc_path(headers).join(' ')}\n"
-        res << "  PCH_FLAGS = -D#{target[:name].gsub(/[^A-Za-z_]/, '_')}_EXPORTS -include #{pch_for(dst, target)} -iquote#{esc_path File.dirname(src)}\n"
+        res << "  PCH_FLAGS = -include #{pch_for(dst, target)} -iquote#{esc_path File.dirname(src)}\n"
         res << flags_for_target(target)
 
         objects << obj
@@ -262,7 +262,7 @@ def sources(target)
         cc  = compiler_for(src)
         dst = build_path("#{base}.o")
         res << "build #{dst}: #{cc} #{esc_path src} | #{pch_for(src, target)}.gch || #{esc_path(headers).join(' ')}\n"
-        res << "  PCH_FLAGS = -D#{target[:name].gsub(/[^A-Za-z_]/, '_')}_EXPORTS -include #{pch_for(src, target)}\n"
+        res << "  PCH_FLAGS = -include #{pch_for(src, target)}\n"
         res << flags_for_target(target)
 
         objects << dst
@@ -907,7 +907,7 @@ rule run_application
         sleep .2;                    $
       done;                          $
     fi;                              $
-    open $in;                        $
+    open $in --args -disableSessionRestore NO; $
   } &>/dev/null &
   description = Run ‘$in’…
 
@@ -921,7 +921,7 @@ rule tbz_archive
   description = Archive ‘$in’…
 
 rule upload
-  command = bin/upload -k$upload_keyfile -d$upload_destination -t'v$APP_VERSION' -m'{"version":"$APP_VERSION","revision":"$APP_REVISION"}' $in > $out~ && mv $out~ $out
+  command = bin/upload -k$upload_keyfile -d$upload_destination -t'v$APP_VERSION' -m'{"version":"$APP_VERSION"}' $in > $out~ && mv $out~ $out
   pool = console
   generator = true
   description = Upload ‘$in’…
@@ -932,7 +932,7 @@ rule deploy
   description = Deploy…
 
 rule bump_revision
-  command = ruby -pe '$$_.gsub!(/(APP_REVISION\s*=\s*)(\d+)/) { newRev = $$2.to_i + 1; STDERR << "r#$$2 → r#{newRev}\n"; "#$$1#{newRev}#$$3" }' $in > $in~ && mv $in~ $in && touch $builddir/bumped
+  command = ruby -pe '$$_.gsub!(/(APP_VERSION\s*=\s*(.*?))(\d+)$$/) { newRev = $$3.to_i + 1; STDERR << "#$$2#$$3 → #$$2#{newRev}\n"; "#$$1#{newRev}" }' $in > $in~ && mv $in~ $in && touch $builddir/bumped
   description = Increment version number…
 
 build $builddir/always_bump_revision: bump_revision $builddir/build.ninja

@@ -7,9 +7,7 @@
 {
 	if((self = [super init]))
 	{
-		NSTextField* textField = OakCreateLabel();
-		textField.font = [NSFont controlContentFontOfSize:0];
-		[textField.cell setLineBreakMode: NSLineBreakByTruncatingMiddle];
+		NSTextField* textField = OakCreateLabel(@"", [NSFont controlContentFontOfSize:0]);
 		self.textField = textField;
 
 		NSButton* commitCheckBox = OakCreateCheckBox(@"");
@@ -24,16 +22,12 @@
 		[diffButton.cell setControlSize: NSMiniControlSize];
 		_diffButton = diffButton;
 
-		[self.textField   bind:NSValueBinding toObject:self withKeyPath:@"objectValue.path"      options:0];
+		[textField        bind:NSValueBinding toObject:self withKeyPath:@"objectValue.path"      options:0];
 		[_commitCheckBox  bind:NSValueBinding toObject:self withKeyPath:@"objectValue.commit"    options:0];
 		[_statusTextField bind:NSValueBinding toObject:self withKeyPath:@"objectValue.scmStatus" options:@{ NSValueTransformerNameBindingOption : @"CWStatusStringTransformer" }];
 
-		NSDictionary* views = @{ @"commit" : _commitCheckBox, @"status" : _statusTextField, @"textField" : self.textField, @"diff" : _diffButton };
-		for(NSView* view in [views allValues])
-		{
-			[view setTranslatesAutoresizingMaskIntoConstraints:NO];
-			[self addSubview:view];
-		}
+		NSDictionary* views = @{ @"commit" : _commitCheckBox, @"status" : _statusTextField, @"textField" : textField, @"diff" : _diffButton };
+		OakAddAutoLayoutViewsToSuperview([views allValues], self);
 
 		[_commitCheckBox setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
 		[_statusTextField setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];

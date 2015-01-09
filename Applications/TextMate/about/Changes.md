@@ -2,6 +2,29 @@ Title: Release Notes
 
 # Changes
 
+## 2014-11-29 (v2.0-beta.6.4)
+
+* TextMate now supports the system’s “press and hold” feature to bring up variations of the pressed character (mainly decorated with accents).
+* See [all changes since v2.0-beta.6.1](https://github.com/textmate/textmate/compare/v2.0-beta.6.1...v2.0-beta.6.4).
+
+## 2014-11-11 (v2.0-beta.6.1)
+
+* The bundle item chooser (⌃⌘T) now show the value of settings and variables (inline) and includes actions from key binding dictionaries (like `~/Library/KeyBindings/DefaultKeyBinding.dict`).
+* See [all changes since v2.0-beta.5.4](https://github.com/textmate/textmate/compare/v2.0-beta.5.4...v2.0-beta.6.1).
+
+## 2014-11-05 (v2.0-beta.5.4)
+
+* Improve stability on Yosemite.
+* The chooser windows (⌘T, ⇧⌘O, etc.) are now view-based and thus a bit more fancy. Consider it work-in-progress.
+* See [all changes since v2.0-beta.5](https://github.com/textmate/textmate/compare/v2.0-beta.5...v2.0-beta.5.4).
+
+## 2014-10-29 (v2.0-beta.5)
+
+* Items in the bundle editor now have a context menu with “Show in Finder”. For items with local changes, this item turns into a submenu, showing all the location of the item.
+* Closing stale tabs when the tab bar overflows can be disabled using `defaults write com.macromates.TextMate.preview disableTabAutoClose -bool YES`.
+* Swapped key equivalents of _“New File”_ and _“New Folder”_ actions to make it somewhat consistent with Finder.
+* See [all changes since v2.0-beta.3](https://github.com/textmate/textmate/compare/v2.0-beta.3...v2.0-beta.5).
+
 ## 2014-10-20 (v2.0-beta.3)
 
 * It’s now possible to associate a string value with marks using: `"$TM_MATE" --set-mark «mark»:«value»`. The value is shown if you click the gutter image. You can also use `--clear-mark` together with `--set-mark`. This avoids the potential flash that would show if having to call `mate` twice to update marks.
@@ -48,7 +71,7 @@ Title: Release Notes
 ## 2014-08-17 ([v2.0-alpha.9559](https://github.com/textmate/textmate/compare/v2.0-alpha.9555...v2.0-alpha.9559))
 
 * The bundle item chooser (⌃⌘T) now include menu items. This also works with key equivalent searching.
-* In the chooser lists (fuzzy file finder, bundle item chooser, and symbol list) it is now possible to make the selection loop around, that is, move from first to last item with arrow up, etc. This is enabled by running: `defaults write com.macromates.TextMate.preview enableLoopFilterList --bool YES` *[Zete Lui]*
+* In the chooser lists (fuzzy file finder, bundle item chooser, and symbol list) it is now possible to make the selection loop around, that is, move from first to last item with arrow up, etc. This is enabled by running: `defaults write com.macromates.TextMate.preview enableLoopFilterList -bool YES` *[Zete Lui]*
 
 ## 2014-07-31 ([v2.0-alpha.9555](https://github.com/textmate/textmate/compare/v2.0-alpha.9551...v2.0-alpha.9555))
 

@@ -37,9 +37,9 @@ static NSString* const kUserDefaultsFilterOutputType = @"filterOutputType";
 		self.outputType           = output::replace_input;
 		self.myConstraints        = [NSMutableArray new];
 
-		self.commandLabel         = OakCreateLabel(@"Command:");
+		self.commandLabel         = OakCreateLabel(@"Command:", nil, NSRightTextAlignment);
 		self.commandComboBox      = OakCreateComboBox();
-		self.resultLabel          = OakCreateLabel(@"Result:");
+		self.resultLabel          = OakCreateLabel(@"Result:", nil, NSRightTextAlignment);
 		self.resultPopUpButton    = OakCreatePopUpButton();
 		self.executeButton        = OakCreateButton(@"Execute");
 		self.cancelButton         = OakCreateButton(@"Cancel");
@@ -82,11 +82,7 @@ static NSString* const kUserDefaultsFilterOutputType = @"filterOutputType";
 		};
 
 		NSView* contentView = self.window.contentView;
-		for(NSView* view in [views allValues])
-		{
-			[view setTranslatesAutoresizingMaskIntoConstraints:NO];
-			[contentView addSubview:view];
-		}
+		OakAddAutoLayoutViewsToSuperview([views allValues], contentView);
 
 		CONSTRAINT(@"H:|-[commandLabel]-[command(>=250)]-|", NSLayoutFormatAlignAllBaseline);
 		CONSTRAINT(@"H:|-[resultLabel(==commandLabel)]-[result]-(>=20)-|", NSLayoutFormatAlignAllBaseline);
@@ -95,15 +91,10 @@ static NSString* const kUserDefaultsFilterOutputType = @"filterOutputType";
 		CONSTRAINT(@"V:[result]-[execute]-|", 0);
 
 		[self.window.contentView addConstraints:_myConstraints];
-
-		NSView* keyViewLoop[] = { self.commandComboBox, self.resultPopUpButton, self.cancelButton, self.executeButton };
-		for(size_t i = 0; i < sizeofA(keyViewLoop); ++i)
-			keyViewLoop[i].nextKeyView = keyViewLoop[(i + 1) % sizeofA(keyViewLoop)];
+		OakSetupKeyViewLoop(@[ self.commandComboBox, self.resultPopUpButton, self.cancelButton, self.executeButton ]);
+		self.window.defaultButtonCell = self.executeButton.cell;
 
 		self.outputType = (output::type)[[NSUserDefaults standardUserDefaults] integerForKey:kUserDefaultsFilterOutputType];
-
-		self.window.initialFirstResponder = self.commandComboBox;
-		self.window.defaultButtonCell     = self.executeButton.cell;
 	}
 	return self;
 }

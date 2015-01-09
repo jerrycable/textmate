@@ -140,7 +140,7 @@ namespace command
 		return std::make_shared<runner_t>(command, buffer, selection, environment, pwd, delegate);
 	}
 
-	void runner_t::launch (dispatch_queue_t queue)
+	void runner_t::launch ()
 	{
 		ASSERT(_delegate);
 		ASSERT(_command.command.find("#!") == 0);
@@ -165,6 +165,7 @@ namespace command
 		};
 
 		bool hasHTMLOutput = _command.output == output::new_window && _command.output_format == output_format::html;
+		dispatch_queue_t queue = dispatch_get_main_queue();
 		_process_id = run_command(_dispatch_group, _temp_path, stdinRead, _environment, _directory, queue, hasHTMLOutput ? htmlOutHandler : textOutHandler, stderrHandler, completionHandler);
 
 		if(hasHTMLOutput)
@@ -254,7 +255,17 @@ namespace command
 			case exit_replace_text:        placement = output::replace_input;     format = output_format::text;    outputCaret = output_caret::heuristic;             break;
 			case exit_replace_document:    placement = output::replace_document;  format = output_format::text;    outputCaret = output_caret::interpolate_by_line;   break;
 			case exit_insert_text:         placement = output::after_input;       format = output_format::text;    outputCaret = output_caret::after_output;          break;
-			case exit_insert_snippet:      placement = _command.input == input::selection ? output::replace_input : output::after_input; format = output_format::snippet; break;
+			case exit_insert_snippet:
+			{
+				if(_command.input == input::selection)
+					placement = output::replace_input;
+				else if(_command.input == input::entire_document)
+					placement = output::at_caret;
+				else
+					placement = output::after_input;
+			  format = output_format::snippet;
+			}
+			break;
 			case exit_show_html:           placement = output::new_window;        format = output_format::html;    break;
 			case exit_show_tool_tip:       placement = output::tool_tip;          format = output_format::text;    break;
 			case exit_create_new_document: placement = output::new_window;        format = output_format::text;    break;

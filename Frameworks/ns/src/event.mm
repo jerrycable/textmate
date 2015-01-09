@@ -3,6 +3,7 @@
 #import <text/utf8.h>
 #import <text/case.h>
 #import <text/format.h>
+#import <OakFoundation/NSString Additions.h>
 
 static std::string glyph_named (std::string const& name)
 {
@@ -167,7 +168,17 @@ namespace ns
 		std::string key; NSUInteger flags;
 		parse_event_string(eventString, key, flags, true);
 
-		std::string modifierString = key.empty() ? "" : string_for(flags);
+		std::string modifierString = "";
+		if(!key.empty())
+		{
+			modifierString = string_for(flags);
+
+			if(utf8::to_ch(key) == NSBackspaceCharacter)
+				key = NSDeleteCharacter;
+			else if(utf8::to_ch(key) == NSNewlineCharacter)
+				key = NSCarriageReturnCharacter;
+		}
+
 		if(startOfKey)
 			*startOfKey = modifierString.size();
 		return modifierString + key;
@@ -209,3 +220,32 @@ namespace ns
 	}
 
 } /* ns */
+
+NSAttributedString* OakAttributedStringForEventString (NSString* eventString, NSFont* font)
+{
+	static NSSet* const FunctionKeys = [NSSet setWithArray:@[ @"F1", @"F2", @"F3", @"F4", @"F5", @"F6",@"F7", @"F8", @"F9", @"F10", @"F11", @"F12", @"F13", @"F14", @"F15" ]];
+
+	size_t keyStartsAt = 0;
+	std::string const glyphString = ns::glyphs_for_event_string(to_s(eventString), &keyStartsAt);
+	NSString* flags = [NSString stringWithCxxString:glyphString.substr(0, keyStartsAt)];
+	NSString* key   = [NSString stringWithCxxString:glyphString.substr(keyStartsAt)];
+
+	NSDictionary* style = @{ NSFontAttributeName : font };
+	NSMutableAttributedString* str = [[NSMutableAttributedString alloc] initWithString:[NSString stringWithFormat:@"%@%@\t", flags, key] attributes:style];
+
+	NSRange flagsRange = NSMakeRange(0, [flags length]);
+	NSRange keyRange   = NSMakeRange(NSMaxRange(flagsRange), [key length]);
+
+	if(NSGlyphInfo* glyphInfo = [FunctionKeys containsObject:key] ? [NSGlyphInfo glyphInfoWithGlyphName:key forFont:font baseString:key] : nil)
+		[str addAttributes:@{ NSGlyphInfoAttributeName : glyphInfo } range:keyRange];
+
+	CGFloat flagsWidth = [[str attributedSubstringFromRange:flagsRange] size].width;
+	CGFloat keyWidth   = [font maximumAdvancement].width;
+
+	NSMutableParagraphStyle* pStyle = [NSMutableParagraphStyle new];
+	[pStyle setAlignment:NSRightTextAlignment];
+	[pStyle setTabStops:@[ [[NSTextTab alloc] initWithType:NSLeftTabStopType location:ceil(flagsWidth + keyWidth)] ]];
+	[str addAttributes:@{ NSParagraphStyleAttributeName : pStyle } range:NSMakeRange(0, [str length])];
+
+	return str;
+}

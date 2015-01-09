@@ -229,7 +229,7 @@ struct buffer_refresh_callback_t;
 typedef indexed_map_t<OakAccessibleLink*> links_t;
 typedef std::shared_ptr<links_t> links_ptr;
 
-@interface OakTextView () <NSIgnoreMisspelledWords, NSChangeSpelling>
+@interface OakTextView () <NSTextInputClient, NSIgnoreMisspelledWords, NSChangeSpelling, NSTextFieldDelegate>
 {
 	OBJC_WATCH_LEAKS(OakTextView);
 
@@ -302,22 +302,13 @@ typedef std::shared_ptr<links_t> links_ptr;
 
 	links_ptr _links;
 }
-+ (NSArray*)dropTypes;
 - (void)ensureSelectionIsInVisibleArea:(id)sender;
-- (NSPoint)positionForWindowUnderCaret;
-- (void)toggleColumnSelection:(id)sender;
-- (void)delete:(id)sender;
 - (void)updateChoiceMenu:(id)sender;
 - (void)resetBlinkCaretTimer;
-- (void)reflectDocumentSize;
 - (void)updateSelection;
 - (void)updateMarkedRanges;
 - (void)redisplayFrom:(size_t)from to:(size_t)to;
-- (void)recordSelector:(SEL)aSelector withArgument:(id)anArgument;
 - (NSImage*)imageForRanges:(ng::ranges_t const&)ranges imageRect:(NSRect*)outRect;
-- (void)highlightRanges:(ng::ranges_t const&)ranges;
-- (NSRange)nsRangeForRange:(ng::range_t const&)range;
-- (ng::range_t)rangeForNSRange:(NSRange)nsRange;
 @property (nonatomic, readonly) ng::ranges_t const& markedRanges;
 @property (nonatomic) NSDate* optionDownDate;
 @property (nonatomic) OakTimer* initiateDragTimer;
@@ -985,18 +976,9 @@ doScroll:
 	layout->draw(ng::context_t(context, _showInvisibles ? invisiblesMap : NULL_STR, [spellingDotImage CGImageForProposedRect:NULL context:[NSGraphicsContext currentContext] hints:nil], foldingDotsFactory), aRect, [self isFlipped], merge(editor->ranges(), [self markedRanges]), liveSearchRanges);
 }
 
-// ===============
-// = NSTextInput =
-// ===============
-
-- (NSInteger)conversationIdentifier
-{
-	return (NSInteger)self;
-}
-
-// ==================
-// = Accented input =
-// ==================
+// =====================
+// = NSTextInputClient =
+// =====================
 
 - (NSRange)nsRangeForRange:(ng::range_t const&)range
 {
@@ -1020,25 +1002,44 @@ doScroll:
 	return ng::range_t(from, to);
 }
 
-- (void)setMarkedText:(id)aString selectedRange:(NSRange)aRange
+- (ng::ranges_t)rangesForReplacementRange:(NSRange)aRange
+{
+	ng::range_t r = [self rangeForNSRange:aRange];
+	if(editor->ranges().size() == 1)
+		return r;
+
+	size_t adjustLeft = 0, adjustRight = 0;
+	for(auto const& range : editor->ranges())
+	{
+		if(range.min() <= r.max() && r.min() <= range.max())
+		{
+			adjustLeft  = r.min() < range.min() ? range.min().index - r.min().index : 0;
+			adjustRight = range.max() < r.max() ? r.max().index - range.max().index : 0;
+		}
+	}
+
+	ng::ranges_t res;
+	for(auto const& range : editor->ranges())
+	{
+		size_t from = adjustLeft > range.min().index ? 0 : range.min().index - adjustLeft;
+		size_t to   = range.max().index + adjustRight;
+		res.push_back(ng::range_t(document->buffer().sanitize_index(from), document->buffer().sanitize_index(to)));
+	}
+	return res;
+}
+
+- (void)setMarkedText:(id)aString selectedRange:(NSRange)aRange replacementRange:(NSRange)replacementRange
 {
 	D(DBF_OakTextView_TextInput, bug("‘%s’ %s\n", to_s([aString description]).c_str(), [NSStringFromRange(aRange) UTF8String]););
 
-	if(![aString isKindOfClass:[NSString class]])
-	{
-		if([aString respondsToSelector:@selector(string)])
-			aString = [aString string];
-		else if([aString respondsToSelector:@selector(description)])
-			aString = [aString description];
-		else
-			aString = @"<ERROR>";
-	}
-
 	AUTO_REFRESH;
-	if(!markedRanges.empty())
+	if(replacementRange.location != NSNotFound)
+		editor->set_selections([self rangesForReplacementRange:replacementRange]);
+	else if(!markedRanges.empty())
 		editor->set_selections(markedRanges);
+
 	markedRanges = ng::ranges_t();
-	editor->insert(to_s([aString description]), true);
+	editor->insert(to_s(aString), true);
 	if([aString length] != 0)
 		markedRanges = editor->ranges();
 	pendingMarkedRanges = markedRanges;
@@ -1049,7 +1050,7 @@ doScroll:
 		std::string const str = document->buffer().substr(range.min().index, range.max().index);
 		char const* base = str.data();
 		size_t from = utf16::advance(base, aRange.location, base + str.size()) - base;
-		size_t to   = utf16::advance(base, aRange.location + aRange.length, base + str.size()) - base;
+		size_t to   = utf16::advance(base, NSMaxRange(aRange), base + str.size()) - base;
 		sel.push_back(ng::range_t(range.min() + from, range.min() + to));
 	}
 	editor->set_selections(sel);
@@ -1092,20 +1093,10 @@ doScroll:
 - (void)updateMarkedRanges
 {
 	if(!markedRanges.empty() && pendingMarkedRanges.empty())
-		[[NSTextInputContext currentInputContext] discardMarkedText];
+		[self.inputContext discardMarkedText];
 
 	markedRanges = pendingMarkedRanges;
 	pendingMarkedRanges = ng::ranges_t();
-}
-
-// =====================
-// = Dictionary pop-up =
-// =====================
-
-- (NSString*)string
-{
-	D(DBF_OakTextView_TextInput, bug("\n"););
-	return [NSString stringWithCxxString:editor->as_string()]; // While undocumented (<rdar://4178606>), this is required in Lion to work with the dictionary implementation (⌃⌘D)
 }
 
 - (NSUInteger)characterIndexForPoint:(NSPoint)thePoint
@@ -1117,7 +1108,7 @@ doScroll:
 	return utf16::distance(text.data(), text.data() + index);
 }
 
-- (NSAttributedString*)attributedSubstringFromRange:(NSRange)theRange
+- (NSAttributedString*)attributedSubstringForProposedRange:(NSRange)theRange actualRange:(NSRangePointer)actualRange
 {
 	ng::range_t const& r = [self rangeForNSRange:theRange];
 	size_t from = r.min().index, to = r.max().index;
@@ -1144,14 +1135,21 @@ doScroll:
 				CFRelease(str);
 			}
 		}
+
+		if(actualRange)
+			*actualRange = [self nsRangeForRange:ng::range_t(from, to)];
+
 		return (NSAttributedString*)CFBridgingRelease(res);
 	}
 	return nil;
 }
 
-- (NSRect)firstRectForCharacterRange:(NSRange)theRange
+- (NSRect)firstRectForCharacterRange:(NSRange)theRange actualRange:(NSRangePointer)actualRange
 {
 	ng::range_t const& r = [self rangeForNSRange:theRange];
+	if(actualRange)
+		*actualRange = [self nsRangeForRange:r];
+
 	NSRect rect = [[self window] convertRectToScreen:[self convertRect:layout->rect_at_index(r.min()) toView:nil]];
 	D(DBF_OakTextView_TextInput, bug("%s → %s\n", [NSStringFromRange(theRange) UTF8String], [NSStringFromRect(rect) UTF8String]););
 	return rect;
@@ -1162,6 +1160,11 @@ doScroll:
 	D(DBF_OakTextView_TextInput, bug("%s\n", sel_getName(aSelector)););
 	AUTO_REFRESH;
 	[self tryToPerform:aSelector with:self];
+}
+
+- (NSInteger)windowLevel
+{
+	return self.window.level;
 }
 
 - (BOOL)respondsToSelector:(SEL)aSelector
@@ -1274,10 +1277,10 @@ doScroll:
 	if(false) {
 	} else if([attribute isEqualToString:NSAccessibilityValueAttribute]) {
 		AUTO_REFRESH;
-		document->set_content(to_s((NSString*)value));
+		document->set_content(to_s(value));
 	} else if([attribute isEqualToString:NSAccessibilitySelectedTextAttribute]) {
 		AUTO_REFRESH;
-		editor->insert(to_s((NSString*)value));
+		editor->insert(to_s(value));
 	} else if([attribute isEqualToString:NSAccessibilitySelectedTextRangeAttribute]) {
 		[self accessibilitySetValue:@[ value ] forAttribute:NSAccessibilitySelectedTextRangesAttribute];
 	} else if([attribute isEqualToString:NSAccessibilitySelectedTextRangesAttribute]) {
@@ -1560,25 +1563,6 @@ doScroll:
 // = Bundle Items =
 // ================
 
-// FIXME copy/paste from bundles/src/query.cc
-static std::string format_bundle_item_title (std::string title, bool hasSelection)
-{
-	static std::string const kSelectionSubString = " / Selection";
-
-	std::string::size_type pos = title.find(kSelectionSubString);
-	if(pos == 0 || pos == std::string::npos)
-		return title;
-
-	if(hasSelection)
-	{
-		std::string::size_type from = title.rfind(' ', pos - 1);
-		if(from == std::string::npos)
-			return title.erase(0, pos + 3);
-		return title.erase(from + 1, pos + 3 - from - 1);
-	}
-	return title.erase(pos, kSelectionSubString.size());
-}
-
 - (std::map<std::string, std::string>)variablesForBundleItem:(bundles::item_ptr const&)item
 {
 	std::map<std::string, std::string> res = oak::basic_environment();
@@ -1624,7 +1608,7 @@ static std::string format_bundle_item_title (std::string title, bool hasSelectio
 			[self recordSelector:@selector(executeCommandWithOptions:) withArgument:ns::to_dictionary(item->plist())];
 
 			auto command = parse_command(item);
-			command.name = format_bundle_item_title(command.name, self.hasSelection);
+			command.name = name_with_selection(item, self.hasSelection);
 			if([self.delegate respondsToSelector:@selector(bundleItemPreExec:completionHandler:)])
 			{
 				[self.delegate bundleItemPreExec:command.pre_exec completionHandler:^(BOOL success){
@@ -1676,7 +1660,7 @@ static std::string format_bundle_item_title (std::string title, bool hasSelectio
 // ============
 
 static plist::dictionary_t KeyBindings;
-static plist::dictionary_t const* KeyEventContext = &KeyBindings;
+static std::set<std::string> LocalBindings;
 
 static plist::any_t normalize_potential_dictionary (plist::any_t const& action)
 {
@@ -1690,14 +1674,12 @@ static plist::any_t normalize_potential_dictionary (plist::any_t const& action)
 	return action;
 }
 
-typedef std::multimap<std::string, std::string> action_to_key_t;
-
-static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& actionToKey)
+static void update_menu_key_equivalents (NSMenu* menu, std::multimap<std::string, std::string> const& actionToKey)
 {
 	for(NSMenuItem* item in [menu itemArray])
 	{
 		SEL action = [item action];
-		action_to_key_t::const_iterator it = actionToKey.find(sel_getName(action));
+		auto it = actionToKey.find(sel_getName(action));
 		if(it != actionToKey.end() && OakIsEmptyString([item keyEquivalent]))
 			[item setKeyEquivalentCxxString:it->second];
 
@@ -1709,22 +1691,26 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 {
 	static dispatch_once_t onceToken = 0;
 	dispatch_once(&onceToken, ^{
-		static std::string const KeyBindingLocations[] =
+		static struct { std::string path; bool local = false; } KeyBindingLocations[] =
 		{
-			oak::application_t::support("KeyBindings.dict"),
-			oak::application_t::path("Contents/Resources/KeyBindings.dict"),
-			path::join(path::home(), "Library/KeyBindings/DefaultKeyBinding.dict"),
-			"/Library/KeyBindings/DefaultKeyBinding.dict",
-			"/System/Library/Frameworks/AppKit.framework/Resources/StandardKeyBinding.dict",
+			{ oak::application_t::support("KeyBindings.dict"), true                            },
+			{ oak::application_t::path("Contents/Resources/KeyBindings.dict"), true            },
+			{ path::join(path::home(), "Library/KeyBindings/DefaultKeyBinding.dict")            },
+			{ "/Library/KeyBindings/DefaultKeyBinding.dict"                                     },
+			{ "/System/Library/Frameworks/AppKit.framework/Resources/StandardKeyBinding.dict"   },
 		};
 
-		for(auto const& path : KeyBindingLocations)
+		for(auto const& info : KeyBindingLocations)
 		{
-			for(auto const& pair : plist::load(path))
+			for(auto const& pair : plist::load(info.path))
+			{
+				if(info.local || boost::get<plist::dictionary_t>(&pair.second))
+					LocalBindings.insert(ns::normalize_event_string(pair.first));
 				KeyBindings.emplace(ns::normalize_event_string(pair.first), normalize_potential_dictionary(pair.second));
+			}
 		}
 
-		action_to_key_t actionToKey;
+		std::multimap<std::string, std::string> actionToKey;
 		for(auto const& pair : KeyBindings)
 		{
 			if(std::string const* selector = boost::get<std::string>(&pair.second))
@@ -1789,12 +1775,10 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 	AUTO_REFRESH;
 	if(std::string const* selector = boost::get<std::string>(&anAction))
 	{
-		KeyEventContext = &KeyBindings;
 		[self doCommandBySelector:NSSelectorFromString([NSString stringWithCxxString:*selector])];
 	}
 	else if(plist::array_t const* actions = boost::get<plist::array_t>(&anAction))
 	{
-		KeyEventContext = &KeyBindings;
 		std::vector<std::string> selectors;
 		for(auto const& it : *actions)
 		{
@@ -1811,7 +1795,18 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 	}
 	else if(plist::dictionary_t const* nested = boost::get<plist::dictionary_t>(&anAction))
 	{
-		KeyEventContext = nested;
+		__block id eventMonitor;
+		eventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSKeyDownMask handler:^NSEvent*(NSEvent* event){
+			plist::dictionary_t::const_iterator pair = nested->find(to_s(event));
+			if(pair != nested->end())
+			{
+				[self handleKeyBindingAction:pair->second];
+				event = nil;
+			}
+			[NSEvent removeMonitor:eventMonitor];
+			eventMonitor = nil;
+			return event;
+		}];
 	}
 }
 
@@ -1823,13 +1818,6 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 
 	D(DBF_OakTextView_TextInput, bug("%s\n", [[anEvent description] UTF8String]););
 	std::string const eventString = to_s(anEvent);
-
-	if(KeyEventContext != &KeyBindings)
-	{
-		plist::dictionary_t::const_iterator pair = KeyEventContext->find(eventString);
-		if(pair != KeyEventContext->end())
-			return [self handleKeyBindingAction:pair->second], YES;
-	}
 
 	std::vector<bundles::item_ptr> const& items = bundles::query(bundles::kFieldKeyEquivalent, eventString, [self scopeContext]);
 	if(!items.empty())
@@ -1858,42 +1846,27 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 
 	if(SpecialKeys.find(eventString) != SpecialKeys.end())
 	{
-		plist::dictionary_t::const_iterator pair = KeyEventContext->find(eventString);
-		if(pair != KeyEventContext->end())
+		plist::dictionary_t::const_iterator pair = KeyBindings.find(eventString);
+		if(pair != KeyBindings.end())
 			return [self handleKeyBindingAction:pair->second], YES;
 	}
 
 	return NO;
 }
 
-- (void)interpretKeyEvents:(NSArray*)someEvents
-{
-	AUTO_REFRESH;
-	if([self hasMarkedText])
-		return [super interpretKeyEvents:someEvents];
-
-	for(NSEvent* event in someEvents)
-	{
-		plist::dictionary_t::const_iterator pair = KeyEventContext->find(to_s(event));
-		if(pair == KeyEventContext->end() && KeyEventContext != &KeyBindings)
-		{
-			KeyEventContext = &KeyBindings;
-			pair = KeyEventContext->find(to_s(event));
-		}
-
-		if(pair == KeyEventContext->end())
-				[super interpretKeyEvents:@[ event ]];
-		else	[self handleKeyBindingAction:pair->second];
-	}
-}
-
 - (void)oldKeyDown:(NSEvent*)anEvent
 {
 	std::vector<bundles::item_ptr> const& items = bundles::query(bundles::kFieldKeyEquivalent, to_s(anEvent), [self scopeContext]);
 	if(bundles::item_ptr item = OakShowMenuForBundleItems(items, [self positionForWindowUnderCaret]))
+	{
 		[self performBundleItem:item];
+	}
 	else if(items.empty())
-		[self interpretKeyEvents:@[ anEvent ]];
+	{
+		if(LocalBindings.find(to_s(anEvent)) != LocalBindings.end())
+				[self handleKeyBindingAction:KeyBindings[to_s(anEvent)]];
+		else	[self.inputContext handleEvent:anEvent];
+	}
 
 	[NSCursor setHiddenUntilMouseMoves:YES];
 	[[NSNotificationCenter defaultCenter] postNotificationName:OakCursorDidHideNotification object:nil];
@@ -2016,6 +1989,11 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 
 - (void)insertText:(id)aString
 {
+	[self insertText:aString replacementRange:NSMakeRange(NSNotFound, 0)];
+}
+
+- (void)insertText:(id)aString replacementRange:(NSRange)aRange
+{
 	D(DBF_OakTextView_TextInput, bug("‘%s’, has marked %s\n", [[aString description] UTF8String], BSTR(!markedRanges.empty())););
 
 	AUTO_REFRESH;
@@ -2027,19 +2005,16 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 	}
 	pendingMarkedRanges = ng::ranges_t();
 
-	if(![aString isKindOfClass:[NSString class]])
+	if(aRange.location != NSNotFound)
 	{
-		if([aString respondsToSelector:@selector(string)])
-			aString = [aString string];
-		else if([aString respondsToSelector:@selector(description)])
-			aString = [aString description];
-		else
-			aString = @"<ERROR>";
+		editor->set_selections([self rangesForReplacementRange:aRange]);
+		[self delete:nil];
 	}
 
-	[self recordSelector:_cmd withArgument:[aString copy]];
+	std::string const str = to_s(aString);
+	[self recordSelector:_cmd withArgument:[NSString stringWithCxxString:str]];
 	bool autoPairing = !macroRecordingArray && ![[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsDisableTypingPairsKey];
-	editor->insert_with_pairing([aString UTF8String], [self indentCorrections], autoPairing, to_s([self scopeAttributes]));
+	editor->insert_with_pairing(str, [self indentCorrections], autoPairing, to_s([self scopeAttributes]));
 }
 
 - (IBAction)toggleCurrentFolding:(id)sender
@@ -2200,7 +2175,7 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 {
 	D(DBF_OakTextView_Spelling, bug("%s\n", [[menuItem representedObject] UTF8String]););
 	AUTO_REFRESH;
-	editor->insert(to_s((NSString*)[menuItem representedObject]));
+	editor->insert(to_s([menuItem representedObject]));
 	if([NSSpellChecker sharedSpellCheckerExists])
 		[[NSSpellChecker sharedSpellChecker] updateSpellingPanelWithMisspelledWord:[menuItem representedObject]];
 }
@@ -2311,7 +2286,7 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 		{
 			std::map<std::string, std::string> variables;
 			for(NSString* key in [captures allKeys])
-				variables.emplace(to_s(key), to_s((NSString*)captures[key]));
+				variables.emplace(to_s(key), to_s(captures[key]));
 			replacement = format_string::expand(replacement, variables);
 		}
 		editor->insert(replacement, true);
@@ -2357,6 +2332,30 @@ static void update_menu_key_equivalents (NSMenu* menu, action_to_key_t const& ac
 					NSString* uuid = [[documents objectAtIndex:i] objectForKey:@"identifier"];
 					if(uuid && oak::uuid_t(to_s(uuid)) == document->identifier())
 					{
+						// ====================================================
+						// = Update our document’s matches on Find pasteboard =
+						// ====================================================
+
+						NSMutableArray* newDocuments = [documents mutableCopy];
+						auto newFirstMatch = ng::find(document->buffer(), ng::ranges_t(0), findStr, (find::options_t)(options & ~find::backwards));
+						if(newFirstMatch.empty())
+						{
+							[newDocuments removeObjectAtIndex:i];
+						}
+						else
+						{
+							auto newLastMatch = ng::find(document->buffer(), ng::ranges_t(0), findStr, (find::options_t)(options | find::backwards | find::wrap_around));
+							auto to_range = [&](auto it) { return text::range_t(document->buffer().convert(it->first.min().index), document->buffer().convert(it->first.max().index)); };
+							[newDocuments replaceObjectAtIndex:i withObject:@{
+								@"identifier"      : [NSString stringWithCxxString:document->identifier()],
+								@"firstMatchRange" : [NSString stringWithCxxString:to_range(newFirstMatch.begin())],
+								@"lastMatchRange"  : [NSString stringWithCxxString:to_range((newLastMatch.empty() ? newFirstMatch : newLastMatch).begin())]
+							}];
+						}
+						[OakPasteboard pasteboardWithName:NSFindPboard].auxiliaryOptionsForCurrent = @{ @"documents" : newDocuments };
+
+						// ====================================================
+
 						NSDictionary* info = [documents objectAtIndex:(i + ((options & find::backwards) ? [documents count] - 1 : 1)) % [documents count]];
 						document::document_ptr doc;
 						if(NSString* path = [info objectForKey:@"path"])
@@ -2619,7 +2618,7 @@ static char const* kOakMenuItemTitle = "OakMenuItemTitle";
 {
 	NSString* title = objc_getAssociatedObject(aMenuItem, kOakMenuItemTitle) ?: aMenuItem.title;
 	objc_setAssociatedObject(aMenuItem, kOakMenuItemTitle, title, OBJC_ASSOCIATION_RETAIN);
-	[aMenuItem updateTitle:[NSString stringWithCxxString:format_bundle_item_title(to_s(title), [self hasSelection])]];
+	[aMenuItem updateTitle:[NSString stringWithCxxString:format_string::replace(to_s(title), "\\b(\\w+) / (Selection)\\b", [self hasSelection] ? "$2" : "$1")]];
 
 	if([aMenuItem action] == @selector(cut:))
 		[aMenuItem setTitle:@"Cut"];
@@ -3085,7 +3084,7 @@ static char const* kOakMenuItemTitle = "OakMenuItemTitle";
 			{
 				oak::uuid_t projectIdentifier = document::kCollectionAny;
 				if([self.window.delegate respondsToSelector:@selector(identifier)]) // FIXME This should be a formal interface
-					projectIdentifier = to_s((NSString*)[self.window.delegate performSelector:@selector(identifier)]);
+					projectIdentifier = to_s([self.window.delegate performSelector:@selector(identifier)]);
 
 				document::show(document::from_content(output, document->file_type()), projectIdentifier);
 			}
@@ -3109,6 +3108,12 @@ static char const* kOakMenuItemTitle = "OakMenuItemTitle";
 			OakShowToolTip([NSString stringWithCxxString:error], [self positionForWindowUnderCaret]);
 	}
 	return res;
+}
+
+- (NSString*)string
+{
+	// This is used by the Emmet plug-in (with no “respondsToSelector:” check)
+	return [NSString stringWithCxxString:editor->as_string()];
 }
 
 // ===================
@@ -3603,7 +3608,7 @@ static scope::context_t add_modifiers_to_scope (scope::context_t scope, NSUInteg
 
 - (void)mouseDown:(NSEvent*)anEvent
 {
-	if(!layout || [anEvent type] != NSLeftMouseDown || ignoreMouseDown)
+	if([self.inputContext handleEvent:anEvent] || !layout || [anEvent type] != NSLeftMouseDown || ignoreMouseDown)
 		return (void)(ignoreMouseDown = NO);
 
 	if(ng::range_t r = layout->folded_range_at_point([self convertPoint:[anEvent locationInWindow] fromView:nil]))
@@ -3648,7 +3653,7 @@ static scope::context_t add_modifiers_to_scope (scope::context_t scope, NSUInteg
 
 - (void)mouseDragged:(NSEvent*)anEvent
 {
-	if(!layout || macroRecordingArray)
+	if([self.inputContext handleEvent:anEvent] || !layout || macroRecordingArray)
 		return;
 
 	NSPoint mouseCurrentPos = [self convertPoint:[anEvent locationInWindow] fromView:nil];
@@ -3685,7 +3690,7 @@ static scope::context_t add_modifiers_to_scope (scope::context_t scope, NSUInteg
 
 - (void)mouseUp:(NSEvent*)anEvent
 {
-	if(!layout || macroRecordingArray)
+	if([self.inputContext handleEvent:anEvent] || !layout || macroRecordingArray)
 		return;
 
 	AUTO_REFRESH;

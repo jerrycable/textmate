@@ -8,7 +8,6 @@
 #include <plist/uuid.h>
 
 static char const* const AppVersion = "2.10";
-static size_t const AppRevision     = APP_REVISION;
 
 static char const* socket_path ()
 {
@@ -133,23 +132,24 @@ static void usage (FILE* io)
 	std::string pad(8 - std::min(strlen(getprogname()), size_t(8)), ' ');
 
 	fprintf(io,
-		"%1$s %2$s (" COMPILE_DATE " revision %3$zu)\n"
+		"%1$s %2$s (" COMPILE_DATE ")\n"
 		"Usage: %1$s [-wl<selection>t<filetype>m<name>rehv] [-u<identifier> | file ...]\n"
-		"       %1$s [-c<mark>] -s<mark> -l<line> [-u<identifier> | file ...]\n"
+		"       %1$s [-c<mark>] -s<mark>:<value> -l<line> [-u<identifier> | file ...]\n"
 		"       %1$s -c<mark> [-l<line>] [-u<identifier> | file ...]\n"
 		"\n"
 		"Options:\n"
-		" -w, --[no-]wait         Wait for file to be closed by TextMate.\n"
-		" -l, --line <selection>  Setup <selection> after loading file.\n"
-		" -t, --type <filetype>   Treat file as having <filetype>.\n"
-		" -m, --name <name>       The display name shown in TextMate.\n"
-		" -r, --[no-]recent       Add file to Open Recent menu.\n"
-		" -u, --uuid <identifier> Reference already open document with <identifier>.\n"
-		" -e, --[no-]escapes      Set this to preserve ANSI escapes from stdin.\n"
-		" -s, --set-mark <mark>   Set a mark (requires --line).\n"
-		" -c, --clear-mark <mark> Clear a mark (will clear all marks without --line).\n"
-		" -h, --help              Show this information.\n"
-		" -v, --version           Print version information.\n"
+		" -w, --[no-]wait               Wait for file to be closed by TextMate.\n"
+		" -l, --line <selection>        Setup <selection> after loading file.\n"
+		" -t, --type <filetype>         Treat file as having <filetype>.\n"
+		" -m, --name <name>             The display name shown in TextMate.\n"
+		" -r, --[no-]recent             Add file to Open Recent menu.\n"
+		" -u, --uuid <identifier>       Reference already open document with\n"
+		"                               <identifier>.\n"
+		" -e, --[no-]escapes            Set this to preserve ANSI escapes from stdin.\n"
+		" -s, --set-mark <mark>:<value> Set a mark containing <value> (requires --line).\n"
+		" -c, --clear-mark <mark>       Clear a mark (clears all marks without --line).\n"
+		" -h, --help                    Show this information.\n"
+		" -v, --version                 Print version information.\n"
 		"\n"
 		"Files opened via %1$s are added to the recent menu unless\n"
 		"the file starts with a period, --wait or --no-recent is\n"
@@ -159,8 +159,8 @@ static void usage (FILE* io)
 		"has a \"_wait\" suffix (e.g. via a symbolic link) or when used as a\n"
 		"filter like in this examples:\n"
 		"\n"
-		"    ls *.tex|%1$s|sh%4$s-w implied\n"
-		"    %1$s -|cat -n   %4$s-w implied (read from stdin)\n"
+		"    ls *.tex|%1$s|sh%3$s-w implied\n"
+		"    %1$s -|cat -n   %3$s-w implied (read from stdin)\n"
 		"\n"
 		"The -l/--line option requires a selection in the following format:\n"
 		"\n"
@@ -172,13 +172,13 @@ static void usage (FILE* io)
 		"    line         = [1-9][0-9]*\n"
 		"    column       = [1-9][0-9]*\n"
 		"    offset       = [1-9][0-9]*\n"
-		"\n", getprogname(), AppVersion, AppRevision, pad.c_str()
+		"\n", getprogname(), AppVersion, pad.c_str()
 	);
 }
 
 static void version ()
 {
-	fprintf(stdout, "%1$s %2$s (" COMPILE_DATE " revision %3$zu)\n", getprogname(), AppVersion, AppRevision);
+	fprintf(stdout, "%1$s %2$s (" COMPILE_DATE ")\n", getprogname(), AppVersion);
 }
 
 static void append (std::string const& str, std::vector<std::string>& v)
@@ -322,7 +322,7 @@ int main (int argc, char const* argv[])
 			switch(ch)
 			{
 				case 'a': shouldWait = boolean::kDisable;  break;
-				case 'c': append(optarg, clearMarks);      break;
+				case 'c': clearMarks.push_back(optarg);    break;
 				case 'd': changeDir = boolean::kEnable;    break;
 				case 'e': keepEscapes = boolean::kEnable;  break;
 				case 'E': keepEscapes = boolean::kDisable; break;
@@ -332,7 +332,7 @@ int main (int argc, char const* argv[])
 				case 'p': append(optarg, projects); break;
 				case 'r': addToRecent = boolean::kEnable;  break;
 				case 'R': addToRecent = boolean::kDisable; break;
-				case 's': append(optarg, setMarks); break;
+				case 's': setMarks.push_back(optarg); break;
 				case 't': append(optarg, types);    break;
 				case 'u': uuid = optarg;            break;
 				case 'v': version();                return EX_OK;

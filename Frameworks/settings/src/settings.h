@@ -36,11 +36,17 @@ struct PUBLIC settings_t
 	static std::string raw_get (std::string const& key, std::string const& section = "");
 
 	static void set (std::string const& key, std::string const& value, std::string const& fileType = "", std::string const& path = NULL_STR);
-	static void set (std::string const& key, double decimal,  std::string const& fileType = "", std::string const& path = NULL_STR) { settings_t::set(key, std::to_string(decimal),              fileType, path); }
 	static void set (std::string const& key, size_t number,   std::string const& fileType = "", std::string const& path = NULL_STR) { settings_t::set(key, std::to_string(number),               fileType, path); }
 	static void set (std::string const& key, int32_t number,  std::string const& fileType = "", std::string const& path = NULL_STR) { settings_t::set(key, std::to_string(number),               fileType, path); }
 	static void set (std::string const& key, bool flag,       std::string const& fileType = "", std::string const& path = NULL_STR) { settings_t::set(key, std::string(flag ? "true" : "false"), fileType, path); }
 	static void set (std::string const& key, char const* str, std::string const& fileType = "", std::string const& path = NULL_STR) { settings_t::set(key, std::string(str),                     fileType, path); }
+
+	static void set (std::string const& key, double decimal,  std::string const& fileType = "", std::string const& path = NULL_STR)
+	{
+		if(decimal == roundl(decimal))
+				settings_t::set(key, (int32_t)roundl(decimal), fileType, path);
+		else	settings_t::set(key, std::to_string(decimal), fileType, path);
+	}
 
 	static void set_default_settings_path (std::string const& path);
 	static void set_global_settings_path (std::string const& path);
@@ -66,10 +72,12 @@ PUBLIC std::map<std::string, std::string> variables_for_path (std::map<std::stri
 
 struct setting_info_t
 {
-	setting_info_t (std::string const& variable, std::string const& path, std::string const& section) : variable(variable), path(path), section(section) { }
+	setting_info_t (std::string const& variable, std::string const& value, std::string const& path, size_t lineNumber, std::string const& section) : variable(variable), value(value), path(path), line_number(lineNumber), section(section) { }
 
 	std::string variable;
+	std::string value;
 	std::string path;
+	size_t line_number;
 	std::string section;
 };
 

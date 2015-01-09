@@ -12,7 +12,6 @@
 #import <OakAppKit/OakPasteboard.h>
 #import <OakAppKit/OakSavePanel.h>
 #import <OakAppKit/OakTabBarView.h>
-#import <OakFoundation/NSArray Additions.h>
 #import <OakFoundation/NSString Additions.h>
 #import <Preferences/Keys.h>
 #import <OakTextView/OakDocumentView.h>
@@ -298,8 +297,8 @@ namespace
 		[self.window setAutorecalculatesContentBorderThickness:NO forEdge:NSMaxYEdge];
 		[self.window setAutorecalculatesContentBorderThickness:NO forEdge:NSMinYEdge];
 
-		[self.layoutView setTranslatesAutoresizingMaskIntoConstraints:NO];
-		[self.window.contentView addSubview:self.layoutView];
+		OakAddAutoLayoutViewsToSuperview(@[ self.layoutView ], self.window.contentView);
+
 		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[view]|" options:0 metrics:nil views:@{ @"view" : self.layoutView }]];
 		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[view]|" options:0 metrics:nil views:@{ @"view" : self.layoutView }]];
 
@@ -317,9 +316,14 @@ namespace
 {
 	[[NSNotificationCenter defaultCenter] removeObserver:self];
 
+	self.window.delegate        = nil;
 	self.tabBarView.dataSource  = nil;
 	self.tabBarView.delegate    = nil;
 	self.textView.delegate      = nil;
+
+	// When option-clicking to close all windows then
+	// messages are sent to our window after windowWillClose:
+	__autoreleasing __attribute__ ((unused)) NSWindow* delayRelease = self.window;
 }
 
 // ======================================
@@ -337,9 +341,7 @@ namespace
 - (NSRect)cascadedWindowFrame
 {
 	NSRect r = [self windowFrame];
-	r.origin = [self.window cascadeTopLeftFromPoint:NSMakePoint(NSMinX(r), NSMaxY(r))];
-	r.origin.y -= r.size.height;
-	return r;
+	return { { NSMinX(r) + 21, NSMinY(r) - 23 }, r.size };
 }
 
 - (NSRect)frameRectForNewWindow
@@ -395,7 +397,6 @@ namespace
 
 	self.documents          = std::vector<document::document_ptr>();
 	self.selectedDocument   = document::document_ptr();
-	self.window.delegate    = nil;
 	self.fileBrowserVisible = NO; // Make window frame small as we no longer respond to savableWindowFrame
 	self.identifier         = nil; // This removes us from AllControllers and causes a release
 }
@@ -935,7 +936,7 @@ namespace
 
 - (BOOL)disableTabReordering
 {
-	return [[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsDisableTabReorderingKey];;
+	return [[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsDisableTabReorderingKey];
 }
 
 - (void)openItems:(NSArray*)items closingOtherTabs:(BOOL)closeOtherTabsFlag
@@ -943,9 +944,9 @@ namespace
 	std::vector<document::document_ptr> documents;
 	for(id item in items)
 	{
-		std::string const path  = to_s((NSString*)[item objectForKey:@"path"]);
-		std::string const uuid  = to_s((NSString*)[item objectForKey:@"identifier"]);
-		std::string const range = to_s((NSString*)[item objectForKey:@"selectionString"]);
+		std::string const path  = to_s([item objectForKey:@"path"]);
+		std::string const uuid  = to_s([item objectForKey:@"identifier"]);
+		std::string const range = to_s([item objectForKey:@"selectionString"]);
 
 		document::document_ptr doc;
 		if(path == NULL_STR && oak::uuid_t::is_valid(uuid))
@@ -1000,7 +1001,7 @@ namespace
 		}
 		[self closeTabsAtIndexes:indexSet askToSaveChanges:YES createDocumentIfEmpty:NO];
 	}
-	else
+	else if(![[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsDisableTabAutoCloseKey])
 	{
 		NSInteger excessTabs = _documents.size() - std::max<NSUInteger>(self.tabBarView.countOfVisibleTabs, 8);
 		if(self.tabBarView && excessTabs > 0)
@@ -1177,7 +1178,7 @@ namespace
 	NSMutableArray* windows = [NSMutableArray array];
 
 	HTMLOutputWindowController* candidate = self.htmlOutputWindowController;
-	if(candidate && candidate.commandRunner->uuid() == anUUID && !candidate.needsNewWebView)
+	if(candidate && candidate.commandRunner->uuid() == anUUID && !candidate.needsNewWebView && candidate.window.isVisible)
 		[windows addObject:candidate];
 
 	for(NSWindow* window in [NSApp orderedWindows])
@@ -1771,7 +1772,7 @@ namespace
 - (BOOL)performTabDropFromTabBar:(OakTabBarView*)aTabBar atIndex:(NSUInteger)droppedIndex fromPasteboard:(NSPasteboard*)aPasteboard operation:(NSDragOperation)operation
 {
 	NSDictionary* plist = [aPasteboard propertyListForType:OakDocumentPboardType];
-	document::document_ptr srcDocument = document::find(to_s((NSString*)plist[@"document"]));
+	document::document_ptr srcDocument = document::find(to_s(plist[@"document"]));
 	if(!srcDocument)
 		return NO;
 
@@ -1787,7 +1788,7 @@ namespace
 			self.selectedTabIndex = iter - newDocuments.begin();
 	}
 
-	oak::uuid_t srcProjectId = to_s((NSString*)plist[@"collection"]);
+	oak::uuid_t srcProjectId = to_s(plist[@"collection"]);
 	if(operation == NSDragOperationMove && srcProjectId != to_s(self.identifier))
 	{
 		for(DocumentController* delegate in SortedControllers())
@@ -2057,7 +2058,7 @@ namespace
 	{
 		[aWindow layoutIfNeeded];
 		NSRect frame  = [aWindow frame];
-		NSRect parent = [_window convertRectToScreen:[_textView convertRect:[_textView visibleRect] toView:nil]];
+		NSRect parent = [self.window convertRectToScreen:[_textView convertRect:[_textView visibleRect] toView:nil]];
 
 		frame.origin.x = NSMinX(parent) + round((NSWidth(parent)  - NSWidth(frame))  * 1 / 4);
 		frame.origin.y = NSMinY(parent) + round((NSHeight(parent) - NSHeight(frame)) * 3 / 4);
@@ -2600,8 +2601,16 @@ static NSUInteger DisableSessionSavingCount = 0;
 	if(DisableSessionSavingCount)
 		return NO;
 
+	NSArray* controllers = SortedControllers();
+	if(controllers.count == 1)
+	{
+		DocumentController* controller = controllers.firstObject;
+		if(!controller.projectPath && !controller.fileBrowserVisible && controller.documents.size() == 1 && is_disposable(controller.selectedDocument))
+			controllers = nil;
+	}
+
 	NSMutableArray* projects = [NSMutableArray array];
-	for(DocumentController* controller in [SortedControllers() reverseObjectEnumerator])
+	for(DocumentController* controller in [controllers reverseObjectEnumerator])
 		[projects addObject:[controller sessionInfoIncludingUntitledDocuments:includeUntitled]];
 
 	NSDictionary* session = @{ @"projects" : projects };
@@ -2618,13 +2627,25 @@ static NSUInteger DisableSessionSavingCount = 0;
 	if(self.fileBrowser)
 		res = [self.fileBrowser variables];
 
-	auto const& vars = _documentSCMVariables.empty() ? _projectSCMVariables : _documentSCMVariables;
-	auto scmName = vars.find("TM_SCM_NAME");
-	auto scmBranch = vars.find("TM_SCM_BRANCH");
-	if(scmName != vars.end())
-		res["TM_SCM_NAME"] = scmName->second;
-	if(scmBranch != vars.end())
-		res["TM_SCM_BRANCH"] = scmBranch->second;
+	auto const& scmVars = _documentSCMVariables.empty() ? _projectSCMVariables : _documentSCMVariables;
+
+	if(!scmVars.empty())
+	{
+		auto scmName = scmVars.find("TM_SCM_NAME");
+		if(scmName != scmVars.end())
+			res["TM_SCM_NAME"] = scmName->second;
+	}
+	else
+	{
+		for(auto attr : _externalScopeAttributes)
+		{
+			if(regexp::match_t const& m = regexp::search("^attr.scm.(?'TM_SCM_NAME'\\w+)$", attr))
+			{
+				res.insert(m.captures().begin(), m.captures().end());
+				break;
+			}
+		}
+	}
 
 	if(NSString* projectDir = self.projectPath)
 	{
@@ -2665,7 +2686,7 @@ static NSUInteger DisableSessionSavingCount = 0;
 			{
 				__weak __block id observerId = [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidUnhideNotification object:NSApp queue:nil usingBlock:^(NSNotification*){
 					[aController showWindow:nil];
-					SetFrontProcessWithOptions(&(ProcessSerialNumber){ 0, kCurrentProcess }, kSetFrontProcessFrontWindowOnly);
+					[NSApp activateIgnoringOtherApps:YES];
 					[[NSNotificationCenter defaultCenter] removeObserver:observerId];
 				}];
 				[NSApp unhideWithoutActivation];
@@ -2673,7 +2694,7 @@ static NSUInteger DisableSessionSavingCount = 0;
 			else
 			{
 				[aController showWindow:nil];
-				SetFrontProcessWithOptions(&(ProcessSerialNumber){ 0, kCurrentProcess }, kSetFrontProcessFrontWindowOnly);
+				[NSApp activateIgnoringOtherApps:YES];
 			}
 		}
 

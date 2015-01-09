@@ -2,7 +2,6 @@
 #import "add_to_buffer.h"
 #import <OakFoundation/NSString Additions.h>
 #import <oak/debug.h>
-#import <OakFoundation/NSArray Additions.h>
 #import <document/collection.h>
 #import <text/utf8.h>
 #import <ns/ns.h>
@@ -100,7 +99,7 @@ OAK_DEBUG_VAR(HTMLOutput_JSBridge);
 	if([options isKindOfClass:[NSNumber class]])
 		range = text::pos_t([options intValue]-1, 0);
 	else if([options isKindOfClass:[NSString class]])
-		range = to_s((NSString*)options);
+		range = to_s(options);
 	document::show(document::create(to_s(path)), document::kCollectionAny, range);
 }
 

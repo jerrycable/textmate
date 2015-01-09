@@ -3,6 +3,18 @@
 #import <OakAppKit/OakAppKit.h>
 #import <OakAppKit/OakUIConstructionFunctions.h>
 
+static FFResultNode* NextNode (FFResultNode* node)
+{
+	NSUInteger index = [node.parent.children indexOfObject:node] + 1;
+	return index < node.parent.children.count ? node.parent.children[index] : nil;
+}
+
+static FFResultNode* PreviousNode (FFResultNode* node)
+{
+	NSUInteger index = [node.parent.children indexOfObject:node];
+	return index > 0 ? node.parent.children[index - 1] : nil;
+}
+
 // =================================
 // = OakSearchResultsMatchCellView =
 // =================================
@@ -19,7 +31,7 @@
 {
 	if((self = [super initWithFrame:aFrame]))
 	{
-		NSTextField* textField = OakCreateLabel(@"");
+		NSTextField* textField = OakCreateLabel();
 		[textField setAutoresizingMask:NSViewWidthSizable|NSViewHeightSizable];
 		[self addSubview:textField];
 		[textField bind:NSValueBinding toObject:self withKeyPath:@"excerptString" options:nil];
@@ -60,8 +72,7 @@
 	if((self = [super init]))
 	{
 		NSImageView* imageView = [NSImageView new];
-		NSTextField* textField = OakCreateLabel();
-		textField.font = [NSFont controlContentFontOfSize:0];
+		NSTextField* textField = OakCreateLabel(@"", [NSFont controlContentFontOfSize:0]);
 
 		NSButton* countOfLeafs = [NSButton new];
 		[[countOfLeafs cell] setHighlightsBy:NSNoCellMask];
@@ -77,11 +88,7 @@
 		remove.image      = [NSImage imageNamed:NSImageNameRemoveTemplate];
 
 		NSDictionary* views = @{ @"icon" : imageView, @"text" : textField, @"count" : countOfLeafs, @"remove" : remove };
-		for(NSView* child in [views allValues])
-		{
-			[child setTranslatesAutoresizingMaskIntoConstraints:NO];
-			[self addSubview:child];
-		}
+		OakAddAutoLayoutViewsToSuperview([views allValues], self);
 
 		[textField setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
 		[countOfLeafs setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
@@ -235,11 +242,7 @@
 		};
 
 		NSView* containerView = [[NSView alloc] initWithFrame:NSZeroRect];
-		for(NSView* view in [views allValues])
-		{
-			[view setTranslatesAutoresizingMaskIntoConstraints:NO];
-			[containerView addSubview:view];
-		}
+		OakAddAutoLayoutViewsToSuperview([views allValues], containerView);
 
 		[containerView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[topDivider][scrollView][bottomDivider]|" options:NSLayoutFormatAlignAllLeading|NSLayoutFormatAlignAllTrailing metrics:nil views:views]];
 		[containerView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[scrollView]|" options:0 metrics:nil views:views]];
@@ -349,7 +352,7 @@
 	NSInteger row = [_outlineView selectedRow];
 	FFResultNode* item = row == -1 ? nil : [_outlineView itemAtRow:row];
 
-	item = item ? (item.next ?: item.parent.next.firstResultNode) : _results.firstResultNode.firstResultNode;
+	item = item ? (NextNode(item) ?: NextNode(item.parent).firstResultNode) : _results.firstResultNode.firstResultNode;
 	if(!item && wrapAround)
 		item = _results.firstResultNode.firstResultNode;
 
@@ -361,7 +364,7 @@
 	NSInteger row = [_outlineView selectedRow];
 	FFResultNode* item = row == -1 ? nil : [_outlineView itemAtRow:row];
 
-	item = item ? (item.previous ?: item.parent.previous.lastResultNode) : _results.lastResultNode.lastResultNode;
+	item = item ? (PreviousNode(item) ?: PreviousNode(item.parent).lastResultNode) : _results.lastResultNode.lastResultNode;
 	if(!item && wrapAround)
 		item = _results.lastResultNode.lastResultNode;
 
@@ -379,14 +382,14 @@
 {
 	NSInteger row = [_outlineView selectedRow];
 	FFResultNode* item = row == -1 ? nil : [_outlineView itemAtRow:row];
-	[self showResultNode:item.parent.next.firstResultNode ?: _results.firstResultNode.firstResultNode];
+	[self showResultNode:NextNode(item.parent).firstResultNode ?: _results.firstResultNode.firstResultNode];
 }
 
 - (IBAction)selectPreviousDocument:(id)sender
 {
 	NSInteger row = [_outlineView selectedRow];
 	FFResultNode* item = row == -1 ? nil : [_outlineView itemAtRow:row];
-	[self showResultNode:item.parent.previous.firstResultNode ?: _results.lastResultNode.firstResultNode];
+	[self showResultNode:PreviousNode(item.parent).firstResultNode ?: _results.lastResultNode.firstResultNode];
 }
 
 // ==================

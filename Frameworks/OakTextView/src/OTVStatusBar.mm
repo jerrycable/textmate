@@ -90,8 +90,7 @@ static NSMenuItem* OakCreateIndentMenuItem (NSString* title, SEL action, id targ
 		[[self.bundleItemsPopUp cell] setMenuItem:item];
 
 		NSView* wrappedBundleItemsPopUpButton = [NSView new];
-		[wrappedBundleItemsPopUpButton addSubview:self.bundleItemsPopUp];
-		[self.bundleItemsPopUp setTranslatesAutoresizingMaskIntoConstraints:NO];
+		OakAddAutoLayoutViewsToSuperview(@[ self.bundleItemsPopUp ], wrappedBundleItemsPopUpButton);
 		[wrappedBundleItemsPopUpButton addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[popup]|" options:0 metrics:nil views:@{ @"popup" : self.bundleItemsPopUp }]];
 		[wrappedBundleItemsPopUpButton addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[popup]|" options:0 metrics:nil views:@{ @"popup" : self.bundleItemsPopUp }]];
 
@@ -110,11 +109,7 @@ static NSMenuItem* OakCreateIndentMenuItem (NSString* title, SEL action, id targ
 			@"recording"    : self.macroRecordingButton,
 		};
 
-		for(NSView* view in [views allValues])
-		{
-			[view setTranslatesAutoresizingMaskIntoConstraints:NO];
-			[self addSubview:view];
-		}
+		OakAddAutoLayoutViewsToSuperview([views allValues], self);
 
 		[self.selectionField setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
 		[self.selectionField setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow+2 forOrientation:NSLayoutConstraintOrientationHorizontal];
@@ -124,8 +119,6 @@ static NSMenuItem* OakCreateIndentMenuItem (NSString* title, SEL action, id targ
 
 		[self.symbolPopUp setContentHuggingPriority:NSLayoutPriorityDefaultLow-1 forOrientation:NSLayoutConstraintOrientationHorizontal];
 		[self.symbolPopUp setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow-1 forOrientation:NSLayoutConstraintOrientationHorizontal];
-
-		[self setTranslatesAutoresizingMaskIntoConstraints:NO];
 
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-10-[line]-[selection(>=50,<=225)]-8-[dividerOne]-(-2)-[grammar(>=125@400,>=50,<=225)]-5-[dividerTwo]-(-2)-[tabSize(<=102)]-4-[dividerThree]-5-[items(==30)]-4-[dividerFour]-(-2)-[symbol(>=125@450,>=50)]-5-[dividerFive]-6-[recording]-7-|" options:0 metrics:nil views:views]];
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[dividerOne(==dividerTwo,==dividerThree,==dividerFour,==dividerFive)]|" options:0 metrics:nil views:views]];

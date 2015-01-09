@@ -5,7 +5,6 @@
 #import "FFDocumentSearch.h"
 #import "Strings.h"
 #import <OakFoundation/OakFindProtocol.h>
-#import <OakFoundation/NSArray Additions.h>
 #import <OakFoundation/NSString Additions.h>
 #import <OakAppKit/NSAlert Additions.h>
 #import <OakAppKit/OakAppKit.h>
@@ -375,7 +374,7 @@ NSString* const FFFindWasTriggeredByEnter = @"FFFindWasTriggeredByEnter";
 		[self unbind:@"countOfExcludedMatches"];
 	}
 
-	_windowController.resultsViewController.results = _results = [FFResultNode new];;
+	_windowController.resultsViewController.results = _results = [FFResultNode new];
 	[self bind:@"countOfMatches" toObject:_results withKeyPath:@"countOfLeafs" options:nil];
 	[self bind:@"countOfExcludedMatches" toObject:_results withKeyPath:@"countOfExcluded" options:nil];
 }

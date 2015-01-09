@@ -10,7 +10,6 @@
 #import <bundles/bundles.h>
 #import <OakFilterList/SymbolChooser.h>
 #import <OakFoundation/NSString Additions.h>
-#import <OakFoundation/NSArray Additions.h>
 #import <OakAppKit/OakAppKit.h>
 #import <OakAppKit/NSColor Additions.h>
 #import <OakAppKit/NSImage Additions.h>
@@ -115,35 +114,28 @@ private:
 		textScrollView.autohidesScrollers    = YES;
 		textScrollView.borderType            = NSNoBorder;
 		textScrollView.documentView          = textView;
-		[self addSubview:textScrollView];
 
 		gutterView = [[GutterView alloc] initWithFrame:NSZeroRect];
 		gutterView.partnerView = textView;
 		gutterView.delegate    = self;
 		[gutterView insertColumnWithIdentifier:kBookmarksColumnIdentifier atPosition:0 dataSource:self delegate:self];
 		[gutterView insertColumnWithIdentifier:kFoldingsColumnIdentifier atPosition:2 dataSource:self delegate:self];
+		if([[NSUserDefaults standardUserDefaults] boolForKey:@"DocumentView Disable Line Numbers"])
+			[gutterView setVisibility:NO forColumnWithIdentifier:GVLineNumbersColumnIdentifier];
+		[gutterView setTranslatesAutoresizingMaskIntoConstraints:NO];
 
 		gutterScrollView = [[OakDisableAccessibilityScrollView alloc] initWithFrame:NSZeroRect];
 		gutterScrollView.borderType   = NSNoBorder;
 		gutterScrollView.documentView = gutterView;
-		[self addSubview:gutterScrollView];
-
-		if([[NSUserDefaults standardUserDefaults] boolForKey:@"DocumentView Disable Line Numbers"])
-			[gutterView setVisibility:NO forColumnWithIdentifier:GVLineNumbersColumnIdentifier];
 
 		gutterDividerView = OakCreateVerticalLine(nil);
-		[self addSubview:gutterDividerView];
-
 		statusDividerView = OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.500 alpha:1], [NSColor colorWithCalibratedWhite:0.750 alpha:1]);
-		[self addSubview:statusDividerView];
 
 		statusBar = [[OTVStatusBar alloc] initWithFrame:NSZeroRect];
 		statusBar.delegate = self;
 		statusBar.target = self;
-		[self addSubview:statusBar];
 
-		for(NSView* view in @[ gutterScrollView, gutterView, gutterDividerView, textScrollView, statusDividerView, statusBar ])
-			[view setTranslatesAutoresizingMaskIntoConstraints:NO];
+		OakAddAutoLayoutViewsToSuperview(@[ gutterScrollView, gutterDividerView, textScrollView, statusDividerView, statusBar ], self);
 
 		document::document_ptr doc = document::from_content("", "text.plain"); // file type is only to avoid potential “no grammar” warnings in console
 		doc->set_custom_name("null document"); // without a name it grabs an ‘untitled’ token
@@ -211,12 +203,12 @@ private:
 	else
 	{
 		statusDividerView = OakCreateHorizontalLine([NSColor colorWithCalibratedWhite:0.500 alpha:1], [NSColor colorWithCalibratedWhite:0.750 alpha:1]);
-		[self addSubview:statusDividerView];
 
 		statusBar = [[OTVStatusBar alloc] initWithFrame:NSZeroRect];
 		statusBar.delegate = self;
 		statusBar.target = self;
-		[self addSubview:statusBar];
+
+		OakAddAutoLayoutViewsToSuperview(@[ statusDividerView, statusBar ], self);
 	}
 	[self setNeedsUpdateConstraints:YES];
 }
@@ -459,7 +451,7 @@ private:
 	}
 	else if([aMenuItem action] == @selector(toggleCurrentBookmark:))
 	{
-		text::selection_t sel([textView.selectionString UTF8String]);
+		text::selection_t sel(to_s(textView.selectionString));
 		size_t lineNumber = sel.last().max().line;
 
 		ng::buffer_t const& buf = document->buffer();
@@ -474,14 +466,12 @@ private:
 
 - (void)addAuxiliaryView:(NSView*)aView atEdge:(NSRectEdge)anEdge
 {
-	[aView setTranslatesAutoresizingMaskIntoConstraints:NO];
-
 	topAuxiliaryViews    = topAuxiliaryViews    ?: [NSMutableArray new];
 	bottomAuxiliaryViews = bottomAuxiliaryViews ?: [NSMutableArray new];
 	if(anEdge == NSMinYEdge)
 			[bottomAuxiliaryViews addObject:aView];
 	else	[topAuxiliaryViews addObject:aView];
-	[self addSubview:aView];
+	OakAddAutoLayoutViewsToSuperview(@[ aView ], self);
 	[self setNeedsUpdateConstraints:YES];
 }
 
@@ -573,7 +563,7 @@ private:
 
 - (void)takeGrammarUUIDFrom:(id)sender
 {
-	if(bundles::item_ptr item = bundles::lookup(to_s((NSString*)[sender representedObject])))
+	if(bundles::item_ptr item = bundles::lookup(to_s([sender representedObject])))
 		[textView performBundleItem:item];
 }
 
@@ -588,7 +578,7 @@ private:
 	[symbolMenu removeAllItems];
 
 	ng::buffer_t const& buf = document->buffer();
-	text::selection_t sel([textView.selectionString UTF8String]);
+	text::selection_t sel(to_s(textView.selectionString));
 	size_t i = buf.convert(sel.last().max());
 
 	NSInteger index = 0;
@@ -814,19 +804,25 @@ private:
 		}
 		else
 		{
-			NSViewController* viewController = [NSViewController new];
-			NSTextField* textField = OakCreateLabel([NSString stringWithCxxString:text::join(info, "\n")]);;
-			textField.alignment = NSLeftTextAlignment;
-			[textField sizeToFit];
-			viewController.view = textField;
+			NSView* popoverContainerView = [[NSView alloc] initWithFrame:NSZeroRect];
 
-			NSPopover* popver = [NSPopover new];
-			popver.behavior = NSPopoverBehaviorTransient;
-			popver.contentViewController = viewController;
+			NSTextField* textField = OakCreateLabel([NSString stringWithCxxString:text::join(info, "\n")]);
+			OakAddAutoLayoutViewsToSuperview(@[ textField ], popoverContainerView);
+
+			NSDictionary* views = NSDictionaryOfVariableBindings(textField);
+			[popoverContainerView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-(5)-[textField]-(5)-|" options:0 metrics:0 views:views]];
+			[popoverContainerView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|-(10)-[textField]-(10)-|" options:0 metrics:0 views:views]];
+
+			NSViewController* viewController = [NSViewController new];
+			viewController.view = popoverContainerView;
+
+			NSPopover* popover = [NSPopover new];
+			popover.behavior = NSPopoverBehaviorTransient;
+			popover.contentViewController = viewController;
 
 			GVLineRecord record = [self lineFragmentForLine:lineNumber column:0];
 			NSRect rect = NSMakeRect(0, record.firstY, [self widthForColumnWithIdentifier:columnIdentifier], record.lastY - record.firstY);
-			[popver showRelativeToRect:rect ofView:gutterView preferredEdge:NSMaxXEdge];
+			[popover showRelativeToRect:rect ofView:gutterView preferredEdge:NSMaxXEdge];
 		}
 	}
 	else if([columnIdentifier isEqualToString:kFoldingsColumnIdentifier])
@@ -844,7 +840,7 @@ private:
 {
 	ng::buffer_t& buf = document->buffer();
 
-	text::selection_t sel([textView.selectionString UTF8String]);
+	text::selection_t sel(to_s(textView.selectionString));
 	size_t lineNumber = sel.last().max().line;
 
 	std::vector<size_t> toRemove;
@@ -865,7 +861,7 @@ private:
 
 - (IBAction)goToNextBookmark:(id)sender
 {
-	text::selection_t sel([textView.selectionString UTF8String]);
+	text::selection_t sel(to_s(textView.selectionString));
 
 	ng::buffer_t const& buf = document->buffer();
 	std::pair<size_t, std::string> const& pair = buf.next_mark(buf.convert(sel.last().max()), document::kBookmarkIdentifier);
@@ -875,7 +871,7 @@ private:
 
 - (IBAction)goToPreviousBookmark:(id)sender
 {
-	text::selection_t sel([textView.selectionString UTF8String]);
+	text::selection_t sel(to_s(textView.selectionString));
 
 	ng::buffer_t const& buf = document->buffer();
 	std::pair<size_t, std::string> const& pair = buf.prev_mark(buf.convert(sel.last().max()), document::kBookmarkIdentifier);
@@ -943,13 +939,13 @@ private:
 
 	std::shared_ptr<ng::layout_t> layout;
 	std::vector<CGRect> pageRects;
+
+	BOOL _needsLayout;
 }
 @property (nonatomic) CGFloat pageWidth;
 @property (nonatomic) CGFloat pageHeight;
 @property (nonatomic) CGFloat fontScale;
 @property (nonatomic) NSString* themeUUID;
-
-@property (nonatomic) BOOL needsLayout;
 @end
 
 @implementation OakPrintDocumentView
@@ -989,7 +985,7 @@ private:
 	self.fontScale  = [[[info dictionary] objectForKey:NSPrintScalingFactor] floatValue];
 	self.themeUUID  = [[info dictionary] objectForKey:@"OakPrintThemeUUID"];
 
-	[self layoutIfNeeded];
+	[self updateLayout];
 	[self setFrame:NSMakeRect(0, 0, self.pageWidth, layout->height())];
 
 	range->location = 1;
@@ -1011,9 +1007,9 @@ private:
 		layout->draw((CGContextRef)[[NSGraphicsContext currentContext] graphicsPort], aRect, [self isFlipped], /* selection: */ ng::ranges_t(), /* highlight: */ ng::ranges_t(), /* draw background: */ false);
 }
 
-- (void)layoutIfNeeded
+- (void)updateLayout
 {
-	if(!self.needsLayout)
+	if(!_needsLayout)
 		return;
 
 	pageRects.clear();
@@ -1040,7 +1036,7 @@ private:
 		pageRect.size.height = self.pageHeight;
 	}
 
-	self.needsLayout = NO;
+	_needsLayout = NO;
 }
 
 - (void)setPageWidth:(CGFloat)newPageWidth    { if(_pageWidth  != newPageWidth)  { _needsLayout = YES; _pageWidth  = newPageWidth;  } }
@@ -1065,7 +1061,6 @@ private:
 	if((self = [super init]))
 	{
 		NSView* contentView = [[NSView alloc] initWithFrame:NSZeroRect];
-		[contentView setTranslatesAutoresizingMaskIntoConstraints:NO];
 
 		NSTextField* themesLabel = OakCreateLabel(@"Theme:");
 		NSPopUpButton* themes    = OakCreatePopUpButton();
@@ -1096,11 +1091,7 @@ private:
 			@"printHeaders" : printHeaders
 		};
 
-		for(NSView* view in [views allValues])
-		{
-			[view setTranslatesAutoresizingMaskIntoConstraints:NO];
-			[contentView addSubview:view];
-		}
+		OakAddAutoLayoutViewsToSuperview([views allValues], contentView);
 
 		NSMutableArray* constraints = [NSMutableArray array];
 		CONSTRAINT(@"H:|-[themesLabel]-[themes]-|",  NSLayoutFormatAlignAllBaseline);
@@ -1108,6 +1099,7 @@ private:
 		CONSTRAINT(@"V:|-[themes]-[printHeaders]-|", NSLayoutFormatAlignAllLeft);
 		[contentView addConstraints:constraints];
 
+		contentView.frame = (NSRect){ NSZeroPoint, [contentView fittingSize] };
 		self.view = contentView;
 	}
 	return self;

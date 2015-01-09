@@ -1,6 +1,7 @@
 #import "SymbolChooser.h"
 #import <OakAppKit/OakUIConstructionFunctions.h>
 #import <OakFoundation/NSString Additions.h>
+#import <OakFoundation/OakFoundation.h>
 #import <text/ranker.h>
 #import <ns/ns.h>
 
@@ -22,7 +23,7 @@ static SymbolChooserItem* CreateItem (document::document_ptr const& document, te
 	res.path            = [NSString stringWithCxxString:document->path()];
 	res.identifier      = [NSString stringWithCxxString:document->identifier()];
 	res.selectionString = [NSString stringWithCxxString:pos];
-	res.name            = CreateAttributedStringWithMarkedUpRanges(candidate, ranges);
+	res.name            = CreateAttributedStringWithMarkedUpRanges(candidate, ranges, NSLineBreakByTruncatingTail);
 	res.infoString      = [NSString stringWithCxxString:document->display_name() + ":" + (std::string)pos];
 	return res;
 }
@@ -50,11 +51,7 @@ static SymbolChooserItem* CreateItem (document::document_ptr const& document, te
 		};
 
 		NSView* contentView = self.window.contentView;
-		for(NSView* view in [views allValues])
-		{
-			[view setTranslatesAutoresizingMaskIntoConstraints:NO];
-			[contentView addSubview:view];
-		}
+		OakAddAutoLayoutViewsToSuperview([views allValues], contentView);
 
 		[contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-(8)-[searchField(>=50)]-(8)-|"                      options:0 metrics:nil views:views]];
 		[contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[scrollView(==topDivider,==bottomDivider)]|"         options:0 metrics:nil views:views]];
@@ -130,8 +127,7 @@ static SymbolChooserItem* CreateItem (document::document_ptr const& document, te
 	NSMutableArray* res = [NSMutableArray array];
 	if(_document)
 	{
-		std::string filter = to_s(self.filterString);
-		if(filter == NULL_STR || filter == "")
+		if(OakIsEmptyString(self.filterString))
 		{
 			for(auto const& pair : _document->symbols())
 			{
@@ -141,6 +137,8 @@ static SymbolChooserItem* CreateItem (document::document_ptr const& document, te
 		}
 		else
 		{
+			std::string const filter = oak::normalize_filter(to_s(self.filterString));
+
 			std::string sectionName = NULL_STR;
 			std::multimap<double, SymbolChooserItem*> rankedItems;
 			for(auto const& pair : _document->symbols())

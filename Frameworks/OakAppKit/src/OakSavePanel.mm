@@ -1,8 +1,8 @@
 #import "OakSavePanel.h"
 #import "OakEncodingPopUpButton.h"
+#import "OakUIConstructionFunctions.h"
 #import "NSSavePanel Additions.h"
 #import <OakFoundation/OakStringListTransformer.h>
-#import <OakAppKit/OakUIConstructionFunctions.h>
 #import <settings/settings.h>
 #import <oak/oak.h>
 #import <ns/ns.h>
@@ -17,7 +17,7 @@
 @property (nonatomic) NSString* encoding;
 @property (nonatomic) BOOL useByteOrderMark;
 @property (nonatomic) BOOL canUseByteOrderMark;
-@property (nonatomic, weak) NSSavePanel* savePanel;
+@property (nonatomic) NSSavePanel* savePanel;
 @end
 
 @implementation OakEncodingSaveOptionsViewController
@@ -62,11 +62,7 @@
 	};
 
 	NSView* containerView = [[NSView alloc] initWithFrame:NSZeroRect];
-	for(NSView* view in [views allValues])
-	{
-		[view setTranslatesAutoresizingMaskIntoConstraints:NO];
-		[containerView addSubview:view];
-	}
+	OakAddAutoLayoutViewsToSuperview([views allValues], containerView);
 
 	[containerView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[encodingLabel]-[encodingPopUp]-[lineEndingsPopUp]-(>=0)-|" options:NSLayoutFormatAlignAllBaseline metrics:nil views:views]];
 	[containerView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[bomCheckBox]-(>=0)-|" options:NSLayoutFormatAlignAllBaseline metrics:nil views:views]];

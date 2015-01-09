@@ -3,16 +3,23 @@
 #import <OakAppKit/OakAppKit.h>
 #import <OakAppKit/OakFileIconImage.h>
 #import <OakAppKit/OakUIConstructionFunctions.h>
+#import <OakAppKit/OakRolloverButton.h>
 #import <OakAppKit/OakScopeBarView.h>
+#import <OakAppKit/NSImage Additions.h>
 #import <OakFoundation/NSString Additions.h>
+#import <OakFoundation/OakFoundation.h>
 #import <OakFileBrowser/OFBPathInfoCell.h>
 #import <ns/ns.h>
 #import <text/format.h>
 #import <text/parse.h>
+#import <text/ctype.h>
 #import <text/ranker.h>
-#import <regexp/regexp.h>
 #import <oak/algorithm.h>
 #import <oak/duration.h>
+
+@interface NSObject (FileBrowserDelegate)
+- (void)fileBrowser:(id)aFileBrowser closeURL:(NSURL*)anURL;
+@end
 
 static NSString* const kUserDefaultsFileChooserSourceIndexKey = @"fileChooserSourceIndex";
 
@@ -22,71 +29,17 @@ NSUInteger const kFileChooserUncommittedChangesSourceIndex = 2;
 
 namespace
 {
-	struct filter_string_t
-	{
-		std::string path      = NULL_STR;
-		std::string name      = NULL_STR;
-		std::string selection = NULL_STR;
-		std::string symbol    = NULL_STR;
-		std::string raw_path  = NULL_STR;
-
-		filter_string_t (std::string const& str)
-		{
-			if(str == NULL_STR || str.empty())
-				return;
-
-			if(str.find("*") != std::string::npos)
-			{
-				_is_glob = true;
-				_glob = path::glob_t(str, false, false);
-			}
-			else if(regexp::match_t const& m = regexp::search("(?x)  \\A  (?: (?:/(?=.*/))? (.*) / )?  ([^/]*?)  (?: :([\\d+:-x\\+]*) | @(.*) )?  \\z", str))
-			{
-				_initialized = true;
-
-				path      = m[1];
-				name      = m.did_match(2) ? m[2] : "";
-				selection = m[3];
-				symbol    = m[4];
-
-				raw_path = full_path();
-
-				path = oak::normalize_filter(path);
-				name = oak::normalize_filter(name);
-			}
-		}
-
-		std::string full_path () const
-		{
-			return (path != NULL_STR ? path + "/" : "") + name;
-		}
-
-		bool is_glob () const
-		{
-			return _is_glob;
-		}
-
-		path::glob_t glob () const
-		{
-			return _glob;
-		}
-
-		explicit operator bool () const { return _initialized; }
-
-	private:
-		bool _initialized = false;
-		bool _is_glob = false;
-		path::glob_t _glob = "*";
-	};
-
 	struct document_record_t
 	{
-		document_record_t (document::document_ptr const& doc)
+		document_record_t (document::document_ptr const& doc, std::string const& base)
 		{
-			full_path  = doc->path();
-			name       = full_path == NULL_STR ? doc->display_name() : path::name(full_path);
-			display    = name;
-			lru_rank   = -doc->lru().value();
+			full_path = doc->path();
+			prefix    = full_path == NULL_STR ? "" : path::relative_to(path::parent(full_path), base);
+			name      = full_path == NULL_STR ? doc->display_name() : path::name(full_path);
+			lru_rank  = -doc->lru().value();
+
+			if(prefix.empty() && full_path != NULL_STR)
+				prefix = ".";
 
 			if(full_path == NULL_STR)
 				identifier = doc->identifier();
@@ -94,78 +47,56 @@ namespace
 
 		oak::uuid_t identifier;
 		std::string full_path;
+		std::string prefix;
 		std::string name;
-		std::string display;
 		double lru_rank;
 
-		bool matched           = true;
-		size_t display_parents = 0;
-		bool place_last        = false;
-		double rank            = 0;
+		bool matched    = true;
+		bool is_current = false;
+		double rank     = 0;
 
-		std::vector<std::pair<size_t, size_t>> cover;
+		std::vector<std::pair<size_t, size_t>> cover_prefix, cover_name;
 		NSNumber* tableview_item = nil;
 		OakFileIconImage* image = nil;
 	};
 
-	inline void rank_record (document_record_t& record, filter_string_t const& filter, std::string const& basePath, path::glob_list_t const& glob, std::vector<std::string> const& bindings)
+	inline void rank_record (document_record_t& record, std::string const& filter, path::glob_list_t const& glob, std::vector<std::string> const& bindings)
 	{
 		record.matched = false;
 		if(glob.exclude(record.full_path))
 			return;
 
-		record.cover.clear();
-		record.display         = record.name;
-		record.display_parents = 0;
+		record.cover_prefix.clear();
+		record.cover_name.clear();
 
-		if(!filter)
+		double rank = record.is_current ? 0.1 : 3;
+		if(!filter.empty() && filter != NULL_STR)
 		{
-			record.matched = true;
-			record.rank    = record.place_last ? 1 : 0;
-			return;
+			std::vector<std::pair<size_t, size_t>> cover;
+			if(rank = oak::rank(filter, record.name, &record.cover_name))
+			{
+				rank += 1;
+
+				auto it = std::find(bindings.begin(), bindings.end(), record.full_path);
+				if(it != bindings.end())
+					rank = 2 + (bindings.end() - it) / (double)bindings.size();
+			}
+			else if(rank = oak::rank(filter, record.prefix + "/" + record.name, &cover))
+			{
+				for(auto pair : cover)
+				{
+					if(pair.first < record.prefix.size())
+						record.cover_prefix.emplace_back(pair.first, std::min(pair.second, record.prefix.size()));
+					if(record.prefix.size() + 1 < pair.second)
+						record.cover_name.emplace_back(std::max(pair.first, record.prefix.size() + 1) - record.prefix.size() - 1, pair.second - record.prefix.size() - 1);
+				}
+			}
 		}
 
-		double path_rank = 1;
-		std::vector<std::pair<size_t, size_t>> path_cover;
-		if(filter.path != NULL_STR)
-		{
-			std::string prefix = (record.full_path == NULL_STR) ? "" : path::relative_to(path::parent(record.full_path), basePath);
-			if(double rank = oak::rank(filter.path, prefix, &path_cover))
-			{
-				path_rank = 1 - rank;
-				record.display = (record.full_path == NULL_STR) ? "" : prefix + (prefix.empty() ? "" : "/");
-			}
-			else
-			{
-				return;
-			}
-		}
-
-		if(double rank = oak::rank(filter.name, record.name, &record.cover))
+		if(rank)
 		{
 			record.matched = true;
-
-			if(filter.path != NULL_STR)
-			{
-				for(auto pair : record.cover)
-					path_cover.push_back(std::make_pair(pair.first + record.display.size(), pair.second + record.display.size()));
-				record.display = record.display + record.name;
-				record.cover.swap(path_cover);
-			}
-
-			size_t bindingIndex = std::find(bindings.begin(), bindings.end(), record.full_path) - bindings.begin();
-			if((filter.selection != NULL_STR || filter.symbol != NULL_STR) && record.place_last && filter.full_path().empty())
-				record.rank = 0;
-			else if(!filter.raw_path.empty() && path::is_child(filter.raw_path, record.full_path))
-				record.rank = 0;
-			else if(record.place_last)
-				record.rank = 1;
-			else if(bindingIndex != bindings.size())
-				record.rank = -1.0 * (bindings.size() - bindingIndex);
-			else if(filter.name.empty())
-				record.rank = path_rank;
-			else
-				record.rank = path_rank * (1 - rank);
+			record.rank = 3 - rank;
 		}
 	}
 }
@@ -200,6 +131,11 @@ static path::glob_list_t globs_for_path (std::string const& path)
 	oak::uuid_t                                   _currentDocument;
 	std::vector<document_record_t>                _records;
 	document::scanner_ptr                         _scanner;
+
+	NSString* _globString;
+	NSString* _filterString;
+	NSString* _selectionString;
+	NSString* _symbolString;
 }
 @property (nonatomic) NSArray* sourceListLabels;
 @property (nonatomic) NSProgressIndicator* progressIndicator;
@@ -224,10 +160,7 @@ static path::glob_list_t globs_for_path (std::string const& path)
 
 		[self.window setContentBorderThickness:57 forEdge:NSMaxYEdge];
 		self.tableView.allowsMultipleSelection = YES;
-
-		NSCell* cell = [OFBPathInfoCell new];
-		cell.lineBreakMode = NSLineBreakByTruncatingMiddle;
-		[[self.tableView tableColumnWithIdentifier:@"name"] setDataCell:cell];
+		self.tableView.rowHeight = 38;
 
 		OakScopeBarView* scopeBar = [OakScopeBarView new];
 		scopeBar.labels = self.sourceListLabels;
@@ -251,11 +184,8 @@ static path::glob_list_t globs_for_path (std::string const& path)
 		};
 
 		NSView* contentView = self.window.contentView;
-		for(NSView* view in [views allValues])
-		{
-			[view setTranslatesAutoresizingMaskIntoConstraints:NO];
-			[contentView addSubview:view];
-		}
+		OakAddAutoLayoutViewsToSuperview([views allValues], contentView);
+		OakSetupKeyViewLoop(@[ self.searchField, scopeBar.buttons ]);
 
 		[contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-(8)-[searchField(>=50)]-(8)-|"                      options:0 metrics:nil views:views]];
 		[contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[aboveScopeBarDark(==aboveScopeBarLight)]|"          options:0 metrics:nil views:views]];
@@ -357,8 +287,8 @@ static path::glob_list_t globs_for_path (std::string const& path)
 	{
 		if(insertAll || (_openDocumentsMap.find(doc->identifier()) == _openDocumentsMap.end() && openPaths.find(doc->path()) == openPaths.end()))
 		{
-			document_record_t record(doc);
-			record.place_last     = doc->identifier() == _currentDocument;
+			document_record_t record(doc, path);
+			record.is_current     = doc->identifier() == _currentDocument;
 			record.tableview_item = @(index++);
 			_records.push_back(record);
 		}
@@ -369,82 +299,51 @@ static path::glob_list_t globs_for_path (std::string const& path)
 
 - (void)updateRecordsFrom:(NSUInteger)first
 {
-	filter_string_t filter(to_s(self.filterString));
-	std::string const basePath = to_s(_path);
-	std::vector<document_record_t const*> include;
+	std::function<bool(document_record_t const*, document_record_t const*)> sortFunctor = [](document_record_t const* lhs, document_record_t const* rhs){ return (lhs->rank < rhs->rank) || ((lhs->rank == rhs->rank) && ((lhs->lru_rank < rhs->lru_rank) || (lhs->lru_rank == rhs->lru_rank && text::less_t()(lhs->name, rhs->name)))); };
 
-	if(filter.is_glob())
+	if(OakNotEmptyString(_globString))
 	{
+		path::glob_t glob(to_s(_globString), false, false);
 		for(size_t i = first; i < _records.size(); ++i)
 		{
 			auto& record = _records[i];
-			record.cover.clear();
-			record.display_parents = 0;
-			if(record.matched = filter.glob().does_match(record.full_path))
-				record.display = record.name;
+			record.cover_prefix.clear();
+			record.cover_name.clear();
+			record.matched = glob.does_match(record.full_path);
 		}
-
-		for(auto const& record : _records)
-		{
-			if(record.matched)
-				include.push_back(&record);
-		}
-		std::sort(include.begin(), include.end(), [](document_record_t const* lhs, document_record_t const* rhs){ return lhs->name < rhs->name; });
+		sortFunctor = [](document_record_t const* lhs, document_record_t const* rhs){ return text::less_t()(lhs->name, rhs->name); };
 	}
 	else
 	{
+		std::string const filter = to_s(_filterString);
 		path::glob_list_t glob;
 
 		std::vector<std::string> bindings;
-		for(NSString* str in [[OakAbbreviations abbreviationsForName:@"OakFileChooserBindings"] stringsForAbbreviation:[NSString stringWithCxxString:filter.full_path()]])
+		for(NSString* str in [[OakAbbreviations abbreviationsForName:@"OakFileChooserBindings"] stringsForAbbreviation:_filterString])
 			bindings.push_back(to_s(str));
 
 		size_t const count  = _records.size() - first;
 		size_t const stride = 256;
 		dispatch_apply(count / stride, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^(size_t n){
 			for(size_t i = n*stride; i < (n+1)*stride; ++i)
-				rank_record(_records[first + i], filter, basePath, glob, bindings);
+				rank_record(_records[first + i], filter, glob, bindings);
 		});
 	   for(size_t i = count - (count % stride); i < count; ++i)
-			rank_record(_records[first + i], filter, basePath, glob, bindings);
-
-		for(auto const& record : _records)
-		{
-			if(record.matched)
-				include.push_back(&record);
-		}
-		std::sort(include.begin(), include.end(), [](document_record_t const* lhs, document_record_t const* rhs){ return (lhs->rank < rhs->rank) || ((lhs->rank == rhs->rank) && ((lhs->lru_rank < rhs->lru_rank) || (lhs->lru_rank == rhs->lru_rank && lhs->name < rhs->name))); });
+			rank_record(_records[first + i], filter, glob, bindings);
 	}
+
+	std::vector<document_record_t const*> include;
+	for(auto const& record : _records)
+	{
+		if(record.matched)
+			include.push_back(&record);
+	}
+	std::sort(include.begin(), include.end(), sortFunctor);
 
 	NSMutableArray* array = [NSMutableArray arrayWithCapacity:include.size()];
 	for(auto record : include)
 		[array addObject:record->tableview_item];
 	self.items = array;
-
-	if(!_scanner)
-		[self updateParents];
-}
-
-- (void)updateParents
-{
-	if(filter_string_t(to_s(self.filterString)).path != NULL_STR)
-		return;
-
-	std::vector<std::string> paths;
-	for(NSNumber* index in self.items)
-	{
-		document_record_t const& record = _records[index.unsignedIntValue];
-		paths.push_back(record.full_path);
-	}
-
-	std::vector<size_t> const& visibleParents = path::disambiguate(paths);
-	for(NSUInteger i = 0; i < self.items.count; ++i)
-	{
-		NSNumber* index = self.items[i];
-		_records[index.unsignedIntValue].display_parents = visibleParents[i];
-	}
-
-	[self.tableView reloadData];
 }
 
 - (void)updateSCMStatus
@@ -582,7 +481,6 @@ static path::glob_list_t globs_for_path (std::string const& path)
 	{
 		[self shutdownScanner];
 		[self updateStatusText:self];
-		[self updateParents];
 	}
 }
 
@@ -592,6 +490,21 @@ static path::glob_list_t globs_for_path (std::string const& path)
 	[_pollTimer invalidate];
 	_pollTimer = nil;
 	_scanner.reset();
+}
+
+- (void)updateFilterString:(NSString*)aString
+{
+	NSString* oldFilter = [(_globString ?: _filterString ?: @"") copy];
+
+	NSRegularExpression* const ptrn = [NSRegularExpression regularExpressionWithPattern:@"\\A(?:(.*?\\*.*?)|(.*?))(?::([\\d+:-x\\+]*)|@(.*))?\\z" options:NSAnchoredSearch error:nil];
+	NSTextCheckingResult* m = aString ? [ptrn firstMatchInString:aString options:NSMatchingAnchored range:NSMakeRange(0, [aString length])] : nil;
+	_globString      = m && [m rangeAtIndex:1].location != NSNotFound ? [aString substringWithRange:[m rangeAtIndex:1]] : nil;
+	_filterString    = m && [m rangeAtIndex:2].location != NSNotFound ? [NSString stringWithCxxString:oak::normalize_filter(to_s([aString substringWithRange:[m rangeAtIndex:2]]))] : nil;
+	_selectionString = m && [m rangeAtIndex:3].location != NSNotFound ? [aString substringWithRange:[m rangeAtIndex:3]] : nil;
+	_symbolString    = m && [m rangeAtIndex:4].location != NSNotFound ? [aString substringWithRange:[m rangeAtIndex:4]] : nil;
+
+	if(![oldFilter isEqualToString:_globString ?: _filterString ?: @""])
+		[super updateFilterString:aString];
 }
 
 - (void)updateItems:(id)sender
@@ -625,7 +538,7 @@ static path::glob_list_t globs_for_path (std::string const& path)
 		}
 		else // untitled file
 		{
-			path = record.display;
+			path = record.name;
 		}
 
 		[self.statusTextField.cell setLineBreakMode:NSLineBreakByTruncatingHead];
@@ -644,9 +557,8 @@ static path::glob_list_t globs_for_path (std::string const& path)
 
 		NSMutableDictionary* item = [NSMutableDictionary dictionary];
 		item[@"identifier"] = [NSString stringWithCxxString:record.identifier];
-		filter_string_t filter(to_s(self.filterString));
-		if(filter.selection != NULL_STR)
-			item[@"selectionString"] = [NSString stringWithCxxString:filter.selection];
+		if(OakNotEmptyString(_selectionString))
+			item[@"selectionString"] = _selectionString;
 		if(record.full_path != NULL_STR)
 			item[@"path"] = [NSString stringWithCxxString:record.full_path];
 		[res addObject:item];
@@ -658,37 +570,33 @@ static path::glob_list_t globs_for_path (std::string const& path)
 // = NSTableViewDataSource =
 // =========================
 
-- (id)tableView:(NSTableView*)aTableView objectValueForTableColumn:(NSTableColumn*)aTableColumn row:(NSInteger)rowIndex
+- (NSView*)tableView:(NSTableView*)aTableView viewForTableColumn:(NSTableColumn*)aTableColumn row:(NSInteger)row
 {
-	if([aTableColumn.identifier isEqualToString:@"name"])
+	NSTableCellView* res = [aTableView makeViewWithIdentifier:aTableColumn.identifier owner:self];
+	if(!res)
 	{
-		NSNumber* index = self.items[rowIndex];
-		document_record_t const& record = _records[index.unsignedIntValue];
+		OakRolloverButton* closeButton = [[OakRolloverButton alloc] initWithFrame:NSZeroRect];
+		OakSetAccessibilityLabel(closeButton, @"Close document");
 
-		std::string path = record.display;
-		if(record.display_parents)
-		{
-			auto v = text::split(path::parent(record.full_path), "/");
-			v.erase(v.begin(), v.end() - std::min(record.display_parents, v.size()));
-			path += " — " + text::join(v, "/");
-		}
+		Class cl = NSClassFromString(@"OFBPathInfoCell");
+		closeButton.regularImage  = [NSImage imageNamed:@"CloseTemplate"         inSameBundleAsClass:cl];
+		closeButton.pressedImage  = [NSImage imageNamed:@"ClosePressedTemplate"  inSameBundleAsClass:cl];
+		closeButton.rolloverImage = [NSImage imageNamed:@"CloseRolloverTemplate" inSameBundleAsClass:cl];
+		closeButton.target        = self;
+		closeButton.action        = @selector(takeItemToCloseFrom:);
 
-		NSMutableAttributedString* str = CreateAttributedStringWithMarkedUpRanges(path, record.cover);
-		NSMutableParagraphStyle* pStyle = [[NSParagraphStyle defaultParagraphStyle] mutableCopy];
-		[pStyle setLineBreakMode:NSLineBreakByTruncatingMiddle];
-		[str addAttribute:NSParagraphStyleAttributeName value:pStyle range:NSMakeRange(0, str.length)];
-		return str;
+		res = [[OakFileTableCellView alloc] initWithCloseButton:closeButton];
+		res.identifier = aTableColumn.identifier;
+
+		[closeButton bind:NSHiddenBinding toObject:res withKeyPath:@"objectValue.isCloseDisabled" options:nil];
 	}
-	return nil;
-}
 
-- (void)tableView:(NSTableView*)aTableView willDisplayCell:(OFBPathInfoCell*)cell forTableColumn:(NSTableColumn*)aTableColumn row:(NSInteger)rowIndex
-{
-	if(![aTableColumn.identifier isEqualToString:@"name"])
-		return;
-
-	NSNumber* index = self.items[rowIndex];
+	NSNumber* index = self.items[row];
 	document_record_t& record = _records[index.unsignedIntValue];
+
+	// =================
+	// = Document Icon =
+	// =================
 
 	BOOL isOpen = NO, isModified = NO, isOnDisk = YES;
 	for(document::document_ptr const& doc : _openDocuments)
@@ -701,24 +609,24 @@ static path::glob_list_t globs_for_path (std::string const& path)
 		}
 	}
 
-	cell.objectValue = [self tableView:aTableView objectValueForTableColumn:aTableColumn row:rowIndex];
-	if([cell respondsToSelector:@selector(setImage:)])
-	{
-		if(!record.image)
-			record.image = [[OakFileIconImage alloc] initWithSize:NSMakeSize(16, 16)];
+	if(!record.image)
+		record.image = [[OakFileIconImage alloc] initWithSize:NSMakeSize(32, 32)];
 
-		record.image.path     = [NSString stringWithCxxString:record.full_path];
-		record.image.exists   = isOnDisk;
-		record.image.modified = isModified;
+	record.image.path     = [NSString stringWithCxxString:record.full_path];
+	record.image.exists   = isOnDisk;
+	record.image.modified = isModified;
 
-		if(_scmInfo && record.full_path != NULL_STR)
-			record.image.scmStatus = _scmInfo->status(record.full_path);
+	if(_scmInfo && record.full_path != NULL_STR)
+		record.image.scmStatus = _scmInfo->status(record.full_path);
 
-		[cell setImage:record.image];
-	}
+	res.objectValue = @{
+		@"icon"            : record.image,
+		@"folder"          : CreateAttributedStringWithMarkedUpRanges(record.prefix, record.cover_prefix, NSLineBreakByTruncatingHead),
+		@"name"            : CreateAttributedStringWithMarkedUpRanges(record.name, record.cover_name, NSLineBreakByTruncatingTail),
+		@"isCloseDisabled" : @(!isOpen),
+	};
 
-	if([cell respondsToSelector:@selector(setIsOpen:)])
-		cell.isOpen = isOpen;
+	return res;
 }
 
 // =================
@@ -727,22 +635,46 @@ static path::glob_list_t globs_for_path (std::string const& path)
 
 - (void)accept:(id)sender
 {
-	if(self.filterString)
+	if(OakNotEmptyString(_filterString))
 	{
-		filter_string_t filter(to_s(self.filterString));
-
 		NSIndexSet* indexes = [self.tableView selectedRowIndexes];
 		for(NSUInteger i = [indexes firstIndex]; i != NSNotFound; i = [indexes indexGreaterThanIndex:i])
 		{
 			NSNumber* index = self.items[i];
 			document_record_t const& record = _records[index.unsignedIntValue];
 
-			if(record.full_path != NULL_STR)
-				[[OakAbbreviations abbreviationsForName:@"OakFileChooserBindings"] learnAbbreviation:[NSString stringWithCxxString:filter.full_path()] forString:[NSString stringWithCxxString:record.full_path]];
+			if(record.full_path != NULL_STR && record.cover_prefix.empty())
+				[[OakAbbreviations abbreviationsForName:@"OakFileChooserBindings"] learnAbbreviation:_filterString forString:[NSString stringWithCxxString:record.full_path]];
 		}
 	}
 
 	[super accept:sender];
+}
+
+- (void)takeItemToCloseFrom:(NSButton*)sender
+{
+	NSInteger row = [self.tableView rowForView:sender];
+	if(row != -1)
+	{
+		NSNumber* index = self.items[row];
+		document_record_t const& record = _records[index.unsignedIntValue];
+		if(record.full_path != NULL_STR)
+		{
+			// FIXME We need a proper interface to close documents
+			if(id target = [NSApp targetForAction:@selector(fileBrowser:closeURL:)])
+			{
+				[target fileBrowser:nil closeURL:[NSURL fileURLWithPath:[NSString stringWithCxxString:record.full_path]]];
+
+				std::vector<document::document_ptr> newDocuments;
+				for(auto const& doc : _openDocuments)
+				{
+					if(doc->path() != record.full_path)
+						newDocuments.push_back(doc);
+				}
+				self.openDocuments = newDocuments;
+			}
+		}
+	}
 }
 
 - (IBAction)goToParentFolder:(id)sender

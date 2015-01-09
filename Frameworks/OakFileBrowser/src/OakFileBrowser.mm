@@ -12,7 +12,6 @@
 #import <io/io.h>
 #import <oak/oak.h>
 #import <io/entries.h>
-#import <OakFoundation/NSArray Additions.h>
 #import <OakFoundation/NSString Additions.h>
 #import <OakAppKit/OakAppKit.h>
 #import <OakAppKit/OakFileIconImage.h>
@@ -21,7 +20,6 @@
 #import <OakAppKit/OakOpenWithMenu.h>
 #import <OakAppKit/OakUIConstructionFunctions.h>
 #import <OakAppKit/OakZoomingIcon.h>
-#import <OakAppKit/NSView Additions.h>
 #import <OakSystem/application.h>
 #import <bundles/bundles.h>
 #import <document/document.h>
@@ -257,11 +255,7 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 		@"actions"        : _actionsView,
 	};
 
-	for(NSView* view in [views allValues])
-	{
-		[view setTranslatesAutoresizingMaskIntoConstraints:NO];
-		[_view addSubview:view];
-	}
+	OakAddAutoLayoutViewsToSuperview([views allValues], _view);
 
 	[_view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[browser(==header,==actionsDivider,==actions)]|" options:0 metrics:nil views:views]];
 	[_view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[header][browser][actionsDivider][actions]|"     options:NSLayoutFormatAlignAllLeft metrics:nil views:views]];
@@ -798,7 +792,7 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 		NSArray* paths = [pboard propertyListForType:NSFilenamesPboardType];
 		[pboard declareTypes:@[ NSFilenamesPboardType, @"OakFileBrowserOperation" ] owner:nil];
 		[pboard setPropertyList:paths forType:NSFilenamesPboardType];
-		[pboard setString:@"cut" forType:@"OakFileBrowserOperation"];;
+		[pboard setString:@"cut" forType:@"OakFileBrowserOperation"];
 	}
 }
 
@@ -836,12 +830,12 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 
 - (void)executeBundleCommand:(id)sender
 {
-	if(bundles::item_ptr item = bundles::lookup(to_s((NSString*)[sender representedObject])))
+	if(bundles::item_ptr item = bundles::lookup(to_s([sender representedObject])))
 	{
 		std::map<std::string, std::string> map = oak::basic_environment();
 		map << [self variables] << item->bundle_variables();
 		map = bundles::scope_variables(map);
-		map = variables_for_path(map, to_s((NSString*)[self.selectedPaths firstObject]));
+		map = variables_for_path(map, to_s([self.selectedPaths firstObject]));
 		document::run(parse_command(item), ng::buffer_t(), ng::ranges_t(), [self.selectedPaths count] == 1 ? document::create(map["TM_SELECTED_FILE"]) : document::document_ptr(), map);
 	}
 }
@@ -898,8 +892,8 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 	if(rootPath)
 	{
 		[aMenu addItem:[NSMenuItem separatorItem]];
-		[[aMenu addItemWithTitle:@"New File"   action:@selector(newDocumentInDirectory:) keyEquivalent:@"n"] setKeyEquivalentModifierMask:NSCommandKeyMask|NSShiftKeyMask];
-		[[aMenu addItemWithTitle:@"New Folder" action:@selector(newFolder:)              keyEquivalent:@"n"] setKeyEquivalentModifierMask:NSCommandKeyMask|NSControlKeyMask];
+		[[aMenu addItemWithTitle:@"New File"   action:@selector(newDocumentInDirectory:) keyEquivalent:@"n"] setKeyEquivalentModifierMask:NSCommandKeyMask|NSControlKeyMask];
+		[[aMenu addItemWithTitle:@"New Folder" action:@selector(newFolder:)              keyEquivalent:@"n"] setKeyEquivalentModifierMask:NSCommandKeyMask|NSShiftKeyMask];
 	}
 
 	if(rootPath || hasFileSelected)

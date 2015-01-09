@@ -74,14 +74,14 @@ static void DrawSpinner (NSRect cellFrame, BOOL isFlipped, NSColor* color, doubl
 
 - (NSImage*)closeIcon
 {
-	return self.isOpen ? [NSImage imageNamed:@"CloseFile" inSameBundleAsClass:[OFBPathInfoCell class]] : nil;
+	return self.isOpen ? [NSImage imageNamed:@"CloseTemplate" inSameBundleAsClass:[OFBPathInfoCell class]] : nil;
 }
 
 - (NSRect)closeButtonRectInFrame:(NSRect)cellFrame
 {
 	if(!self.isOpen)
 		return NSZeroRect;
-	return NSMakeRect(NSMaxX(cellFrame) - kCloseButtonRightMargin - self.closeIcon.size.width, NSMaxY(cellFrame) - (cellFrame.size.height + self.closeIcon.size.height) / 2, self.closeIcon.size.width, self.closeIcon.size.height);
+	return NSMakeRect(NSMaxX(cellFrame) - kCloseButtonRightMargin - self.closeIcon.size.width, NSMaxY(cellFrame) - round((cellFrame.size.height + self.closeIcon.size.height) / 2), self.closeIcon.size.width, self.closeIcon.size.height);
 }
 
 - (void)redrawFrame:(OakTimer*)timer
@@ -122,13 +122,26 @@ static void DrawSpinner (NSRect cellFrame, BOOL isFlipped, NSColor* color, doubl
 	{
 		NSImage* closeIcon = self.closeIcon;
 		if(_mouseDownInCloseButton)
-			closeIcon = [NSImage imageNamed:@"CloseFilePressed" inSameBundleAsClass:[OFBPathInfoCell class]];
+			closeIcon = [NSImage imageNamed:@"ClosePressedTemplate" inSameBundleAsClass:[OFBPathInfoCell class]];
 		else if([self isMouseInCloseButtonInFrame:cellFrame controlView:controlView] && [[controlView window] isKeyWindow])
-			closeIcon = [NSImage imageNamed:@"CloseFileOver" inSameBundleAsClass:[OFBPathInfoCell class]];
+			closeIcon = [NSImage imageNamed:@"CloseRolloverTemplate" inSameBundleAsClass:[OFBPathInfoCell class]];
 
 		NSRect closeButtonRect = [self closeButtonRectInFrame:cellFrame];
-		[closeIcon drawInRect:closeButtonRect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
 		cellFrame.size.width -= NSMaxX(cellFrame) - NSMinX(closeButtonRect);
+
+		if(closeIcon.isTemplate)
+		{
+			[(self.backgroundStyle == NSBackgroundStyleDark ? [NSColor alternateSelectedControlTextColor] : [NSColor controlTextColor]) set];
+			CGImageRef cgImage = [closeIcon CGImageForProposedRect:&closeButtonRect context:[NSGraphicsContext currentContext] hints:nil];
+			[NSGraphicsContext saveGraphicsState];
+			CGContextClipToMask((CGContextRef)[[NSGraphicsContext currentContext] graphicsPort], closeButtonRect, cgImage);
+			NSRectFillUsingOperation(closeButtonRect, NSCompositeSourceOver);
+			[NSGraphicsContext restoreGraphicsState];
+		}
+		else
+		{
+			[closeIcon drawInRect:closeButtonRect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
+		}
 	}
 
 	NSFont* unboldFont = self.font;

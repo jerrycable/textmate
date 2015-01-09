@@ -57,12 +57,8 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 		return oldView;
 
 	[oldView removeFromSuperview];
-
 	if(newView)
-	{
-		[newView setTranslatesAutoresizingMaskIntoConstraints:NO];
-		[self addSubview:newView];
-	}
+		OakAddAutoLayoutViewsToSuperview(@[ newView ], self);
 
 	[self setNeedsUpdateConstraints:YES];
 	return newView;
@@ -277,6 +273,11 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 {
 	[self addCursorRect:[self fileBrowserResizeRect] cursor:[NSCursor resizeLeftRightCursor]];
 	[self addCursorRect:[self htmlOutputResizeRect]  cursor:_htmlOutputOnRight ? [NSCursor resizeLeftRightCursor] : [NSCursor resizeUpDownCursor]];
+}
+
+- (BOOL)mouseDownCanMoveWindow
+{
+	return NO;
 }
 
 - (NSView*)hitTest:(NSPoint)aPoint

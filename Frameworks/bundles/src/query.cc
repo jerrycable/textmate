@@ -2,6 +2,7 @@
 #include <text/ctype.h>
 #include <text/parse.h>
 #include <text/trim.h>
+#include <regexp/format_string.h>
 #include <oak/callbacks.h>
 
 namespace bundles
@@ -129,24 +130,6 @@ namespace bundles
 		}
 	}
 
-	static void setup_full_name (oak::uuid_t const& menuUUID, std::map< oak::uuid_t, std::vector<oak::uuid_t> > const& menus, std::map<oak::uuid_t, item_ptr> const& items, std::string const& prefix, std::string const& suffix)
-	{
-		std::map< oak::uuid_t, std::vector<oak::uuid_t> >::const_iterator menu = menus.find(menuUUID);
-		if(menu != menus.end())
-		{
-			for(auto const& uuid : menu->second)
-			{
-				std::map<oak::uuid_t, item_ptr>::const_iterator item = items.find(uuid);
-				if(item == items.end())
-					continue;
-
-				if(item->second->kind() == kItemTypeMenu)
-						setup_full_name(item->second->uuid(), menus, items, prefix + item->second->name() + " » ", suffix);
-				else	item->second->set_full_name(prefix + item->second->name() + suffix);
-			}
-		}
-	}
-
 	bool set_index (std::vector<item_ptr> const& items, std::map< oak::uuid_t, std::vector<oak::uuid_t> > const& menus)
 	{
 		Callbacks(&callback_t::bundles_will_change);
@@ -155,15 +138,22 @@ namespace bundles
 		AllMenus = menus;
 		cache().clear();
 
-		std::map< item_ptr, std::map<oak::uuid_t, item_ptr> > map; // bundle → { item_uuid → bundle_item }
+		std::map<oak::uuid_t, item_ptr> lookupTable;
 		for(auto const& item : items)
 		{
-			if(item->bundle())
-				map[item->bundle()].emplace(item->uuid(), item);
+			if(item_ptr bundle = item->bundle())
+				item->set_parent_menu(bundle->uuid());
+			lookupTable.emplace(item->uuid(), item);
 		}
 
-		for(auto const& bundle : map)
-			setup_full_name(bundle.first->uuid(), menus, bundle.second, "", " — " + bundle.first->name());
+		for(auto const& pair : menus)
+		{
+			for(auto const& itemUUID : pair.second)
+			{
+				if(auto item = lookupTable[itemUUID])
+					item->set_parent_menu(pair.first);
+			}
+		}
 
 		Callbacks(&callback_t::bundles_did_change);
 
@@ -307,32 +297,17 @@ namespace bundles
 		return res;
 	}
 
-	static std::string format_bundle_item_title (std::string title, bool hasSelection)
-	{
-		static std::string const kSelectionSubString = " / Selection";
-
-		std::string::size_type pos = title.find(kSelectionSubString);
-		if(pos == 0 || pos == std::string::npos)
-			return title;
-
-		if(hasSelection)
-		{
-			std::string::size_type from = title.rfind(' ', pos - 1);
-			if(from == std::string::npos)
-				return title.erase(0, pos + 3);
-			return title.erase(from + 1, pos + 3 - from - 1);
-		}
-		return title.erase(pos, kSelectionSubString.size());
-	}
-
 	std::string name_with_selection (item_ptr const& item, bool hasSelection)
 	{
-		return format_bundle_item_title(item->name(), hasSelection);
+		return format_string::replace(item->name(), "\\b(\\w+) / (Selection)\\b", hasSelection ? "$2" : "$1");
 	}
 
-	std::string full_name_with_selection (item_ptr const& item, bool hasSelection)
+	std::string menu_path (item_ptr item)
 	{
-		return format_bundle_item_title(item->full_name(), hasSelection);
+		std::deque<std::string> path;
+		while(item = lookup(item->parent_menu()))
+			path.push_front(item->name());
+		return text::join(path, " ▸ ");
 	}
 
 	std::string key_equivalent (item_ptr const& item)

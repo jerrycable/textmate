@@ -259,12 +259,7 @@
 		[self updateTextFieldTitle];
 
 		[self updateStyle];
-
-		for(NSView* view in @[ _leftCapView, _rightCapView, _textField, _closeButton ])
-		{
-			view.translatesAutoresizingMaskIntoConstraints = NO;
-			[self addSubview:view];
-		}
+		OakAddAutoLayoutViewsToSuperview(@[ _leftCapView, _rightCapView, _textField, _closeButton ], self);
 	}
 	return self;
 }
@@ -330,8 +325,8 @@
 
 	if(_overflowButton)
 	{
-		[_myConstraints addObjectsFromArray:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[title]-(>=3)-[overflow]-(3)-[right]" options:0 metrics:nil views:views]];
-		[_myConstraints addObjectsFromArray:[NSLayoutConstraint constraintsWithVisualFormat:@"V:[overflow]-(7)-|" options:0 metrics:nil views:views]];
+		[_myConstraints addObjectsFromArray:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[title]-(>=3)-[overflow][right]" options:0 metrics:nil views:views]];
+		[_myConstraints addObjectsFromArray:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[overflow]|" options:0 metrics:nil views:views]];
 	}
 
 	[self addConstraints:_myConstraints];
@@ -426,8 +421,7 @@
 		[_overflowButton sendActionOn:NSLeftMouseDownMask];
 		[self updateStyle];
 
-		_overflowButton.translatesAutoresizingMaskIntoConstraints = NO;
-		[self addSubview:_overflowButton];
+		OakAddAutoLayoutViewsToSuperview(@[ _overflowButton ], self);
 	}
 	else
 	{

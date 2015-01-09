@@ -8,10 +8,87 @@
 #import <ns/ns.h>
 #import <text/ranker.h>
 
-NSMutableAttributedString* CreateAttributedStringWithMarkedUpRanges (std::string const& in, std::vector< std::pair<size_t, size_t> > const& ranges, size_t offset)
+@interface OakFileTableCellView ()
+@property (nonatomic) NSTextField* folderTextField;
+@property (nonatomic) NSButton* closeButton;
+@end
+
+@implementation OakFileTableCellView
+- (instancetype)initWithCloseButton:(NSButton*)closeButton
+{
+	if((self = [super init]))
+	{
+		NSImageView* imageView = [NSImageView new];
+		[imageView setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+		[imageView setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+		NSTextField* fileTextField = OakCreateLabel(@"", [NSFont systemFontOfSize:13]);
+		NSTextField* folderTextField = OakCreateLabel(@"", [NSFont controlContentFontOfSize:10]);
+
+		NSDictionary* views = @{ @"icon" : imageView, @"file" : fileTextField, @"folder" : folderTextField, @"close" : closeButton };
+		OakAddAutoLayoutViewsToSuperview([views allValues], self);
+
+		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-(4)-[icon]-(4)-[file]-(4)-[close(==16)]-(8)-|" options:0 metrics:nil views:views]];
+		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:[file]-(2)-[folder]-(5)-|" options:NSLayoutFormatAlignAllLeading|NSLayoutFormatAlignAllTrailing metrics:nil views:views]];
+		[self addConstraint:[NSLayoutConstraint constraintWithItem:self attribute:NSLayoutAttributeCenterY relatedBy:NSLayoutRelationEqual toItem:imageView attribute:NSLayoutAttributeCenterY multiplier:1 constant:0]];
+		[self addConstraint:[NSLayoutConstraint constraintWithItem:self attribute:NSLayoutAttributeCenterY relatedBy:NSLayoutRelationEqual toItem:closeButton attribute:NSLayoutAttributeCenterY multiplier:1 constant:0]];
+
+		[imageView bind:NSValueBinding toObject:self withKeyPath:@"objectValue.icon" options:nil];
+		[fileTextField bind:NSValueBinding toObject:self withKeyPath:@"objectValue.name" options:nil];
+		[folderTextField bind:NSValueBinding toObject:self withKeyPath:@"objectValue.folder" options:nil];
+
+		self.imageView       = imageView;
+		self.textField       = fileTextField;
+		self.folderTextField = folderTextField;
+		self.closeButton     = closeButton;
+	}
+	return self;
+}
+
+- (NSAttributedString*)addShadowColor:(NSColor*)shadowColor toString:(id)aString
+{
+	NSMutableAttributedString* str = [aString isKindOfClass:[NSString class]] ? [[NSMutableAttributedString alloc] initWithString:aString attributes:nil] : [aString mutableCopy];
+
+	NSShadow* shadow = [NSShadow new];
+	[shadow setShadowColor:shadowColor];
+	[shadow setShadowOffset:NSMakeSize(0, -1)];
+	[shadow setShadowBlurRadius:1];
+
+	[str addAttributes:@{ NSShadowAttributeName : shadow } range:NSMakeRange(0, str.string.length)];
+	return str;
+}
+
+- (void)setBackgroundStyle:(NSBackgroundStyle)backgroundStyle
+{
+	[super setBackgroundStyle:backgroundStyle];
+	if(backgroundStyle == NSBackgroundStyleDark)
+	{
+		self.textField.font              = [NSFont boldSystemFontOfSize:13];
+		self.textField.objectValue       = [self addShadowColor:[NSColor colorWithCalibratedWhite:0.0 alpha:0.5] toString:[self valueForKeyPath:@"objectValue.name"]];
+		self.folderTextField.textColor   = [NSColor colorWithCalibratedWhite:0.9 alpha:1];
+		self.folderTextField.objectValue = [self addShadowColor:[NSColor colorWithCalibratedWhite:0.5 alpha:0.5] toString:[self valueForKeyPath:@"objectValue.folder"]];
+	}
+	else
+	{
+		self.textField.font              = [NSFont systemFontOfSize:13];
+		self.textField.objectValue       = [self valueForKeyPath:@"objectValue.name"];
+		self.folderTextField.textColor   = [NSColor colorWithCalibratedWhite:0.5 alpha:1];
+		self.folderTextField.objectValue = [self valueForKeyPath:@"objectValue.folder"];
+	}
+}
+
+- (id)accessibilityAttributeValue:(NSString*)attribute
+{
+	if([attribute isEqualToString:NSAccessibilityChildrenAttribute])
+			return @[ self.textField.cell, self.folderTextField.cell, self.closeButton.cell, self.imageView.cell ];
+	else	return [super accessibilityAttributeValue:attribute];
+}
+@end
+
+NSMutableAttributedString* CreateAttributedStringWithMarkedUpRanges (std::string const& in, std::vector< std::pair<size_t, size_t> > const& ranges, NSLineBreakMode lineBreakMode)
 {
 	NSMutableParagraphStyle* paragraphStyle = [[NSMutableParagraphStyle alloc] init];
-	[paragraphStyle setLineBreakMode:NSLineBreakByTruncatingMiddle];
+	[paragraphStyle setLineBreakMode:lineBreakMode];
 
 	NSDictionary* baseAttributes      = @{ NSParagraphStyleAttributeName : paragraphStyle };
 	NSDictionary* highlightAttributes = @{ NSParagraphStyleAttributeName : paragraphStyle, NSUnderlineStyleAttributeName : @1 };
@@ -21,9 +98,9 @@ NSMutableAttributedString* CreateAttributedStringWithMarkedUpRanges (std::string
 	size_t from = 0;
 	for(auto range : ranges)
 	{
-		[res appendAttributedString:[[NSAttributedString alloc] initWithString:[NSString stringWithCxxString:std::string(in.begin() + from, in.begin() + range.first + offset)] attributes:baseAttributes]];
-		[res appendAttributedString:[[NSAttributedString alloc] initWithString:[NSString stringWithCxxString:std::string(in.begin() + range.first + offset, in.begin() + range.second + offset)] attributes:highlightAttributes]];
-		from = range.second + offset;
+		[res appendAttributedString:[[NSAttributedString alloc] initWithString:[NSString stringWithCxxString:std::string(in.begin() + from, in.begin() + range.first)] attributes:baseAttributes]];
+		[res appendAttributedString:[[NSAttributedString alloc] initWithString:[NSString stringWithCxxString:std::string(in.begin() + range.first, in.begin() + range.second)] attributes:highlightAttributes]];
+		from = range.second;
 	}
 	if(from < in.size())
 		[res appendAttributedString:[[NSAttributedString alloc] initWithString:[NSString stringWithCxxString:in.substr(from)] attributes:baseAttributes]];
@@ -50,12 +127,8 @@ static void* kFirstResponderBinding = &kFirstResponderBinding;
 			_searchField.focusRingType = NSFocusRingTypeNone;
 		_searchField.delegate = self;
 
-		NSTableColumn* tableColumn = [[NSTableColumn alloc] initWithIdentifier:@"name"];
-		tableColumn.dataCell = [[NSTextFieldCell alloc] initTextCell:@""];
-		[tableColumn.dataCell setLineBreakMode:NSLineBreakByTruncatingMiddle];
-
-		OakInactiveTableView* tableView = [[OakInactiveTableView alloc] initWithFrame:NSZeroRect];
-		[tableView addTableColumn:tableColumn];
+		NSTableView* tableView = [[NSTableView alloc] initWithFrame:NSZeroRect];
+		[tableView addTableColumn:[[NSTableColumn alloc] initWithIdentifier:@"name"]];
 		tableView.headerView              = nil;
 		tableView.focusRingType           = NSFocusRingTypeNone;
 		tableView.allowsEmptySelection    = NO;
@@ -109,6 +182,7 @@ static void* kFirstResponderBinding = &kFirstResponderBinding;
 		_window.nextResponder      = self;
 		_window.level              = NSFloatingWindowLevel;
 		_window.releasedWhenClosed = NO;
+		_window.frameAutosaveName  = NSStringFromClass([self class]);
 
 		[_searchField bind:NSValueBinding toObject:self withKeyPath:@"filterString" options:nil];
 		[_window addObserver:self forKeyPath:@"firstResponder" options:NSKeyValueObservingOptionOld|NSKeyValueObservingOptionNew context:kFirstResponderBinding];
@@ -130,10 +204,8 @@ static void* kFirstResponderBinding = &kFirstResponderBinding;
 
 - (void)showWindow:(id)sender
 {
-	[_window recalculateKeyViewLoop];
+	[_window makeFirstResponder:_window.initialFirstResponder];
 	[_window makeKeyAndOrderFront:self];
-	if(_searchField.window)
-		[_window makeFirstResponder:_searchField];
 }
 
 - (void)showWindowRelativeToFrame:(NSRect)parentFrame
@@ -156,9 +228,9 @@ static void* kFirstResponderBinding = &kFirstResponderBinding;
 	[_window performClose:self];
 }
 
-// ===============================================================================
-// = Set wether to render table view as active when search field gain/lose focus =
-// ===============================================================================
+// ================================================================================
+// = Set whether to render table view as active when search field gain/lose focus =
+// ================================================================================
 
 - (void)observeValueForKeyPath:(NSString*)keyPath ofObject:(id)object change:(NSDictionary*)change context:(void*)context
 {
@@ -167,7 +239,7 @@ static void* kFirstResponderBinding = &kFirstResponderBinding;
 		BOOL oldIsSearchField = change[NSKeyValueChangeOldKey] == _searchField || change[NSKeyValueChangeOldKey] == _searchField.currentEditor;
 		BOOL newIsSearchField = change[NSKeyValueChangeNewKey] == _searchField || change[NSKeyValueChangeNewKey] == _searchField.currentEditor;
 		if(oldIsSearchField != newIsSearchField)
-			[(OakInactiveTableView*)_tableView setDrawAsHighlighted:newIsSearchField];
+			self.drawTableViewAsHighlighted = newIsSearchField;
 	}
 }
 
@@ -200,24 +272,46 @@ static void* kFirstResponderBinding = &kFirstResponderBinding;
 	_filterString = [aString copy];
 	_searchField.stringValue = aString ?: @"";
 
-	if([_tableView numberOfRows] != 0)
-	{
-		[_tableView selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
-		[_tableView scrollRowToVisible:0];
-	}
-
-	[self updateItems:self];
+	[self updateFilterString:_filterString];
 
 	// see http://lists.apple.com/archives/accessibility-dev/2014/Aug/msg00024.html
 	if(nil != &NSAccessibilitySharedFocusElementsAttribute)
 		NSAccessibilityPostNotification(_tableView, NSAccessibilitySelectedRowsChangedNotification);
 }
 
+- (void)updateFilterString:(NSString*)aString
+{
+	if([_tableView numberOfRows] != 0)
+	{
+		[_tableView selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+		[_tableView scrollRowToVisible:0];
+	}
+	[self updateItems:self];
+}
+
 - (void)setItems:(NSArray*)anArray
 {
+	NSIndexSet* oldSelectedRowIndexes = _tableView.selectedRowIndexes;
+	NSArray* selectedItems;
+	if([oldSelectedRowIndexes count] > 1 || [oldSelectedRowIndexes count] == 1 && [oldSelectedRowIndexes firstIndex] > 0)
+		selectedItems = [_items objectsAtIndexes:oldSelectedRowIndexes];
+
 	_items = anArray;
 	[_tableView reloadData];
-	[_tableView scrollRowToVisible:_tableView.selectedRow == -1 ? 0 : _tableView.selectedRow];
+
+	NSMutableIndexSet* rowIndexes = [NSMutableIndexSet new];
+	for(id item in selectedItems)
+	{
+		NSUInteger row = [_items indexOfObject:item];
+		if(row != NSNotFound)
+			[rowIndexes addIndex:row];
+	}
+
+	if([rowIndexes count] == 0)
+		[rowIndexes addIndex:0];
+
+	[_tableView selectRowIndexes:rowIndexes byExtendingSelection:NO];
+	[_tableView scrollRowToVisible:[rowIndexes firstIndex]];
 
 	[self updateStatusText:self];
 
@@ -226,11 +320,18 @@ static void* kFirstResponderBinding = &kFirstResponderBinding;
 
 - (NSArray*)selectedItems
 {
-	NSMutableArray* res = [NSMutableArray array];
-	NSIndexSet* indexes = [_tableView selectedRowIndexes];
-	for(NSUInteger i = [indexes firstIndex]; i != NSNotFound; i = [indexes indexGreaterThanIndex:i])
-		[res addObject:_items[i]];
-	return res;
+	return [_items objectsAtIndexes:[_tableView selectedRowIndexes]];
+}
+
+- (void)removeItemsAtIndexes:(NSIndexSet*)anIndexSet
+{
+	[_tableView removeRowsAtIndexes:anIndexSet withAnimation:NSTableViewAnimationEffectFade];
+	NSMutableArray* items = [_items mutableCopy];
+	[items removeObjectsAtIndexes:anIndexSet];
+	_items = items;
+
+	if([_tableView numberOfRows] && ![[_tableView selectedRowIndexes] count] && [anIndexSet count])
+		[_tableView selectRowIndexes:[NSIndexSet indexSetWithIndex:MIN([anIndexSet firstIndex], [_tableView numberOfRows]-1)] byExtendingSelection:NO];
 }
 
 // =================
@@ -266,9 +367,35 @@ static void* kFirstResponderBinding = &kFirstResponderBinding;
 	return _items.count;
 }
 
-- (id)tableView:(NSTableView*)aTableView objectValueForTableColumn:(NSTableColumn*)aTableColumn row:(NSInteger)rowIndex
+- (NSTableRowView*)tableView:(NSTableView*)tableView rowViewForRow:(NSInteger)row
 {
-	return [_items[rowIndex] objectForKey:aTableColumn.identifier];
+	return [OakInactiveTableRowView new];
+}
+
+- (void)setDrawTableViewAsHighlighted:(BOOL)flag
+{
+	_drawTableViewAsHighlighted = flag;
+	[_tableView enumerateAvailableRowViewsUsingBlock:^(NSTableRowView* rowView, NSInteger row){
+		[(OakInactiveTableRowView*)rowView setDrawAsHighlighted:flag];
+	}];
+}
+
+- (void)tableView:(NSTableView*)tableView didAddRowView:(NSTableRowView*)rowView forRow:(NSInteger)row
+{
+	[(OakInactiveTableRowView*)rowView setDrawAsHighlighted:_drawTableViewAsHighlighted];
+}
+
+- (NSView*)tableView:(NSTableView*)aTableView viewForTableColumn:(NSTableColumn*)aTableColumn row:(NSInteger)row
+{
+	NSString* identifier = aTableColumn.identifier;
+	NSTextField* res = [aTableView makeViewWithIdentifier:identifier owner:self];
+	if(!res)
+	{
+		res = OakCreateLabel(@"", [NSFont controlContentFontOfSize:0]);
+		res.identifier = identifier;
+	}
+	[res setStringValue:[_items[row] objectForKey:identifier]];
+	return res;
 }
 
 - (void)tableViewSelectionDidChange:(NSNotification*)notification

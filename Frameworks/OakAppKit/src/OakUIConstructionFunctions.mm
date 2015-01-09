@@ -11,16 +11,17 @@ NSFont* OakControlFont ()
 	return [NSFont messageFontOfSize:0];
 }
 
-NSTextField* OakCreateLabel (NSString* label)
+NSTextField* OakCreateLabel (NSString* label, NSFont* font, NSTextAlignment alignment, NSLineBreakMode lineBreakMode)
 {
 	NSTextField* res = [[NSTextField alloc] initWithFrame:NSZeroRect];
 	[[res cell] setWraps:NO];
-	res.alignment       = NSRightTextAlignment;
+	[[res cell] setLineBreakMode:lineBreakMode];
+	res.alignment       = alignment;
 	res.bezeled         = NO;
 	res.bordered        = NO;
 	res.drawsBackground = NO;
 	res.editable        = NO;
-	res.font            = OakControlFont();
+	res.font            = font ?: OakControlFont();
 	res.selectable      = NO;
 	res.stringValue     = label;
 	return res;
@@ -250,6 +251,42 @@ NSView* OakCreateDividerImageView ()
 	[res addConstraint:[NSLayoutConstraint constraintWithItem:res attribute:NSLayoutAttributeWidth relatedBy:NSLayoutRelationEqual toItem:divider attribute:NSLayoutAttributeWidth multiplier:1 constant:0]];
 
 	return res;
+}
+
+void OakSetupKeyViewLoop (NSArray* mixed)
+{
+	NSMutableArray* views = [NSMutableArray new];
+	for(id candidate in mixed)
+	{
+		if([candidate isKindOfClass:[NSView class]])
+			[views addObject:candidate];
+		else if([candidate isKindOfClass:[NSArray class]])
+			[views addObjectsFromArray:candidate];
+	}
+
+	if(views.count == 1)
+	{
+		[views.firstObject setNextKeyView:nil];
+	}
+	else
+	{
+		for(size_t i = 0; i < views.count; ++i)
+			[views[i] setNextKeyView:views[(i + 1) % views.count]];
+	}
+
+	if(NSView* view = views.firstObject)
+		view.window.initialFirstResponder = view;
+}
+
+void OakAddAutoLayoutViewsToSuperview (NSArray* views, NSView* superview)
+{
+	for(NSView* view in views)
+	{
+		if([view isEqualTo:[NSNull null]])
+			continue;
+		[view setTranslatesAutoresizingMaskIntoConstraints:NO];
+		[superview addSubview:view];
+	}
 }
 
 BOOL OakSetAccessibilityLabel (NSObject* element, NSObject* label)

@@ -304,9 +304,8 @@ namespace path
 		if(p == "/" || !path::is_absolute(p))
 			return p;
 
-		if(seen.find(p) != seen.end())
+		if(!seen.insert(p).second)
 			return p;
-		seen.insert(p);
 
 		std::string resolvedParent = resolveParent ? resolve_links(parent(p), resolveParent, seen) : parent(p);
 		std::string path = path::join(resolvedParent, name(p));
@@ -390,32 +389,36 @@ namespace path
 		return DetermineIfPathIsEnclosedByFolder(kOnAppropriateDisk, kTrashFolderType, (UInt8 const*)path.c_str(), false, &res) == noErr ? res : false;
 	}
 
-	static uint16_t finder_flags (std::string const& path)
+	CFIndex label_index (std::string const& path)
 	{
-#if 01
-		FSCatalogInfo catalogInfo;
-		if(noErr == FSGetCatalogInfo(fsref_t(path), kFSCatInfoFinderInfo, &catalogInfo, NULL, NULL, NULL))
-			return ((FileInfo*)&catalogInfo.finderInfo)->finderFlags;
-#else
-		struct { u_int32_t length; FileInfo fileInfo; ExtendedFileInfo extendedInfo; } attrBuf;
-		if(getattrlist(path.c_str(), &(attrlist){ ATTR_BIT_MAP_COUNT, 0, ATTR_CMN_FNDRINFO, 0, 0, 0, 0 }, &attrBuf, sizeof(attrBuf), 0) == 0 && attrBuf.length == sizeof(attrBuf))
-			return ntohs(attrBuf.fileInfo.finderFlags);
-		else if(errno != ENOENT)
-			perror(text::format("getattrlist(‘%s’)", path.c_str()).c_str());
-#endif
-		return 0;
+		CFIndex res = 0;
+		if(CFURLRef url = CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault, (UInt8 const*)path.data(), path.size(), is_directory(path)))
+		{
+			CFNumberRef number;
+			if(CFURLCopyResourcePropertyForKey(url, kCFURLLabelNumberKey, &number, nullptr))
+			{
+				CFNumberGetValue(number, kCFNumberCFIndexType, &res);
+				CFRelease(number);
+			}
+			CFRelease(url);
+		}
+		return res;
 	}
 
-	size_t label_index (std::string const& path)
+	bool set_label_index (std::string const& path, CFIndex labelIndex)
 	{
-		return (finder_flags(path) & kColor) >> 1;
-	}
-
-	bool set_label_index (std::string const& path, size_t labelIndex)
-	{
-		FSCatalogInfo catalogInfo;
-		((FileInfo*)&catalogInfo.finderInfo)->finderFlags = (finder_flags(path) & ~kColor) | (labelIndex << 1);
-		return noErr == FSSetCatalogInfo(fsref_t(path), kFSCatInfoFinderInfo, &catalogInfo);
+		bool res = false;
+		if(CFURLRef url = CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault, (UInt8 const*)path.data(), path.size(), is_directory(path)))
+		{
+			if(CFNumberRef number = CFNumberCreate(kCFAllocatorDefault, kCFNumberCFIndexType, &labelIndex))
+			{
+				if(CFURLSetResourcePropertyForKey(url, kCFURLLabelNumberKey, number, nullptr))
+					res = true;
+				CFRelease(number);
+			}
+			CFRelease(url);
+		}
+		return res;
 	}
 
 	// ========
@@ -546,7 +549,8 @@ namespace path
 		if((mask & flag::stationery_pad) == flag::stationery_pad)
 		{
 			struct { u_int32_t length; FileInfo fileInfo; ExtendedFileInfo extendedInfo; } attrBuf;
-			if(getattrlist(path.c_str(), &(attrlist){ ATTR_BIT_MAP_COUNT, 0, ATTR_CMN_FNDRINFO, 0, 0, 0, 0 }, &attrBuf, sizeof(attrBuf), 0) == 0 && attrBuf.length == sizeof(attrBuf))
+			attrlist list = { ATTR_BIT_MAP_COUNT, 0, ATTR_CMN_FNDRINFO, 0, 0, 0, 0 };
+			if(getattrlist(path.c_str(), &list, &attrBuf, sizeof(attrBuf), 0) == 0 && attrBuf.length == sizeof(attrBuf))
 			{
 				if((ntohs(attrBuf.fileInfo.finderFlags) & kIsStationery) == kIsStationery)
 					res |= flag::stationery_pad;
@@ -966,14 +970,6 @@ namespace path
 	std::string home ()
 	{
 		return passwd_entry()->pw_dir;
-	}
-
-	std::string trash (std::string const& forPath)
-	{
-		FSRef res;
-		FSCatalogInfo info;
-		FSGetCatalogInfo(fsref_t(forPath), kFSCatInfoVolume, &info, 0, 0, 0);
-		return FSFindFolder(info.volume, kTrashFolderType, false, &res) == noErr ? to_s(res) : NULL_STR;;
 	}
 
 	static std::string system_directory (int name, std::string const& file, std::string const& content)

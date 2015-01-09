@@ -182,12 +182,11 @@ namespace
 
 	struct pretty : boost::static_visitor<std::string>
 	{
-		pretty (int flags, key_less_than_t const& keyCompare, size_t indent = 0, bool single_line = true, bool is_key = false) : flags(flags), key_compare(keyCompare), indent(indent), single_line(single_line), is_key(is_key) { }
+		pretty (int flags, key_less_than_t const& keyCompare, size_t indent = 0, bool is_key = false) : flags(flags), key_compare(keyCompare), indent(indent), is_key(is_key) { }
 
 		int flags;
 		key_less_than_t const& key_compare;
 		size_t indent;
-		bool single_line;
 		bool is_key;
 
 		std::string indent_string () const                           { return std::string(indent, '\t'); }
@@ -200,12 +199,13 @@ namespace
 
 		std::string operator() (plist::array_t const& array) const
 		{
+			bool singleLine = (flags & plist::kSingleLine) == plist::kSingleLine;
 			std::string res = "";
 			if(array.empty())
 			{
 				res = " ";
 			}
-			else if(fits_single_line()(array))
+			else if(singleLine || fits_single_line()(array))
 			{
 				size_t wrap = 0;
 				for(auto const& it : array)
@@ -213,19 +213,19 @@ namespace
 					if(!res.empty())
 						res += ", ";
 
-					if(res.size() - wrap > 80)
+					if(!singleLine && res.size() - wrap > 80)
 					{
 						res.back() = '\n';
 						res += indent_string() + '\t';
 						wrap = res.size();
 					}
 
-					res += boost::apply_visitor(pretty(flags, key_compare), it);
+					res += boost::apply_visitor(pretty(flags | plist::kSingleLine, key_compare), it);
 				}
 
 				res = " " + res + " ";
 
-				if(res.find('\n') != std::string::npos)
+				if(!singleLine && res.find('\n') != std::string::npos)
 				{
 					res.back() = '\n';
 					res += indent_string();
@@ -238,7 +238,7 @@ namespace
 					if(!res.empty())
 						res += "\n";
 					res += indent_string() + '\t';
-					res += boost::apply_visitor(pretty(flags, key_compare, indent+1, false), it);
+					res += boost::apply_visitor(pretty(flags, key_compare, indent+1), it);
 					res += ",";
 				}
 				res = "\n" + res + "\n" + indent_string();
@@ -248,16 +248,23 @@ namespace
 
 		std::string operator() (plist::dictionary_t const& dict) const
 		{
+			bool singleLine = (flags & plist::kSingleLine) == plist::kSingleLine;
 			std::string res = "";
 			if(dict.empty())
 			{
 				res = " ";
 			}
-			else if(fits_single_line()(dict))
+			else if(singleLine || fits_single_line()(dict))
 			{
-				std::string const& key = pretty_key(dict.begin()->first, flags);
-				std::string const& value = boost::apply_visitor(pretty(flags, key_compare), dict.begin()->second);
-				res = text::format("%c%s = %s; ", single_line || is_key ? ' ' : '\t', key.c_str(), value.c_str());
+				if(res.empty())
+					res += singleLine || !indent || is_key ? " " : "\t";
+
+				for(auto const& it : dict)
+				{
+					std::string const& key = pretty_key(it.first, flags | plist::kSingleLine);
+					std::string const& value = boost::apply_visitor(pretty(flags | plist::kSingleLine, key_compare), it.second);
+					res += text::format("%s = %s; ", key.c_str(), value.c_str());
+				}
 			}
 			else
 			{
@@ -269,7 +276,7 @@ namespace
 					if(!res.empty())
 						res += indent_string();
 					std::string const& key = pretty_key(it.first, flags);
-					std::string const& value = boost::apply_visitor(pretty(flags, key_compare, indent+1, false, true), it.second);
+					std::string const& value = boost::apply_visitor(pretty(flags, key_compare, indent+1, true), it.second);
 					res += text::format("\t%s = %s;\n", key.c_str(), value.c_str());
 				}
 				res = (is_key ? "\n" + indent_string() : "") + res + indent_string();

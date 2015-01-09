@@ -26,7 +26,7 @@ static void CreateHyperLink (NSTextField* textField, NSString* text, NSString* u
 	[attrString beginEditing];
 	[attrString addAttribute:NSLinkAttributeName value:url range:range];
 	[attrString addAttribute:NSForegroundColorAttributeName value:[NSColor blueColor] range:range];
-	[attrString addAttribute:NSUnderlineStyleAttributeName value:@(NSSingleUnderlineStyle) range:range];
+	[attrString addAttribute:NSUnderlineStyleAttributeName value:@(NSUnderlineStyleSingle) range:range];
 	[attrString endEditing];
 
 	[textField setAttributedStringValue:attrString];
@@ -263,7 +263,7 @@ static bool uninstall_mate (std::string const& path)
 			[self setMateInstallPath:dstPath];
 			std::string res = io::exec(to_s(srcPath), "--version", NULL);
 			if(regexp::match_t const& m = regexp::search("\\Amate ([\\d.]+)", res))
-				[[NSUserDefaults standardUserDefaults] setDouble:std::stod(m[1]) forKey:kUserDefaultsMateInstallVersionKey];
+				[[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithCxxString:m[1]] forKey:kUserDefaultsMateInstallVersionKey];
 		}
 	}
 	else

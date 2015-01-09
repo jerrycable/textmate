@@ -72,6 +72,7 @@ static NSButton* OakCreateHistoryButton (NSString* toolTip)
 	res.title      = @"";
 	res.toolTip    = toolTip;
 	OakSetAccessibilityLabel(res, toolTip);
+	[res setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
 	return res;
 }
 
@@ -276,21 +277,11 @@ static NSButton* OakCreateStopSearchButton ()
 		[self.resultsViewController     bind:@"replaceString"       toObject:_objectController withKeyPath:@"content.replaceString"        options:nil];
 
 		NSView* contentView = self.window.contentView;
-		for(NSView* view in [self.allViews allValues])
-		{
-			if([view isEqualTo:[NSNull null]])
-				continue;
-			[view setTranslatesAutoresizingMaskIntoConstraints:NO];
-			[contentView addSubview:view];
-		}
-
-		for(NSView* view in @[ self.stopSearchButton, self.progressIndicator ])
-			[view setTranslatesAutoresizingMaskIntoConstraints:NO];
+		OakAddAutoLayoutViewsToSuperview([self.allViews allValues], contentView);
 
 		[self updateConstraints];
 
-		self.window.initialFirstResponder = self.findTextField;
-		self.window.defaultButtonCell     = self.findNextButton.cell;
+		self.window.defaultButtonCell = self.findNextButton.cell;
 
 		self.searchIn = FFSearchInDocument;
 
@@ -446,17 +437,8 @@ static NSButton* OakCreateStopSearchButton ()
 	[self.window.contentView addConstraints:_myConstraints];
 
 	if(self.showsResultsOutlineView)
-	{
-		NSView* keyViewLoop[] = { self.findTextField, self.replaceTextField, self.countButton, self.regularExpressionCheckBox, self.ignoreWhitespaceCheckBox, self.ignoreCaseCheckBox, self.wrapAroundCheckBox, self.wherePopUpButton, self.globTextField, self.actionsPopUpButton, self.resultsViewController.outlineView, self.findAllButton, self.replaceAllButton, self.replaceButton, self.replaceAndFindButton, self.findPreviousButton, self.findNextButton };
-		for(size_t i = 0; i < sizeofA(keyViewLoop); ++i)
-			keyViewLoop[i].nextKeyView = keyViewLoop[(i + 1) % sizeofA(keyViewLoop)];
-	}
-	else
-	{
-		NSView* keyViewLoop[] = { self.findTextField, self.replaceTextField, self.countButton, self.regularExpressionCheckBox, self.ignoreWhitespaceCheckBox, self.ignoreCaseCheckBox, self.wrapAroundCheckBox, self.wherePopUpButton, self.globTextField, self.actionsPopUpButton, self.findAllButton, self.replaceAllButton, self.replaceButton, self.replaceAndFindButton, self.findPreviousButton, self.findNextButton };
-		for(size_t i = 0; i < sizeofA(keyViewLoop); ++i)
-			keyViewLoop[i].nextKeyView = keyViewLoop[(i + 1) % sizeofA(keyViewLoop)];
-	}
+			OakSetupKeyViewLoop(@[ self.findTextField, self.replaceTextField, self.countButton, self.regularExpressionCheckBox, self.ignoreWhitespaceCheckBox, self.ignoreCaseCheckBox, self.wrapAroundCheckBox, self.wherePopUpButton, self.globTextField, self.actionsPopUpButton, self.resultsViewController.outlineView, self.findAllButton, self.replaceAllButton, self.replaceButton, self.replaceAndFindButton, self.findPreviousButton, self.findNextButton ]);
+	else	OakSetupKeyViewLoop(@[ self.findTextField, self.replaceTextField, self.countButton, self.regularExpressionCheckBox, self.ignoreWhitespaceCheckBox, self.ignoreCaseCheckBox, self.wrapAroundCheckBox, self.wherePopUpButton, self.globTextField, self.actionsPopUpButton, self.findAllButton, self.replaceAllButton, self.replaceButton, self.replaceAndFindButton, self.findPreviousButton, self.findNextButton ]);
 }
 
 - (void)userDefaultsDidChange:(NSNotification*)aNotification
@@ -490,8 +472,13 @@ static NSButton* OakCreateStopSearchButton ()
 	if([keyPath isEqualToString:@"firstResponder"])
 	{
 		NSResponder* firstResponder = [self.window firstResponder];
-		if(![firstResponder isKindOfClass:[NSTextView class]])
-			self.resultsViewController.showReplacementPreviews = firstResponder == self.replaceTextField;
+		self.resultsViewController.showReplacementPreviews = firstResponder == self.replaceTextField || firstResponder == self.replaceTextField.currentEditor;
+
+		if([firstResponder isKindOfClass:[NSTextView class]])
+		{
+			NSTextView* textView = (NSTextView*)firstResponder;
+			NSLog(@"Find window first responder frame %@", NSStringFromRect([textView convertRect:textView.bounds toView:nil]));
+		}
 	}
 }
 
@@ -582,7 +569,7 @@ static NSButton* OakCreateStopSearchButton ()
 {
 	std::vector<std::string> paths;
 	for(NSUInteger i = 0; i < [self.recentFolders count]; ++i)
-		paths.push_back(to_s((NSString*)[self.recentFolders objectAtIndex:i]));
+		paths.push_back(to_s([self.recentFolders objectAtIndex:i]));
 	if(NSString* folder = self.searchFolder)
 		paths.push_back(to_s(folder));
 	paths.push_back(to_s(self.projectFolder));
@@ -679,7 +666,7 @@ static NSButton* OakCreateStopSearchButton ()
 		if(!self.findStringPopver)
 		{
 			NSViewController* viewController = [NSViewController new];
-			viewController.view = OakCreateLabel(@"");
+			viewController.view = OakCreateLabel();
 
 			self.findStringPopver = [NSPopover new];
 			self.findStringPopver.behavior = NSPopoverBehaviorTransient;
@@ -722,14 +709,8 @@ static NSButton* OakCreateStopSearchButton ()
 
 	NSView* view = self.resultsViewController.view;
 	if(_showsResultsOutlineView = flag)
-	{
-		[view setTranslatesAutoresizingMaskIntoConstraints:NO];
-		[self.window.contentView addSubview:view];
-	}
-	else
-	{
-		[view removeFromSuperview];
-	}
+			OakAddAutoLayoutViewsToSuperview(@[ view ], self.window.contentView);
+	else	[view removeFromSuperview];
 
 	[self updateConstraints];
 
@@ -767,30 +748,60 @@ static NSButton* OakCreateStopSearchButton ()
 	if(_busy == busyFlag)
 		return;
 
+	NSArray* busyViews = @[ self.stopSearchButton, self.progressIndicator ];
 	if(_busy = busyFlag)
 	{
-		[self.window.contentView addSubview:self.stopSearchButton];
-		[self.window.contentView addSubview:self.progressIndicator];
+		OakAddAutoLayoutViewsToSuperview(busyViews, self.window.contentView);
 		[self.progressIndicator startAnimation:self];
 	}
 	else
 	{
-		[self.stopSearchButton removeFromSuperview];
 		[self.progressIndicator stopAnimation:self];
-		[self.progressIndicator removeFromSuperview];
+		[busyViews makeObjectsPerformSelector:@selector(removeFromSuperview)];
 	}
 	[self updateConstraints];
 }
 
+- (id)formatStatusString:(NSString*)aString
+{
+	if(OakIsEmptyString(aString))
+		return @" ";
+
+	static NSAttributedString* const lineJoiner = [[NSAttributedString alloc] initWithString:@"¬" attributes:@{ NSForegroundColorAttributeName : [NSColor lightGrayColor] }];
+	static NSAttributedString* const tabJoiner  = [[NSAttributedString alloc] initWithString:@"‣" attributes:@{ NSForegroundColorAttributeName : [NSColor lightGrayColor] }];
+
+	NSMutableAttributedString* res = [[NSMutableAttributedString alloc] init];
+
+	__block bool firstLine = true;
+	[aString enumerateLinesUsingBlock:^(NSString* line, BOOL* stop){
+		if(!std::exchange(firstLine, false))
+			[res appendAttributedString:lineJoiner];
+
+		bool firstTab = true;
+		for(NSString* str in [line componentsSeparatedByString:@"\t"])
+		{
+			if(!std::exchange(firstTab, false))
+				[res appendAttributedString:tabJoiner];
+			[res appendAttributedString:[[NSAttributedString alloc] initWithString:str]];
+		}
+	}];
+
+	NSMutableParagraphStyle* paragraphStyle = [[NSMutableParagraphStyle alloc] init];
+	[paragraphStyle setLineBreakMode:NSLineBreakByTruncatingMiddle];
+	[res addAttributes:@{ NSParagraphStyleAttributeName : paragraphStyle } range:NSMakeRange(0, [[res string] length])];
+
+	return res;
+}
+
 - (void)setStatusString:(NSString*)aString
 {
-	self.statusTextField.title = _statusString = OakIsEmptyString(aString) ? @" " : aString;
+	self.statusTextField.attributedTitle = [self formatStatusString:_statusString = aString];
 	self.alternateStatusString = nil;
 }
 
 - (void)setAlternateStatusString:(NSString*)aString
 {
-	self.statusTextField.alternateTitle = _alternateStatusString = aString;
+	self.statusTextField.attributedAlternateTitle = (_alternateStatusString = aString) ? [self formatStatusString:aString] : nil;
 }
 
 - (NSString*)searchFolder
