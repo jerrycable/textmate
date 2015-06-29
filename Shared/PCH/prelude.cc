@@ -7,6 +7,8 @@
 #include "prelude-mac.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <cmath>
 #include <deque>
 #include <functional>
 #include <iterator>
@@ -20,5 +22,6 @@
 #include <thread>
 #include <boost/crc.hpp>
 #include <boost/variant.hpp>
+#include <sparsehash/dense_hash_map>
 
 #endif /* end of include guard: PRELUDE_CC_PCH_U5CKEP2N */

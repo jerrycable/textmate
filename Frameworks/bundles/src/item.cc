@@ -160,7 +160,7 @@ namespace bundles
 		_fields.emplace(kFieldName, newName);
 	}
 
-	std::string item_t::full_name () const
+	std::string item_t::name_with_bundle () const
 	{
 		return name() + (bundle() ? " — " + bundle()->name() : "");
 	}
@@ -236,7 +236,7 @@ namespace bundles
 			auto bundles = query(kFieldName, require._name, scope::wildcard, kItemTypeBundle, require._uuid);
 			if(bundles.size() == 1)
 					base[format_string::expand("TM_${name/.*/\\U${0/[^a-zA-Z]+/_/g}/}_BUNDLE_SUPPORT", std::map<std::string, std::string>{ { "name", require._name } })] = (bundles.back())->support_path();
-			else	fprintf(stderr, "*** %s: unable to find required bundle: %s / %s\n", full_name().c_str(), require._name.c_str(), to_s(require._uuid).c_str());
+			else	fprintf(stderr, "*** %s: unable to find required bundle: %s / %s\n", name_with_bundle().c_str(), require._name.c_str(), to_s(require._uuid).c_str());
 		}
 
 		return base;
@@ -352,16 +352,17 @@ namespace bundles
 				location = path::parent(bundle()->_paths.front());
 			}
 
-			for(size_t i = 0; i < sizeofA(PathFormats) && destPath == NULL_STR; ++i)
+			for(auto const& pathFormat : PathFormats)
 			{
-				if(PathFormats[i].type == _kind)
+				if(pathFormat.type == _kind)
 				{
 					std::string base = name();
 					std::replace(base.begin(), base.end(), '/', ':');
 					std::replace(base.begin(), base.end(), '.', '_');
-					destPath = path::unique(path::join(location, text::format(PathFormats[i].format, base.c_str())));
+					destPath = path::unique(path::join(location, text::format(pathFormat.format, base.c_str())));
 					if(_kind == kItemTypeBundle)
 						destPath = path::join(destPath, "info.plist");
+					break;
 				}
 			}
 		}

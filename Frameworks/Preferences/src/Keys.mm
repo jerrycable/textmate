@@ -31,7 +31,6 @@ static NSDictionary* default_settings ()
 		kUserDefaultsRMateServerListenKey       : kRMateServerListenLocalhost,
 		kUserDefaultsRMateServerPortKey         : @"52698",
 		kUserDefaultsLicenseOwnerKey            : NSFullUserName(),
-		kUserDefaultsAntiAliasKey               : @YES,
 		kUserDefaultsLineNumbersKey             : @YES,
 	};
 }
@@ -54,6 +53,7 @@ void RegisterDefaults ()
 NSString* const kUserDefaultsDisableSessionRestoreKey            = @"disableSessionRestore";
 NSString* const kUserDefaultsDisableNewDocumentAtStartupKey      = @"disableNewDocumentAtStartup";
 NSString* const kUserDefaultsDisableNewDocumentAtReactivationKey = @"disableNewDocumentAtReactivation";
+NSString* const kUserDefaultsShowFavoritesInsteadOfUntitledKey   = @"showFavoritesInsteadOfUntitled";
 
 // ============
 // = Projects =
@@ -108,7 +108,7 @@ NSString* const kUserDefaultsLicenseOwnerKey            = @"licenseOwnerName";
 // = Appearance =
 // ==============
 
-NSString* const kUserDefaultsAntiAliasKey               = @"antiAlias";
+NSString* const kUserDefaultsDisableAntiAliasKey        = @"disableAntiAlias";
 NSString* const kUserDefaultsLineNumbersKey             = @"lineNumbers";
 
 // =========

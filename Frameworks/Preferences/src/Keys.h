@@ -13,6 +13,7 @@ PUBLIC void RegisterDefaults ();
 PUBLIC extern NSString* const kUserDefaultsDisableSessionRestoreKey;
 PUBLIC extern NSString* const kUserDefaultsDisableNewDocumentAtStartupKey;
 PUBLIC extern NSString* const kUserDefaultsDisableNewDocumentAtReactivationKey;
+PUBLIC extern NSString* const kUserDefaultsShowFavoritesInsteadOfUntitledKey;
 
 // ============
 // = Projects =
@@ -67,7 +68,7 @@ PUBLIC extern NSString* const kUserDefaultsLicenseOwnerKey;
 // = Appearance =
 // ==============
 
-PUBLIC extern NSString* const kUserDefaultsAntiAliasKey;
+PUBLIC extern NSString* const kUserDefaultsDisableAntiAliasKey;
 PUBLIC extern NSString* const kUserDefaultsLineNumbersKey;
 
 // =========

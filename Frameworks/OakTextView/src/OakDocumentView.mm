@@ -22,6 +22,8 @@
 
 OAK_DEBUG_VAR(OakDocumentView);
 
+static NSString* const kUserDefaultsLineNumberScaleFactorKey = @"lineNumberScaleFactor";
+
 static NSString* const kBookmarksColumnIdentifier = @"bookmarks";
 static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 
@@ -250,17 +252,29 @@ private:
 	return res == [NSNull null] ? nil : res;
 }
 
-- (void)setFont:(NSFont*)newFont
+- (void)updateGutterViewFont:(id)sender
 {
-	gutterImages = nil; // force image sizes to be recalculated
+	CGFloat const scaleFactor = [[NSUserDefaults standardUserDefaults] floatForKey:kUserDefaultsLineNumberScaleFactorKey] ?: 0.8;
 
-	textView.font = newFont;
-	gutterView.lineNumberFont = [NSFont fontWithName:[newFont fontName] size:round(0.8 * [newFont pointSize])];
+	gutterImages = nil; // force image sizes to be recalculated
+	gutterView.lineNumberFont = [NSFont fontWithName:[textView.font fontName] size:round(scaleFactor * [textView.font pointSize] * textView.fontScaleFactor / 100)];
 	[gutterView reloadData:self];
 }
 
-- (IBAction)makeTextLarger:(id)sender       { [self setFont:[NSFont fontWithName:[textView.font fontName] size:[textView.font pointSize] + 1]]; }
-- (IBAction)makeTextSmaller:(id)sender      { [self setFont:[NSFont fontWithName:[textView.font fontName] size:std::max<CGFloat>([textView.font pointSize] - 1, 5)]]; }
+- (IBAction)makeTextLarger:(id)sender
+{
+	textView.fontScaleFactor += 10;
+	[self updateGutterViewFont:self];
+}
+
+- (IBAction)makeTextSmaller:(id)sender
+{
+	if(textView.fontScaleFactor > 10)
+	{
+		textView.fontScaleFactor -= 10;
+		[self updateGutterViewFont:self];
+	}
+}
 
 - (void)changeFont:(id)sender
 {
@@ -268,7 +282,8 @@ private:
 	{
 		settings_t::set(kSettingsFontNameKey, to_s([newFont fontName]));
 		settings_t::set(kSettingsFontSizeKey, [newFont pointSize]);
-		[self setFont:newFont];
+		textView.font = newFont;
+		[self updateGutterViewFont:self];
 	}
 }
 
@@ -383,7 +398,7 @@ private:
 			[textScrollView setScrollerKnobStyle:NSScrollerKnobStyleDark];
 		}
 
-		[self setFont:textView.font]; // trigger update of gutter view’s line number font
+		[self updateGutterViewFont:self]; // trigger update of gutter view’s line number font
 		auto const& styles = theme->gutter_styles();
 
 		gutterView.foregroundColor           = [NSColor tmColorWithCGColor:styles.foreground];

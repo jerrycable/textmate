@@ -29,6 +29,7 @@
 #import <regexp/format_string.h>
 #import <regexp/glob.h>
 #import <settings/settings.h>
+#import <oak/compat.h>
 
 OAK_DEBUG_VAR(FileBrowser_Controller);
 
@@ -235,9 +236,11 @@ static NSMutableSet* SymmetricDifference (NSMutableSet* aSet, NSMutableSet* anot
 
 	_view = [OakFileBrowserView new];
 
-	NSCell* cell = [OFBPathInfoCell new];
+	NSTextFieldCell* cell = [OFBPathInfoCell new];
 	cell.lineBreakMode = NSLineBreakByTruncatingMiddle;
 	[cell setEditable:YES];
+	if(_outlineView.renderAsSourceList && oak::os_tuple() >= std::make_tuple(10, 10, 0))
+		cell.textColor = [NSColor textColor];
 
 	NSTableColumn* tableColumn = [NSTableColumn new];
 	[tableColumn setDataCell:cell];
