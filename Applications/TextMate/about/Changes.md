@@ -2,6 +2,18 @@ Title: Release Notes
 
 # Changes
 
+## 2015-07-17 (v2.0-beta.7.6)
+
+* Double-tapping shift will now also leave “freehanded mode”.
+* Fix a bunch of file browser issues. There is still more work to be done here, for example renaming an item can still be aborted, but should be much rarer, and all other known issues should have been fixed (so pending work falls into the improvements category). If you have feedback about the file browser (issues, suggestions), now is the time to bring it up!
+* See [all changes since v2.0-beta.7.5](https://github.com/textmate/textmate/compare/v2.0-beta.7.5...v2.0-beta.7.6)
+
+## 2015-06-25 (v2.0-beta.7.5)
+
+* Support spell checking being “automatic by language”. This is set via the spelling panel.
+* The line number scale factor can be set via the `lineNumberScaleFactor` user defaults key. It defaults to 0.8. If you want line numbers to be same size as main text, run the following in a terminal: `defaults write com.macromates.TextMate.preview lineNumberScaleFactor -float 1`.
+* See [all changes since v2.0-beta.7.2](https://github.com/textmate/textmate/compare/v2.0-beta.7.2...v2.0-beta.7.5)
+
 ## 2015-06-13 (v2.0-beta.7.2)
 
 * If you do not want to be told that TextMate is outdated then go to _About TextMate → Registration_ and add your license key.

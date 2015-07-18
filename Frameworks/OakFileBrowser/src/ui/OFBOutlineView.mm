@@ -29,6 +29,20 @@
 @end
 
 @implementation OFBOutlineView
+- (void)expandItem:(id)anItem expandChildren:(BOOL)flag
+{
+	BOOL oldFlag = std::exchange(_recursiveRequest, flag);
+	[super expandItem:anItem expandChildren:flag];
+	_recursiveRequest = oldFlag;
+}
+
+- (void)collapseItem:(id)anItem collapseChildren:(BOOL)flag
+{
+	BOOL oldFlag = std::exchange(_recursiveRequest, flag);
+	[super collapseItem:anItem collapseChildren:flag];
+	_recursiveRequest = oldFlag;
+}
+
 - (void)setRenderAsSourceList:(BOOL)value
 {
 	if(_renderAsSourceList == value)
@@ -124,10 +138,10 @@
 	if(!self.menuDelegate)
 		return [super menuForEvent:theEvent];
 
-	int row = [self rowAtPoint:[self convertPoint:[theEvent locationInWindow] fromView:nil]];
-	if(row == -1)
-		[self selectRowIndexes:[NSIndexSet indexSet] byExtendingSelection:NO];
-	else if(![self.selectedRowIndexes containsIndex:row])
+	NSInteger row = [self rowAtPoint:[self convertPoint:[theEvent locationInWindow] fromView:nil]];
+	if(row != -1 && [self.delegate respondsToSelector:@selector(outlineView:shouldSelectItem:)] && ![self.delegate outlineView:self shouldSelectItem:[self itemAtRow:row]])
+		row = -1;
+	if(row != -1 && ![self.selectedRowIndexes containsIndex:row])
 		[self selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
 	return [self.menuDelegate menuForOutlineView:self];
 }

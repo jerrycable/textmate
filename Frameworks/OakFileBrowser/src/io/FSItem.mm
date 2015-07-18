@@ -38,14 +38,30 @@
 	return [otherObject isKindOfClass:[self class]] && [self.url isEqual:[otherObject url]];
 }
 
+- (NSUInteger)hash
+{
+	return [self.url hash];
+}
+
 - (NSString*)description
 {
-	return [NSString stringWithFormat:@"FSItem (%p): %@", self, [self.url absoluteString]];
+	return [NSString stringWithFormat:@"FSItem (%p): %@ (%ld children)", self, [self.url absoluteString], [self.children count]];
 }
 
 - (NSString*)path
 {
 	return [self.url path];
+}
+
+- (scm::status::type)scmStatus
+{
+	return [_icon isKindOfClass:[OakFileIconImage class]] ? ((OakFileIconImage*)_icon).scmStatus : scm::status::unknown;
+}
+
+- (void)setScmStatus:(scm::status::type)newScmStatus
+{
+	if([_icon isKindOfClass:[OakFileIconImage class]])
+		((OakFileIconImage*)_icon).scmStatus = newScmStatus;
 }
 
 - (FSItemURLType)urlType
