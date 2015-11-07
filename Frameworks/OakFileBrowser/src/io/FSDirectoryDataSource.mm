@@ -25,7 +25,6 @@ struct tracking_t;
 }
 @property (nonatomic) dev_t device;
 @property (nonatomic) ino_t inode;
-@property (nonatomic) BOOL missing;
 - (void)internalNeedsReload;
 @end
 
@@ -48,7 +47,7 @@ struct tracking_t : fs::event_callback_t
 				std::set<std::string> pathsShown, pathsDeleted, pathsMissingOnDisk;
 				for(FSFileItem* item in _item.children)
 				{
-					if(item.missing)
+					if(item.isMissing)
 						pathsMissingOnDisk.insert(to_s(item.url.path));
 					pathsShown.insert(to_s(item.url.path));
 				}
@@ -62,14 +61,7 @@ struct tracking_t : fs::event_callback_t
 				if(std::includes(pathsShown.begin(), pathsShown.end(), pathsDeleted.begin(), pathsDeleted.end()) && std::includes(pathsDeleted.begin(), pathsDeleted.end(), pathsMissingOnDisk.begin(), pathsMissingOnDisk.end()))
 				{
 					for(FSFileItem* item in _item.children)
-					{
-						scm::status::type newStatus = info.status(to_s([item.url path]));
-						if(newStatus != item.scmStatus)
-						{
-							item.scmStatus = newStatus;
-							[[NSNotificationCenter defaultCenter] postNotificationName:FSItemDidReloadNotification object:_data_source userInfo:@{ @"item" : item }];
-						}
-					}
+						item.scmStatus = info.status(to_s([item.url path]));
 				}
 				else
 				{
@@ -200,8 +192,13 @@ struct tracking_t : fs::event_callback_t
 
 			dispatch_async(dispatch_get_main_queue(), ^{
 				std::map< std::pair<dev_t, ino_t>, FSFileItem* > existingItems;
+				std::map< std::string, FSFileItem* > allItems;
 				for(FSFileItem* item in self.children)
-					existingItems.emplace(std::make_pair(item.device, item.inode), item);
+				{
+					if(!item.isMissing)
+						existingItems.emplace(std::make_pair(item.device, item.inode), item);
+					allItems.emplace([[item.url absoluteString] fileSystemRepresentation], item);
+				}
 
 				std::set<std::string> pathsOnDisk;
 				scm::info_ptr scmInfo = _tracking ? _tracking->_scm_info : scm::info_ptr();
@@ -209,8 +206,13 @@ struct tracking_t : fs::event_callback_t
 				NSMutableArray* array = [NSMutableArray array];
 				for(auto const& fsItem : newItems)
 				{
+					NSURL* url = [NSURL fileURLWithPath:[NSString stringWithCxxString:fsItem.path] isDirectory:fsItem.is_directory];
+
 					FSFileItem* item;
 					auto it = existingItems.find(std::make_pair(fsItem.device, fsItem.inode));
+					if(it != existingItems.end() && fsItem.is_directory && ![it->second.url isEqual:url] && it->second.children)
+						it = existingItems.end();
+
 					if(it != existingItems.end())
 					{
 						item = it->second;
@@ -218,19 +220,30 @@ struct tracking_t : fs::event_callback_t
 					}
 					else
 					{
-						item = [FSFileItem new];
-						item.device = fsItem.device;
-						item.inode  = fsItem.inode;
+						auto it = allItems.find([[url absoluteString] fileSystemRepresentation]);
+						if(it != allItems.end())
+						{
+							item = it->second;
+							item.missing = NO;
+							allItems.erase(it);
+						}
+						else
+						{
+							item = [FSFileItem new];
+						}
 					}
 
 					OakFileIconImage* image = [[OakFileIconImage alloc] initWithSize:NSMakeSize(16, 16)];
-					image.path      = [NSString stringWithCxxString:fsItem.path];
+					image.path      = url.path;
 					image.directory = fsItem.is_directory || (fsItem.is_link && fsItem.sort_as_directory);
 					image.alias     = fsItem.is_link;
+					image.modified  = item.isModified;
 					if(scmInfo)
 						image.scmStatus = scmInfo->status(fsItem.path);
 
-					item.url          = [NSURL fileURLWithPath:[NSString stringWithCxxString:fsItem.path] isDirectory:fsItem.is_directory];
+					item.url          = url;
+					item.device       = fsItem.device;
+					item.inode        = fsItem.inode;
 					item.displayName  = [NSString stringWithCxxString:path::display_name(fsItem.path)];
 					item.icon         = image;
 					item.labelIndex   = fsItem.label;
@@ -253,17 +266,33 @@ struct tracking_t : fs::event_callback_t
 						if(!(pair.second & scm::status::deleted) || dir != path::parent(pair.first) || pathsOnDisk.find(pair.first) != pathsOnDisk.end())
 							continue;
 
+						NSURL* url = [NSURL fileURLWithPath:[NSString stringWithCxxString:pair.first] isDirectory:NO];
+
+						FSFileItem* item;
+						auto it = allItems.find([[url absoluteString] fileSystemRepresentation]);
+						if(it != allItems.end())
+						{
+							item = it->second;
+							allItems.erase(it);
+						}
+						else
+						{
+							item = [FSFileItem new];
+						}
+
 						OakFileIconImage* image = [[OakFileIconImage alloc] initWithSize:NSMakeSize(16, 16)];
-						image.path      = [NSString stringWithCxxString:pair.first];
+						image.path      = url.path;
 						image.exists    = NO;
 						image.scmStatus = pair.second;
 
-						FSFileItem* item = [FSFileItem new];
-						item.url         = [NSURL fileURLWithPath:[NSString stringWithCxxString:pair.first] isDirectory:NO];
+						item.url         = url;
+						item.device      = 0;
+						item.inode       = 0;
 						item.displayName = [NSString stringWithCxxString:path::name(pair.first)];
 						item.icon        = image;
 						item.leaf        = YES;
 						item.missing     = YES;
+						item.target      = nil;
 
 						[array addObject:item];
 					}

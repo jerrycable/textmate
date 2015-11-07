@@ -1347,14 +1347,16 @@ namespace ng
 		if(inputRanges.size() > 1 && format == output_format::text && placement != output::replace_document)
 		{
 			std::vector<std::string> words = text::split(out, "\n");
-			if(words.size() > 1 && words.back().empty())
+			if(words.size() == 2 && words.back().empty())
 				words.pop_back();
 
 			size_t i = 0;
 			std::multimap<range_t, std::string> insertions;
 			for(auto const& range : dissect_columnar(_buffer, inputRanges))
 				insertions.emplace(range, words[i++ % words.size()]);
-			_selections = ng::move(_buffer, replace_helper(_buffer, _snippets, insertions), kSelectionMoveToEndOfSelection);
+			_selections = replace_helper(_buffer, _snippets, insertions);
+			if(outputCaret != output_caret::select_output)
+				_selections = ng::move(_buffer, _selections, kSelectionMoveToEndOfSelection);
 			return true;
 		}
 

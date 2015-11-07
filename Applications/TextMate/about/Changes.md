@@ -2,17 +2,24 @@ Title: Release Notes
 
 # Changes
 
-## 2015-07-17 (v2.0-beta.7.6)
+## 2015-10-23 (v2.0-beta.8.1)
 
+* Add _View → Font → Default Size_ menu action bound to ⌘0 which works for both text and HTML output.. The _Last Tab_ action has been moved to ⌘9.
+* TextMate’s QuickLook plug-in can now show compiled AppleScript files.
+* New project scope for Cargo (Rust) projects (`attr.project.cargo`).
+* Miscellaneous fixes.
+* See [all changes since v2.0-beta.8](https://github.com/textmate/textmate/compare/v2.0-beta.8...v2.0-beta.8.1)
+
+## 2015-09-16 (v2.0-beta.8)
+
+* You can now export a bundle (merging potential delta files) by right-clicking the bundle in the bundle editor and selecting _Export Bundle…_.
+* Improved support for multiple carets/selections and commands, for example fallback units are now respected when there are multiple carets (and none have a selection).
+* The file browser is now view-based (instead of cell-based). The main “feature” is that renaming an item should no longer be involuntarily aborted (when there are disk changes), though there are also some minor interaction changes and more animations plus labels are rendered closer to how Finder has shown them since 10.9.
+* You can now use ⌥⌘V in the file browser to “move” the item on the clipboard to the current folder. This makes it possible to copy files from Finder and “move” to the location in TextMate’s file browser and thus the old way of moving files via keyboard (⌘X + ⌘V) is deprecated and will be removed.
 * Double-tapping shift will now also leave “freehanded mode”.
-* Fix a bunch of file browser issues. There is still more work to be done here, for example renaming an item can still be aborted, but should be much rarer, and all other known issues should have been fixed (so pending work falls into the improvements category). If you have feedback about the file browser (issues, suggestions), now is the time to bring it up!
-* See [all changes since v2.0-beta.7.5](https://github.com/textmate/textmate/compare/v2.0-beta.7.5...v2.0-beta.7.6)
-
-## 2015-06-25 (v2.0-beta.7.5)
-
 * Support spell checking being “automatic by language”. This is set via the spelling panel.
 * The line number scale factor can be set via the `lineNumberScaleFactor` user defaults key. It defaults to 0.8. If you want line numbers to be same size as main text, run the following in a terminal: `defaults write com.macromates.TextMate.preview lineNumberScaleFactor -float 1`.
-* See [all changes since v2.0-beta.7.2](https://github.com/textmate/textmate/compare/v2.0-beta.7.2...v2.0-beta.7.5)
+* See [all changes since v2.0-beta.7.4](https://github.com/textmate/textmate/compare/v2.0-beta.7.4...v2.0-beta.8)
 
 ## 2015-06-13 (v2.0-beta.7.2)
 

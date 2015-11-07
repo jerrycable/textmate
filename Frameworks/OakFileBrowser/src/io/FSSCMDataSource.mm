@@ -20,54 +20,37 @@ static NSURL* URLAppend (NSURL* base, NSString* relativePath)
 	return [NSURL URLWithString:[[NSURL URLWithString:relativePath relativeToURL:base] absoluteString]];
 }
 
-static NSArray* convert (std::vector<std::string> const& paths, std::string const& wcPath, bool hideSCMBadge = false)
+static NSArray* convert (std::map<std::string, scm::status::type> const& pathsMap, std::string const& wcPath, NSArray* oldItems, bool hideSCMBadge = false)
 {
+	NSMutableDictionary* cache = [NSMutableDictionary new];
+	for(FSItem* item in oldItems)
+		cache[item.url] = item;
+
+	std::vector<std::string> paths;
+	std::transform(pathsMap.begin(), pathsMap.end(), back_inserter(paths), [](std::pair<std::string, scm::status::type> const& p){ return p.first; });
+
 	auto parents = path::disambiguate(paths);
 	auto parent = parents.begin();
 
 	NSMutableArray* res = [NSMutableArray array];
-	for(auto const& path : paths)
+	for(auto const& pair : pathsMap)
 	{
-		FSItem* item = [FSItem itemWithURL:[NSURL fileURLWithPath:[NSString stringWithCxxString:path]]];
-		item.displayName = [NSString stringWithCxxString:path::display_name(path, *parent++)];
-		item.target      = [NSURL fileURLWithPath:[NSString stringWithCxxString:path]];
-		item.labelIndex  = path::label_index(path);
-		item.toolTip     = [NSString stringWithCxxString:path::relative_to(path, wcPath)];
-		item.leaf        = YES;
+		NSURL* url = [NSURL fileURLWithPath:[NSString stringWithCxxString:pair.first]];
+		FSItem* item = cache[url];
+		if(!item)
+			item = [FSItem itemWithURL:url];
 
-		if(hideSCMBadge)
-			item.scmStatus = scm::status::none;
+		item.displayName = [NSString stringWithCxxString:path::display_name(pair.first, *parent++)];
+		item.target      = url;
+		item.labelIndex  = path::label_index(pair.first);
+		item.toolTip     = [NSString stringWithCxxString:path::relative_to(pair.first, wcPath)];
+		item.leaf        = YES;
+		item.scmStatus   = hideSCMBadge ? scm::status::none : pair.second;
+		item.missing     = pair.second == scm::status::deleted;
 
 		[res addObject:item];
 	}
 	return res;
-}
-
-template <typename _Iter>
-_Iter prune_path_parents (_Iter it, _Iter last)
-{
-	_Iter out = it;
-	std::sort(it, last);
-	std::reverse(it, last);
-	for(std::string child = NULL_STR; it != last; child = *it++)
-	{
-		if(!path::is_child(child, *it))
-			*out++ = *it;
-	}
-	return out;
-}
-
-template <typename _Iter>
-_Iter prune_path_children (_Iter it, _Iter last)
-{
-	_Iter out = it;
-	std::sort(it, last);
-	for(std::string parent = NULL_STR; it != last; ++it)
-	{
-		if(!path::is_child(*it, parent))
-			*out++ = parent = *it;
-	}
-	return out;
 }
 
 @interface FSSCMItem : FSItem
@@ -88,8 +71,8 @@ _Iter prune_path_children (_Iter it, _Iter last)
 
 - (void)loadChildren:(FSDataSource*)dataSource completionHandler:(void(^)(NSArray*))block
 {
-	auto fn = (NSArray*(*)(id, SEL))[_dataSource methodForSelector:_selector];
-	block(fn(_dataSource, _selector));
+	auto fn = (NSArray*(*)(id, SEL, NSArray*))[_dataSource methodForSelector:_selector];
+	block(fn(_dataSource, _selector, self.children));
 }
 @end
 
@@ -161,43 +144,69 @@ _Iter prune_path_children (_Iter it, _Iter last)
 	return @[ URLAppend(_url, @"?status=unstaged"), URLAppend(_url, @"?status=untracked") ];
 }
 
-- (NSArray*)unstagedItems
+- (NSArray*)unstagedItems:(NSArray*)oldItems
 {
-	std::vector<std::string> unstagedPaths;
+	std::map<std::string, scm::status::type> unstagedPaths;
 	for(auto pair : _scmInfo->status())
 	{
 		if(pair.second & (scm::status::modified|scm::status::added|scm::status::deleted|scm::status::conflicted|scm::status::unversioned))
 		{
 			if(!(pair.second & scm::status::unversioned))
-				unstagedPaths.push_back(pair.first);
+				unstagedPaths.insert(pair);
 		}
 	}
 
 	if(!_scmInfo->tracks_directories())
-		unstagedPaths.erase(prune_path_parents(unstagedPaths.begin(), unstagedPaths.end()), unstagedPaths.end());
+	{
+		std::vector<std::string> parents;
 
-	return [FSDataSource sortArray:convert(unstagedPaths, _scmInfo->root_path()) usingOptions:_options];
+		std::string child = NULL_STR;
+		for(auto it = unstagedPaths.rbegin(); it != unstagedPaths.rend(); ++it)
+		{
+			if(path::is_child(child, it->first))
+					parents.push_back(it->first);
+			else	child = it->first;
+		}
+
+		for(auto const& path : parents)
+			unstagedPaths.erase(path);
+	}
+
+	return [FSDataSource sortArray:convert(unstagedPaths, _scmInfo->root_path(), oldItems) usingOptions:_options];
 }
 
-- (NSArray*)untrackedItems
+- (NSArray*)untrackedItems:(NSArray*)oldItems
 {
-	std::vector<std::string> untrackedPaths;
+	std::map<std::string, scm::status::type> untrackedPaths;
 	for(auto pair : _scmInfo->status())
 	{
 		if(pair.second & (scm::status::modified|scm::status::added|scm::status::deleted|scm::status::conflicted|scm::status::unversioned))
 		{
 			if(pair.second & scm::status::unversioned)
-				untrackedPaths.push_back(pair.first);
+				untrackedPaths.insert(pair);
 		}
 	}
 
 	if(!_scmInfo->tracks_directories())
-		untrackedPaths.erase(prune_path_children(untrackedPaths.begin(), untrackedPaths.end()), untrackedPaths.end());
+	{
+		std::vector<std::string> children;
 
-	return [FSDataSource sortArray:convert(untrackedPaths, _scmInfo->root_path(), true) usingOptions:_options];
+		std::string parent = NULL_STR;
+		for(auto const& pair : untrackedPaths)
+		{
+			if(path::is_child(pair.first, parent))
+					children.push_back(pair.first);
+			else	parent = pair.first;
+		}
+
+		for(auto const& path : children)
+			untrackedPaths.erase(path);
+	}
+
+	return [FSDataSource sortArray:convert(untrackedPaths, _scmInfo->root_path(), oldItems, true) usingOptions:_options];
 }
 
-- (NSArray*)rootItems
+- (NSArray*)rootItems:(NSArray*)oldItems
 {
 	return @[ [self itemOfType:@"unstaged"], [self itemOfType:@"untracked"] ];
 }
@@ -216,14 +225,14 @@ _Iter prune_path_children (_Iter it, _Iter last)
 				name = [NSString stringWithFormat:@"%@ (%@)", name, [NSString stringWithCxxString:branch->second]];
 		}
 
-		res = [[FSSCMItem alloc] initWithURL:URLAppend(_url, @"?status=all") dataSource:self selector:@selector(rootItems)];
+		res = [[FSSCMItem alloc] initWithURL:URLAppend(_url, @"?status=all") dataSource:self selector:@selector(rootItems:)];
 		res.icon        = [NSImage imageNamed:@"SCMTemplate" inSameBundleAsClass:[self class]];
 		res.displayName = name;
 		res.group       = YES;
 	}
 	else if([type isEqualToString:@"unstaged"])
 	{
-		res = [[FSSCMItem alloc] initWithURL:URLAppend(_url, @"?status=unstaged") dataSource:self selector:@selector(unstagedItems)];
+		res = [[FSSCMItem alloc] initWithURL:URLAppend(_url, @"?status=unstaged") dataSource:self selector:@selector(unstagedItems:)];
 		res.icon        = SCMFolderIcon();
 		res.displayName = @"Uncommitted Changes";
 		res.group       = YES;
@@ -232,7 +241,7 @@ _Iter prune_path_children (_Iter it, _Iter last)
 	}
 	else if([type isEqualToString:@"untracked"])
 	{
-		res = [[FSSCMItem alloc] initWithURL:URLAppend(_url, @"?status=untracked") dataSource:self selector:@selector(untrackedItems)];
+		res = [[FSSCMItem alloc] initWithURL:URLAppend(_url, @"?status=untracked") dataSource:self selector:@selector(untrackedItems:)];
 		res.icon        = SCMFolderIcon();
 		res.displayName = @"Untracked Items";
 		res.group       = YES;

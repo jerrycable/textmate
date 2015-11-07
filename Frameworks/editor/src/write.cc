@@ -15,27 +15,31 @@ namespace ng
 
 	ng::ranges_t write_unit_to_fd (buffer_t const& buffer, ranges_t const& ranges, size_t tabSize, int fd, input::type unit, input::type fallbackUnit, input_format::type format, scope::selector_t const& scopeSelector, std::map<std::string, std::string>& variables, bool* inputWasSelection) // TODO Move write_unit_to_fd to command framework.
 	{
-		ng::range_t const& range = ranges.last();
-		input::type actualUnit = unit == input::selection && range.empty() ? fallbackUnit : unit;
+		bool noSelection = true;
+		for(auto const& range : ranges)
+			noSelection = noSelection && range.empty();
+
+		input::type actualUnit = unit == input::selection && noSelection && (ranges.size() == 1 || fallbackUnit != input::entire_document) ? fallbackUnit : unit;
 		*inputWasSelection = actualUnit == input::selection;
 
-		ng::ranges_t res = ranges;
-		if(ranges.size() == 1 || unit != input::selection)
+		ng::ranges_t res;
+		for(auto range : ranges)
 		{
-			range_t r;
 			switch(actualUnit)
 			{
-				case input::character:        r = extend_if_empty(buffer, range, kSelectionExtendRight).last();        break;
-				case input::word:             r = word_at(buffer, range);                                          break;
-				case input::line:             r = extend_if_empty(buffer, range, kSelectionExtendToLineExclLF).last(); break;
-				case input::scope:            r = select_scope(buffer, range, scopeSelector).last();                   break;
-				case input::selection:        r = range;                                                               break;
-				case input::entire_document:  r = extend(buffer, range, kSelectionExtendToAll).last();                 break;
+				case input::character:        range = extend_if_empty(buffer, range, kSelectionExtendRight).last();        break;
+				case input::word:             range = word_at(buffer, range);                                              break;
+				case input::line:             range = extend_if_empty(buffer, range, kSelectionExtendToLineExclLF).last(); break;
+				case input::scope:            range = select_scope(buffer, range, scopeSelector).last();                   break;
+				case input::entire_document:  range = extend(buffer, range, kSelectionExtendToAll).last();                 break;
 			};
-			res = r;
+			res.push_back(range);
 		}
 
-		if(res.size() != 1 && unit == input::selection || !res.last().empty())
+		if(res.size() != 1)
+			res = sanitize(buffer, res);
+
+		if(res.size() != 1 || !res.last().empty())
 		{
 			std::string str = "";
 			bool first = true;

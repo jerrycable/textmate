@@ -29,7 +29,6 @@
 #import <text/tokenize.h>
 #import <text/utf8.h>
 #import <ns/ns.h>
-#import <oak/compat.h>
 #import <kvdb/kvdb.h>
 
 static NSString* const kUserDefaultsAlwaysFindInDocument = @"alwaysFindInDocument";
@@ -221,7 +220,12 @@ namespace
 		std::transform(newDocuments.begin(), newDocuments.end(), inserter(uuids, uuids.end()), [](document::document_ptr const& doc){ return doc->identifier(); });
 
 		std::copy_if(oldDocuments.begin(), oldDocuments.begin() + splitAt, back_inserter(out), [&uuids](document::document_ptr const& doc){ return uuids.find(doc->identifier()) == uuids.end(); });
-		std::copy(newDocuments.begin(), newDocuments.end(), back_inserter(out));
+		uuids.clear();
+		for(auto const& doc : newDocuments)
+		{
+			if(uuids.insert(doc->identifier()).second)
+				out.push_back(doc);
+		}
 		std::copy_if(oldDocuments.begin() + splitAt, oldDocuments.end(), back_inserter(out), [&uuids](document::document_ptr const& doc){ return uuids.find(doc->identifier()) == uuids.end(); });
 
 		auto iter = std::find(out.begin(), out.end(), newDocuments.front());
@@ -287,16 +291,17 @@ namespace
 
 		NSUInteger windowStyle = (NSTitledWindowMask|NSClosableWindowMask|NSResizableWindowMask|NSMiniaturizableWindowMask|NSTexturedBackgroundWindowMask);
 		self.window = [[NSWindow alloc] initWithContentRect:[NSWindow contentRectForFrameRect:[self frameRectForNewWindow] styleMask:windowStyle] styleMask:windowStyle backing:NSBackingStoreBuffered defer:NO];
-		self.window.autorecalculatesKeyViewLoop = YES;
-		self.window.collectionBehavior          = NSWindowCollectionBehaviorFullScreenPrimary;
-		self.window.delegate                    = self;
-		self.window.releasedWhenClosed          = NO;
+		self.window.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
+		self.window.delegate           = self;
+		self.window.releasedWhenClosed = NO;
 		[self.window setContentBorderThickness:0 forEdge:NSMaxYEdge]; // top border
 		[self.window setContentBorderThickness:0 forEdge:NSMinYEdge]; // bottom border
 		[self.window setAutorecalculatesContentBorderThickness:NO forEdge:NSMaxYEdge];
 		[self.window setAutorecalculatesContentBorderThickness:NO forEdge:NSMinYEdge];
 
 		OakAddAutoLayoutViewsToSuperview(@[ self.layoutView ], self.window.contentView);
+		OakSetupKeyViewLoop(@[ self.layoutView ], NO);
+		self.window.initialFirstResponder = self.textView;
 
 		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[view]|" options:0 metrics:nil views:@{ @"view" : self.layoutView }]];
 		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[view]|" options:0 metrics:nil views:@{ @"view" : self.layoutView }]];
@@ -1308,6 +1313,7 @@ namespace
 		{ "attr.project.maven",   "pom.xml",        "build"   },
 		{ "attr.project.scons",   "SConstruct",     "build"   },
 		{ "attr.project.lein",    "project.clj",    "build"   },
+		{ "attr.project.cargo",   "Cargo.toml",     "build"   },
 		{ "attr.project.vagrant", "Vagrantfile",    "vagrant" },
 		{ "attr.project.jekyll",  "_config.yml",    "jekyll"  },
 		{ "attr.test.rspec",      ".rspec",         "test"    },
@@ -1402,6 +1408,9 @@ namespace
 		if(customAttributes != NULL_STR)
 			_documentScopeAttributes.push_back(customAttributes);
 
+		self.documentSCMStatus    = scm::status::unknown;
+		self.documentSCMVariables = std::map<std::string, std::string>();
+
 		if(_documentSCMInfo = scm::info(docDirectory))
 		{
 			__weak DocumentController* weakSelf = self;
@@ -1409,11 +1418,6 @@ namespace
 				weakSelf.documentSCMStatus    = info.status(to_s(weakSelf.documentPath));
 				weakSelf.documentSCMVariables = info.scm_variables();
 			});
-		}
-		else
-		{
-			self.documentSCMStatus    = scm::status::unknown;
-			self.documentSCMVariables = std::map<std::string, std::string>();
 		}
 
 		[self updateExternalAttributes];
@@ -2265,7 +2269,7 @@ namespace
 	int i = 0;
 	for(auto document : _documents)
 	{
-		NSMenuItem* item = [aMenu addItemWithTitle:[NSString stringWithCxxString:document->display_name()] action:@selector(takeSelectedTabIndexFrom:) keyEquivalent:i < 9 ? [NSString stringWithFormat:@"%c", '0' + ((i+1) % 10)] : @""];
+		NSMenuItem* item = [aMenu addItemWithTitle:[NSString stringWithCxxString:document->display_name()] action:@selector(takeSelectedTabIndexFrom:) keyEquivalent:i < 8 ? [NSString stringWithFormat:@"%c", '1' + i] : @""];
 		item.tag     = i;
 		item.toolTip = [[NSString stringWithCxxString:document->path()] stringByAbbreviatingWithTildeInPath];
 		item.image   = [OakFileIconImage fileIconImageWithPath:[NSString stringWithCxxString:document->path()] isModified:document->is_modified()];
@@ -2284,7 +2288,7 @@ namespace
 	{
 		[aMenu addItem:[NSMenuItem separatorItem]];
 
-		NSMenuItem* item = [aMenu addItemWithTitle:@"Last Tab" action:@selector(takeSelectedTabIndexFrom:) keyEquivalent:@"0"];
+		NSMenuItem* item = [aMenu addItemWithTitle:@"Last Tab" action:@selector(takeSelectedTabIndexFrom:) keyEquivalent:@"9"];
 		item.tag     = _documents.size()-1;
 		item.toolTip = [NSString stringWithCxxString:_documents.back()->display_name()];
 	}

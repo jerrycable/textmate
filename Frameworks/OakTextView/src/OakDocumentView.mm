@@ -138,6 +138,7 @@ private:
 		statusBar.target = self;
 
 		OakAddAutoLayoutViewsToSuperview(@[ gutterScrollView, gutterDividerView, textScrollView, statusDividerView, statusBar ], self);
+		OakSetupKeyViewLoop(@[ self, textView, statusBar ], NO);
 
 		document::document_ptr doc = document::from_content("", "text.plain"); // file type is only to avoid potential “no grammar” warnings in console
 		doc->set_custom_name("null document"); // without a name it grabs an ‘untitled’ token
@@ -274,6 +275,12 @@ private:
 		textView.fontScaleFactor -= 10;
 		[self updateGutterViewFont:self];
 	}
+}
+
+- (IBAction)makeTextStandardSize:(id)sender
+{
+	textView.fontScaleFactor = 100;
+	[self updateGutterViewFont:self];
 }
 
 - (void)changeFont:(id)sender
@@ -629,6 +636,9 @@ private:
 
 - (void)showBundlesMenu:(id)sender
 {
+	if(!self.statusBar)
+		return NSBeep();
+
 	[NSApp sendAction:_cmd to:self.statusBar from:self];
 }
 
@@ -668,15 +678,23 @@ private:
 		[bundleItemsPopUp selectItem:selectedItem];
 }
 
+- (NSUInteger)tabSize
+{
+	return textView.tabSize;
+}
+
+- (void)setTabSize:(NSUInteger)newTabSize
+{
+	textView.tabSize = newTabSize;
+	settings_t::set(kSettingsTabSizeKey, (size_t)newTabSize, document->file_type());
+}
+
 - (IBAction)takeTabSizeFrom:(id)sender
 {
 	D(DBF_OakDocumentView, bug("\n"););
 	ASSERT([sender respondsToSelector:@selector(tag)]);
 	if([sender tag] > 0)
-	{
-		textView.tabSize = [sender tag];
-		settings_t::set(kSettingsTabSizeKey, (size_t)[sender tag], document->file_type());
-	}
+		self.tabSize = [sender tag];
 }
 
 - (IBAction)setIndentWithSpaces:(id)sender

@@ -78,7 +78,7 @@ NSString* const FFFindWasTriggeredByEnter = @"FFFindWasTriggeredByEnter";
 		_windowController.resultsViewController.doubleClickResultAction = @selector(didDoubleClickResult:);
 		_windowController.resultsViewController.target                  = self;
 
-		[_windowController.replaceAllButton bind:@"title" toObject:self withKeyPath:@"replaceAllButtonTitle" options:nil];
+		[_windowController.replaceAllButton bind:NSTitleBinding toObject:self withKeyPath:@"replaceAllButtonTitle" options:nil];
 		[_windowController.replaceAllButton bind:@"enabled2" toObject:self withKeyPath:@"canReplaceAll" options:nil];
 
 		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowWillClose:) name:NSWindowWillCloseNotification object:_windowController.window];
@@ -177,6 +177,7 @@ NSString* const FFFindWasTriggeredByEnter = @"FFFindWasTriggeredByEnter";
 				[self clearMatches];
 
 				FFDocumentSearch* folderSearch = [FFDocumentSearch new];
+				folderSearch.searchBinaryFiles = YES;
 				folderSearch.searchString = controller.findString;
 				folderSearch.options      = _findOptions;
 
@@ -573,7 +574,7 @@ NSString* const FFFindWasTriggeredByEnter = @"FFFindWasTriggeredByEnter";
 		{
 			if(document::document_ptr doc = parent.document)
 			{
-				NSMenuItem* item = [aMenu addItemWithTitle:[NSString stringWithCxxString:doc->path() == NULL_STR ? doc->display_name() : path::relative_to(doc->path(), to_s(self.searchFolder))] action:@selector(takeSelectedPathFrom:) keyEquivalent:key < 10 ? [NSString stringWithFormat:@"%c", '0' + (++key % 10)] : @""];
+				NSMenuItem* item = [aMenu addItemWithTitle:[NSString stringWithCxxString:doc->path() == NULL_STR ? doc->display_name() : path::relative_to(doc->path(), to_s(self.searchFolder))] action:@selector(takeSelectedPathFrom:) keyEquivalent:key < 9 ? [NSString stringWithFormat:@"%c", '0' + (++key % 10)] : @""];
 				[item setImage:parent.icon];
 				[item setRepresentedObject:parent];
 			}

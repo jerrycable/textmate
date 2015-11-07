@@ -230,6 +230,14 @@ struct buffer_refresh_callback_t;
 typedef indexed_map_t<OakAccessibleLink*> links_t;
 typedef std::shared_ptr<links_t> links_ptr;
 
+typedef NS_ENUM(NSUInteger, OakFlagsState) {
+	OakFlagsStateClear = 0,
+	OakFlagsStateOptionDown,
+	OakFlagsStateShiftDown,
+	OakFlagsStateShiftTapped,
+	OakFlagsStateSecondShiftDown,
+};
+
 @interface OakTextView () <NSTextInputClient, NSDraggingSource, NSIgnoreMisspelledWords, NSChangeSpelling, NSTextFieldDelegate>
 {
 	OBJC_WATCH_LEAKS(OakTextView);
@@ -313,7 +321,7 @@ typedef std::shared_ptr<links_t> links_ptr;
 @property (nonatomic, readonly) ng::ranges_t const& markedRanges;
 @property (nonatomic) NSDate* lastFlagsChangeDate;
 @property (nonatomic) NSUInteger lastFlags;
-@property (nonatomic) NSUInteger flagsState;
+@property (nonatomic) OakFlagsState flagsState;
 @property (nonatomic) OakTimer* initiateDragTimer;
 @property (nonatomic) OakTimer* dragScrollTimer;
 @property (nonatomic) BOOL showDragCursor;
@@ -1040,6 +1048,8 @@ doScroll:
 - (void)setMarkedText:(id)aString selectedRange:(NSRange)aRange replacementRange:(NSRange)replacementRange
 {
 	D(DBF_OakTextView_TextInput, bug("‘%s’ %s\n", to_s([aString description]).c_str(), [NSStringFromRange(aRange) UTF8String]););
+	if(!editor)
+		return;
 
 	AUTO_REFRESH;
 	if(replacementRange.location != NSNotFound)
@@ -1067,6 +1077,9 @@ doScroll:
 
 - (NSRange)selectedRange
 {
+	if(!editor)
+		return { NSNotFound, 0 };
+
 	NSRange res = [self nsRangeForRange:editor->ranges().last()];
 	D(DBF_OakTextView_TextInput, bug("%s\n", [NSStringFromRange(res) UTF8String]););
 	return res;
@@ -1075,7 +1088,7 @@ doScroll:
 - (NSRange)markedRange
 {
 	D(DBF_OakTextView_TextInput, bug("%s\n", to_s(markedRanges).c_str()););
-	if(markedRanges.empty())
+	if(!editor || markedRanges.empty())
 		return NSMakeRange(NSNotFound, 0);
 	return [self nsRangeForRange:markedRanges.last()];
 }
@@ -1110,6 +1123,9 @@ doScroll:
 
 - (NSUInteger)characterIndexForPoint:(NSPoint)thePoint
 {
+	if(!editor)
+		return NSNotFound;
+
 	NSPoint p = [self convertPoint:[[self window] convertRectFromScreen:(NSRect){ thePoint, NSZeroSize }].origin fromView:nil];
 	std::string const text = editor->as_string();
 	size_t index = layout->index_at_point(p).index;
@@ -1119,6 +1135,9 @@ doScroll:
 
 - (NSAttributedString*)attributedSubstringForProposedRange:(NSRange)theRange actualRange:(NSRangePointer)actualRange
 {
+	if(!editor)
+		return nil;
+
 	ng::range_t const& r = [self rangeForNSRange:theRange];
 	size_t from = r.min().index, to = r.max().index;
 
@@ -1155,6 +1174,9 @@ doScroll:
 
 - (NSRect)firstRectForCharacterRange:(NSRange)theRange actualRange:(NSRangePointer)actualRange
 {
+	if(!editor)
+		return NSZeroRect;
+
 	ng::range_t const& r = [self rangeForNSRange:theRange];
 	if(actualRange)
 		*actualRange = [self nsRangeForRange:r];
@@ -1744,9 +1766,9 @@ static void update_menu_key_equivalents (NSMenu* menu, std::multimap<std::string
 
 - (id)validRequestorForSendType:(NSString*)sendType returnType:(NSString*)returnType
 {
-	if([sendType isEqual:NSStringPboardType] && [self hasSelection] && !macroRecordingArray)
+	if([sendType isEqualToString:NSStringPboardType] && [self hasSelection] && !macroRecordingArray)
 		return self;
-	if(!sendType && [returnType isEqual:NSStringPboardType] && !macroRecordingArray)
+	if(!sendType && [returnType isEqualToString:NSStringPboardType] && !macroRecordingArray)
 		return self;
 	return [super validRequestorForSendType:sendType returnType:returnType];
 }
@@ -1970,14 +1992,6 @@ static void update_menu_key_equivalents (NSMenu* menu, std::multimap<std::string
 
 - (void)flagsChanged:(NSEvent*)anEvent
 {
-	typedef NS_ENUM(NSUInteger, OakFlagsState) {
-		OakFlagsStateClear = 0,
-		OakFlagsStateOptionDown,
-		OakFlagsStateShiftDown,
-		OakFlagsStateShiftTapped,
-		OakFlagsStateSecondShiftDown,
-	};
-
 	NSInteger modifiers  = [anEvent modifierFlags] & (NSAlternateKeyMask | NSControlKeyMask | NSCommandKeyMask | NSShiftKeyMask);
 	BOOL isHoldingOption = modifiers & NSAlternateKeyMask ? YES : NO;
 
@@ -3210,7 +3224,7 @@ static char const* kOakMenuItemTitle = "OakMenuItemTitle";
 	D(DBF_OakTextView_Macros, bug("%s\n", BSTR(flag)););
 	if(macroRecordingArray)
 	{
-		D(DBF_OakTextView_Macros, bug("%s\n", to_s(plist::convert((__bridge CFDictionaryRef)macroRecordingArray)).c_str()););
+		D(DBF_OakTextView_Macros, bug("%s\n", to_s(plist::convert((__bridge CFPropertyListRef)macroRecordingArray)).c_str()););
 		[[NSUserDefaults standardUserDefaults] setObject:[macroRecordingArray copy] forKey:@"OakMacroManagerScratchMacro"];
 		macroRecordingArray = nil;
 	}
@@ -3222,7 +3236,7 @@ static char const* kOakMenuItemTitle = "OakMenuItemTitle";
 
 - (IBAction)playScratchMacro:(id)anArgument
 {
-	D(DBF_OakTextView_Macros, bug("%s\n", to_s(plist::convert((__bridge CFDictionaryRef)[[NSUserDefaults standardUserDefaults] arrayForKey:@"OakMacroManagerScratchMacro"])).c_str()););
+	D(DBF_OakTextView_Macros, bug("%s\n", to_s(plist::convert((__bridge CFPropertyListRef)[[NSUserDefaults standardUserDefaults] arrayForKey:@"OakMacroManagerScratchMacro"])).c_str()););
 	AUTO_REFRESH;
 	if(NSArray* scratchMacro = [[NSUserDefaults standardUserDefaults] arrayForKey:@"OakMacroManagerScratchMacro"])
 			editor->macro_dispatch(plist::convert((__bridge CFDictionaryRef)@{ @"commands" : scratchMacro }), [self variables]);
@@ -3565,20 +3579,18 @@ static char const* kOakMenuItemTitle = "OakMenuItemTitle";
 		{
 			ng::index_t click = range.last().min();
 
-			bool didModify = false, pushClick = false;
+			bool didModify = false;
 			ng::ranges_t newSel;
 			for(auto const& cur : s)
 			{
-				if(cur == range.last())
+				if(cur.min() <= click && click <= cur.max())
 					didModify = true;
-				else if(cur.min() <= click && click <= cur.max())
-					pushClick = true;
 				else
 					newSel.push_back(cur);
 			}
 
 			s = newSel;
-			if(pushClick || !didModify || s.empty())
+			if(!didModify || s.empty())
 				s.push_back(range.last());
 		}
 		else
@@ -3712,6 +3724,7 @@ static scope::context_t add_modifiers_to_scope (scope::context_t scope, NSUInteg
 
 	if(ng::range_t r = layout->folded_range_at_point([self convertPoint:[anEvent locationInWindow] fromView:nil]))
 	{
+		AUTO_REFRESH;
 		layout->unfold(r.min().index, r.max().index);
 		return;
 	}
